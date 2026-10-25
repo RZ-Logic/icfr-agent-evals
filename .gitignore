@@ -4,13 +4,14 @@
 CONTEXT.md
 
 # --- Eval run outputs -------------------------------------------------------------
-# Ignore run logs by default; keep the directory and any deliberately committed
-# baseline snapshots used as regression references.
+# Ignore run logs by default; keep the directory and the two committed CI
+# baselines (pre-registration section 10). The re-allows must follow *.eval.
 runs/*
 !runs/.gitkeep
-!runs/baselines/
 logs/
 *.eval
+!runs/baseline-phase-1.eval
+!runs/baseline-phase-2.eval
 
 # --- Python -----------------------------------------------------------------------
 __pycache__/
