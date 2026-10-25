@@ -11,10 +11,10 @@ Run configuration (pre-registration section 5):
     silently overrides --model;
   - judge roles are bound with --model-role and are required;
   - reasoning_effort is pinned high; no sampling parameter is set anywhere;
-  - epochs are an explicit Epochs(n, reducer=["mean"]), because the pinned
-    inspect-ai records epochs_reducer as None when the default is used;
-  - the dataset generator seed is the pinned task argument (recorded in
-    task_args); Inspect's --seed is left unset;
+  - epochs are declared as Epochs(n, reducer=["mean"]): with the default, the
+    pinned inspect-ai writes no reducer into the log header;
+  - the generator seed is a task argument, so the log header carries it in
+    task_args; the --seed option is not used;
   - Task version and metadata carry everything needed to reproduce the run
     config from the EvalLog header alone.
 

@@ -1,12 +1,13 @@
 """The frozen Phase 1 model roster and the setup check that enforces it.
 
-Pre-registration section 5: the worker is chosen by --model and checked against
-the roster at setup, never bound on the Task (a Task-level model silently
-overrides --model). Judge roles are required roles. Under the pinned inspect-ai,
-get_model(role=...) for an unbound role returns the model being evaluated unless
-required=True is passed with no default, so the setup solver always passes it.
-An unbound role, a role bound away from its pin, a grader equal to the evaluated
-model, or an evaluated model off the roster is a run error, never a fallback.
+Section 5 of the pre-registration fixes this roster. The evaluated model comes
+from --model and is checked here at setup. It is never set on the Task, since a
+model set there would take precedence over --model without a warning. The grader
+and calibrator roles must both be bound. In the pinned inspect-ai, a get_model call
+for a role nobody bound quietly hands back the evaluated model, so the setup solver
+always asks with required=True. Each of these stops the run instead of falling
+back: a role left unbound, a role bound to something other than its pin, a grader
+that is the evaluated model, or an evaluated model outside the roster.
 
 Offline mode: the mock smoke and the unit tests run on Inspect's mockllm provider.
 A run is offline only when the evaluated model and every role are mockllm; a run
@@ -30,9 +31,9 @@ BASELINES: tuple[str, ...] = (
 )
 EVALUATED_MODELS: tuple[str, ...] = (WORKER, *BASELINES)
 
-GRADER = "openai/gpt-6-luna"             # alias-only, accepted; resolved string logged per response
+GRADER = "openai/gpt-6-luna"             # an alias (ADR-0004); each response records the model that served it
 GRADER_ESCALATION = "openai/gpt-6.1-sol"  # step 2 of the judge remedy order (section 7)
-CALIBRATOR = "anthropic/claude-opus-5-5"  # never samples Opus 5.5 baseline generations
+CALIBRATOR = "anthropic/claude-opus-5-5"  # its sample skips the outputs of the Opus 5.5 baseline run
 SCOUT_SCANNER = "openai/gpt-6-luna"       # named in each scan config; not an eval role
 
 GRADER_ROLE = "grader"
@@ -40,14 +41,14 @@ CALIBRATOR_ROLE = "calibrator"
 REQUIRED_ROLES: tuple[str, ...] = (GRADER_ROLE, CALIBRATOR_ROLE)
 GRADER_STEPS: tuple[int, ...] = (1, 2)
 
-# reasoning_effort is pinned high on every Anthropic roster model in every role.
+# One effort setting for each Anthropic model in the roster, whatever role it holds.
 REASONING_EFFORT = "high"
 
 OFFLINE_PROVIDER = "mockllm"
 
 # --- Reperformance window (section 5) ------------------------------------------------
 
-RETIREMENT_FLOORS_RECORDED = "2026-10-08"   # on the Claude API
+RETIREMENT_FLOORS_RECORDED = "2026-10-08"   # date the floors were read for the Claude API
 RETIREMENT_FLOORS: dict[str, str] = {
     "anthropic/claude-sonnet-5": "2027-06-30",
     "anthropic/claude-opus-5-5": "2027-09-22",
@@ -55,8 +56,8 @@ RETIREMENT_FLOORS: dict[str, str] = {
     "anthropic/claude-haiku-5-5": "2027-10-07",
 }
 NOTICE_POLICIES: dict[str, str] = {
-    "anthropic": "tentative retirement no sooner than the listed floor, then at least 60 days' notice",
-    "openai": "generally available models: at least 6 months' notice",
+    "anthropic": "not retired before the listed floor; 60 or more days of notice before retirement",
+    "openai": "6 or more months of notice for a generally available model",
 }
 
 
