@@ -1,0 +1,28 @@
+# --- Private working notes: never publish ---------------------------------------
+# CONTEXT.md holds private strategy and audience-specific framing kept out of the
+# public artifact on purpose. Keep it untracked.
+CONTEXT.md
+
+# --- Eval run outputs -------------------------------------------------------------
+# Ignore run logs by default; keep the directory and any deliberately committed
+# baseline snapshots used as regression references.
+runs/*
+!runs/.gitkeep
+!runs/baselines/
+logs/
+*.eval
+
+# --- Python -----------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.env
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.DS_Store

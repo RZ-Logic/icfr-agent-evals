@@ -1,0 +1,6 @@
+# Runtime + dev dependencies. Versions below are the exact set this skeleton was
+# built and validated against (Python 3.12.3). Pin these in CI for reproducibility;
+# loosen deliberately, not by accident.
+inspect-ai==0.3.237
+pydantic==2.13.4
+pytest==9.0.3

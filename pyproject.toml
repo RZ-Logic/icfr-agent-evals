@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "icfr-agent-evals"
+version = "0.0.1"
+description = "Pre-registered LLM-as-judge eval harness measuring whether an AI agent is safe to grant action authority over financial controls (crypto reserve reconciliation), anchored to PCAOB AS 2201 severity tiers."
+requires-python = ">=3.11"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+dependencies = [
+    "inspect-ai>=0.3.230",
+    "pydantic>=2.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[tool.setuptools.packages.find]
+include = ["icfr_agent_evals*"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]

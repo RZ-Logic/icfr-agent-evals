@@ -1,0 +1,6 @@
+# Store and check out every text file with LF endings on every platform. The CI
+# gated-content key hashes non-code files byte for byte, so a CRLF checkout on
+# Windows must not change a hash computed on Linux.
+* text=auto eol=lf
+*.png binary
+*.eval binary
