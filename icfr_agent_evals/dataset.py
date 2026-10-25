@@ -23,6 +23,7 @@ pattern in CELL_PATTERN, rotated by cell, which gives 2 memo-only cases per cell
 
 from __future__ import annotations
 
+import json
 import random
 
 from inspect_ai.dataset import MemoryDataset
@@ -166,3 +167,13 @@ def build_dataset(split: str = "eval", n: int | None = None, seed: int = 2026060
     if n is not None:
         samples = samples[:n]
     return MemoryDataset(samples=samples, name=f"variance-commentary-{split}")
+
+
+def split_jsonl(split: str, seed: int = 20260607) -> bytes:
+    """The split as JSON Lines, one sample per line sorted by id, with id, input and
+    metadata (answer key included). The committed data/dev/dev.jsonl is exactly
+    split_jsonl("dev"), so a generator change that moves the dev set fails a test."""
+    samples = sorted(build_dataset(split=split, seed=seed), key=lambda s: str(s.id))
+    rows = [json.dumps({"id": s.id, "input": s.input, "metadata": s.metadata}, sort_keys=True, ensure_ascii=False)
+            for s in samples]
+    return ("\n".join(rows) + "\n").encode("utf-8")

@@ -1,0 +1,84 @@
+{
+ "composition": {
+  "asset": {
+   "ADA": 4,
+   "BTC": 4,
+   "ETH": 5,
+   "SOL": 4,
+   "USDC": 4,
+   "USDT": 5,
+   "XRP": 4
+  },
+  "band": {
+   "M1": 10,
+   "M2": 11,
+   "M3": 9
+  },
+  "case_kind": {
+   "adversarial": 10,
+   "edge": 6,
+   "standard": 14
+  },
+  "category": {
+   "AC-1": 2,
+   "AC-2": 1,
+   "AC-3": 2,
+   "AC-4": 1,
+   "AC-5": 2,
+   "AC-6": 2,
+   "ambiguous_narrative": 2,
+   "band_boundary": 2,
+   "incomplete_data": 2,
+   "standard": 14
+  },
+  "direction": {
+   "shortfall": 15,
+   "surplus": 15
+  },
+  "evidence_state": {
+   "fully_explained": 12,
+   "partly_unexplained": 11,
+   "unexplained": 7
+  },
+  "memo_only_link": 8,
+  "n": 30,
+  "period": {
+   "2025-10": 9,
+   "2025-11": 10,
+   "2025-12": 11
+  },
+  "pilot": 20,
+  "pilot_by_kind": {
+   "AC-1": 1,
+   "AC-2": 1,
+   "AC-3": 1,
+   "AC-4": 1,
+   "AC-5": 1,
+   "AC-6": 1,
+   "ambiguous_narrative": 2,
+   "band_boundary": 2,
+   "incomplete_data": 2,
+   "standard": 4,
+   "standard-memo": 4
+  }
+ },
+ "dataset_sha256": "f56d06b58b06bbbb0902a552df1a84d5107299bc09c78c6eb514510fce0f7887",
+ "dev_seed": 21260607,
+ "disjointness": {
+  "ci": {
+   "seed": 22260607,
+   "shared_case_ids": 0,
+   "shared_template_instances": 0,
+   "shared_wallets_or_references": 0
+  },
+  "eval": {
+   "seed": 20260607,
+   "shared_case_ids": 0,
+   "shared_template_instances": 0,
+   "shared_wallets_or_references": 0
+  }
+ },
+ "file": "data/dev/dev.jsonl",
+ "file_sha256": "7ac96536ebdae5d32f31e3928752c00b1262936f10594141e1bfb27e1e7a9944",
+ "generator_version": "G-0.1.0-dev.1"
+}
