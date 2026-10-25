@@ -47,6 +47,10 @@ DIRECTION_WORDS: list[list[str]] = [
     ["shortfall", r"under[- ]?collaterali[sz](?:ed|ation)"],
     ["shortfall", r"under[- ]?reserved"],
     ["shortfall", r"negative variance"],
+    ["surplus", r"over[- ]?funded"],
+    ["shortfall", r"under[- ]?funded"],
+    ["shortfall", r"net short"],
+    ["shortfall", r"(?:reserves|holdings) (?:are|were|is|was|remain|remained) (?:insufficient|inadequate|deficient)"],
 ]
 
 # Comparative direction statements: SUBJECT [of AMOUNT] VERB OBJECT. narrative.py
@@ -82,7 +86,7 @@ DIRECTION_SUBJECT_GAP_WORDS = 6
 NEGATION_BEFORE: list[str] = [
     r"no", r"not", r"never", r"none", r"neither", r"nor", r"without", r"cannot",
     r"nothing", r"zero", r"absent", r"\w+n['\u2019]t", r"rather than", r"instead of",
-    r"no longer",
+    r"no longer", r"fail(?:s|ed|ing)? to",
 ]
 # Matched immediately after a statement, e.g. "a shortfall does not exist".
 NEGATION_AFTER: list[str] = [
@@ -90,10 +94,25 @@ NEGATION_AFTER: list[str] = [
     r"(?:doesn|didn|don)['\u2019]t exist",
     r"(?:is|was|are|were) (?:not|n['\u2019]t) (?:present|observed|indicated|identified|found|evident)",
     r"(?:isn|wasn|aren|weren)['\u2019]t (?:present|observed|indicated|identified|found|evident)",
+    r"(?:is|was|are|were) (?:nil|zero|nonexistent|non-existent)",
+    r"(?:has|have|had) (?:since |now |already |subsequently )?been (?:cured|eliminated|resolved|cleared|closed|remediated|reversed|corrected)",
+    r"no longer exists?",
+    r"(?:is|was) (?:now |since )?(?:cured|eliminated|gone)",
+]
+# A negation followed by one of these nouns (after optional item adjectives) negates
+# the noun, not a direction stated later in the clause: "No reconciling item explains
+# the shortfall" states no negated shortfall.
+NEGATION_NOUN_ADJECTIVES: list[str] = ["eligible", "open", "cited", "pending", "reconciling", "single", "other"]
+NEGATION_ITEM_NOUNS: list[str] = [
+    "item", "items", "entry", "entries", "transaction", "transactions", "transfer", "transfers",
+    "amount", "amounts", "portion", "part", "reference", "references", "deposit", "deposits",
+    "withdrawal", "withdrawals", "fee", "fees", "adjustment", "adjustments",
 ]
 
 # --- Bands and thresholds (section 3 bands, section 6 band statements) ---------------
-BAND_LABEL = r"M[123]"  # case-sensitive
+BAND_LABEL = r"[Mm][- ]?[123]"  # m1, M-1 and M 1 read as the label M1 (the structured field casefolds too)
+# "Band 1", "materiality band no. 2", "materiality tier 3": numbered band forms.
+BAND_NUMBER_LABEL = r"(?:materiality )?band (?:no\.? |number |#)?([123])|materiality tier ([123])"
 
 # Named thresholds: [pattern, value, form]. value is the policy threshold the phrase
 # names, "M1_CEILING" or "M3_FLOOR", or "" when it names no specific one. form
@@ -138,6 +157,41 @@ BAND_WORDS: list[list[str]] = [
     [r"reportable (?:band|range|tier|category)", "contradict", "ok", "contradict"],
     [r"reportable", "contradict", "ok", "ok"],
     [r"material(?: weakness(?:es)?)?", "contradict", "review", "ok"],
+]
+# Band positions, matched before threshold names claim "materiality": [pattern, M1, M2, M3].
+BAND_POSITION_WORDS: list[list[str]] = [
+    [r"lowest (?:materiality )?(?:band|tier|category)", "ok", "contradict", "contradict"],
+    [r"(?:highest|top) (?:materiality )?(?:band|tier|category)", "contradict", "contradict", "ok"],
+    [r"(?:middle|intermediate) (?:materiality )?(?:band|tier|category)", "contradict", "ok", "contradict"],
+]
+# Phrases that state the band through escalation and carry their own negation, so a
+# "not" inside them does not mark the statement negated: [pattern, M1, M2, M3].
+ESCALATION_CLAIMS: list[list[str]] = [
+    [r"(?:does|do|did|would|will) not (?:require|need|warrant) (?:any )?escalation"
+     r"|(?:requires?|needs?|warrants?) no escalation|no escalation (?:is |was )?(?:needed|required|necessary|warranted)"
+     r"|no (?:need|requirement) (?:for|to) escalat(?:e|ion)|escalation (?:is|was) (?:not|un)(?: )?(?:required|needed|necessary|warranted)",
+     "ok", "contradict", "contradict"],
+    [r"(?:requires?|required|needs?|warrants?|warranted) escalation|escalation (?:is |was )?(?:required|needed|necessary|warranted)"
+     r"|(?:must|should|will|to) be escalated",
+     "review", "ok", "ok"],
+]
+# Severity words that state a band only when the clause names the variance; with
+# another subject ("fees were negligible") they route to review.
+SEVERITY_WORDS: list[list[str]] = [
+    [r"negligible|trivial|insignificant|inconsequential|de minimis", "ok", "contradict", "contradict"],
+    [r"within (?:the )?(?:\w+ )?tolerances?", "ok", "review", "contradict"],
+]
+# A clause with one of these words and no resolved band statement routes to review.
+BAND_VOCABULARY: list[str] = [r"bands?", r"materiality", r"escalat\w*", r"tolerances?"]
+# Statements that the variance itself is zero: an FM-001-class claim when |variance|
+# exceeds the tolerance. Negated forms ("the balances do not agree") state nothing.
+ZERO_VARIANCE_CLAIMS: list[str] = [
+    r"no (?:net )?variance(?! (?:remains|is left|left|unexplained|unreconciled|outstanding|to explain))",
+    r"no (?:net )?(?:discrepancy|shortfall or surplus)",
+    r"(?:the )?(?:net )?variance (?:is|was|of|stands at|amounts to) (?:zero|nil|nothing|none)",
+    r"(?:reconciliation|reserves|books|ledger|position) (?:is|are|was|were) in balance",
+    r"(?:ledger and on[- ]?chain|the two|both) balances (?:agree|agreed|match|matched|tie|tied)(?: out)?",
+    r"reconcil(?:es|ed) to zero",
 ]
 
 # --- Amount roles (section 6: each amount is checked with its accounting role) -------
@@ -186,6 +240,26 @@ SPLIT_CLAIMS: list[list[str]] = [
     ["explained", rf"(?:entire|whole|full|total) (?:\ue000+ )?{_V} (?:is|was|remains|remained|stays|stayed) (?:unexplained|unreconciled)", "subject"],
     ["explained", r"all of (?:which|it) (?:is|was|remains|remained) (?:unexplained|unreconciled)", "clause"],
     ["explained", r"(?:fully|entirely|completely|wholly) (?:unexplained|unreconciled)", "clause"],
+    # The whole variance stated as explained in other words (review finding F2-3).
+    ["unexplained", rf"(?:explains?|explained|reconciles?|reconciled|accounts? for|accounted for|covers?|covered|resolves?|resolved|clears?|cleared|closes?|closed) (?:all|the whole|the entirety|the full amount|the entire amount) of (?:the )?(?:\ue000+ )?{_V}", "subject"],
+    ["unexplained", rf"the (?:whole|entirety) of the (?:\ue000+ )?{_V} (?:is|was) (?:explained|reconciled|accounted for|covered|resolved)", "subject"],
+    ["unexplained", r"(?:unexplained |unreconciled |residual |remaining )?(?:remainder|residual|balance|portion) (?:is|was|stands at|of) (?:zero|nil|none|nothing)", "subject"],
+    ["unexplained", rf"no (?:amount|portion|part|balance|difference)(?: of (?:the )?{_V})? (?:remains|is left|is|was|stays) (?:unexplained|unreconciled|unaccounted for|outstanding)", "subject"],
+    ["unexplained", r"leav(?:es|ing|e) (?:no|nothing|zero) (?:residual|remainder|balance|difference|variance|shortfall|surplus|unexplained (?:amount|balance|difference|portion))", "subject"],
+    # Resolution claims: true only when nothing is unexplained.
+    ["unexplained", rf"(?:the )?(?:{_V}|reconciliation) (?:is|was|has been) (?:now )?(?:complete|completed|closed|cleared|resolved|fully reconciled|tied out|clean)", "resolution"],
+    ["unexplained", r"no further (?:action|follow[- ]up|investigation|work) (?:is |was )?(?:required|needed|necessary)", "resolution"],
+    # Attribution without a share: full or partial is not stated, so it passes only
+    # when nothing is unexplained and routes to review otherwise.
+    ["unexplained", rf"(?:explains?|explained|accounts? for|accounted for|resolves?|resolved|clears?|cleared|covers?|covered) (?:the )?{_V}", "attribution"],
+    ["unexplained", rf"{_V} (?:is|was|are|were) (?:entirely |wholly |fully )?(?:attributable|attributed|due) to", "attribution"],
+    ["unexplained", rf"{_V} (?:is|was|are|were) (?:explained|reconciled|resolved|cleared|covered|accounted for) by", "attribution"],
+]
+# Qualifiers that make an attribution partial ("partly explains the shortfall"):
+# such a clause states no split and is left to the amount checks.
+PARTIAL_QUALIFIERS: list[str] = [
+    r"partly", r"partially", r"in part", r"part of", r"portion of", r"some of", r"most of",
+    r"mostly", r"largely", r"majority of", r"share of", r"\ue000+ of",
 ]
 SPLIT_CLAIM_SUBJECTS: list[str] = [
     r"variances?", r"shortfalls?", r"surplus(?:es)?", r"deficits?", r"differences?", r"gap", r"excess",
@@ -310,9 +384,25 @@ QUARTER_PATTERNS: list[str] = [
     r"(?:first|second|third|fourth|1st|2nd|3rd|4th) quarter(?: of)?(?: 20[0-9]{2})?",
     r"Q[1-4]", r"quarter[- ](?:end|ended|ending)",
 ]
+# Fiscal-year and half-year forms route to review: the case period is one month.
+FISCAL_PATTERNS: list[str] = [r"(?:FY|CY) ?'?(?:20)?[0-9]{2}", r"H[12] ?(?:20[0-9]{2})?", r"(?:fiscal|financial) year(?: 20[0-9]{2})?"]
+# Month names read as a period statement when they stand alone (no day or year):
+# full names except "May", which is also a verb, and capitalized abbreviations.
+BARE_MONTH_NAMES: list[str] = [
+    "january", "february", "march", "april", "june", "july", "august", "september", "october",
+    "november", "december",
+]
+BARE_MONTH_ABBREVIATIONS: list[str] = ["Jan", "Feb", "Mar", "Apr", "Jun", "Jul", "Aug", "Sep", "Sept", "Oct", "Nov", "Dec"]  # case-sensitive
 
 # --- Currency amounts (section 6: every currency amount) ------------------------------
-CURRENCY_PREFIXES: list[str] = [r"US\$", r"\$", r"USD ?-?equivalent", r"USD"]
+CURRENCY_PREFIXES: list[str] = [r"USD ?\$", r"US\$", r"\$", r"USD ?-?equivalent", r"USD"]
+# Letters joined to a dollar sign that are not a listed currency ("XYZ$500") route to review.
+UNKNOWN_DOLLAR_MARKER = r"(?<![A-Za-z])(?!(?:USD|US)\$)[A-Za-z]{1,4}\$ ?[0-9]"
+# A bare number with a magnitude suffix ("1.2 million", "300k") is a currency amount
+# in a USD commentary unless a unit word or ticker follows. Single-letter suffixes
+# must be attached ("300k"); word suffixes follow a space ("1.2 million").
+SUFFIXED_ATTACHED: list[str] = ["k", "K", "m", "M", "mm", "MM", "mn", "bn", "BN", "b", "B"]
+SUFFIXED_WORDS: list[str] = ["thousand", "million", "billion"]
 CURRENCY_SUFFIXES: list[str] = [r"USD[- ]equivalent", r"USD", r"US dollars", r"dollars"]
 # Amounts in another currency are not checked; they route to review.
 NON_USD_CURRENCY: list[str] = [
@@ -370,7 +460,15 @@ def all_vocabularies() -> dict:
         "DIRECTION_SUBJECT_GAP_WORDS": DIRECTION_SUBJECT_GAP_WORDS,
         "NEGATION_BEFORE": NEGATION_BEFORE,
         "NEGATION_AFTER": NEGATION_AFTER,
+        "NEGATION_NOUN_ADJECTIVES": NEGATION_NOUN_ADJECTIVES,
+        "NEGATION_ITEM_NOUNS": NEGATION_ITEM_NOUNS,
         "BAND_LABEL": BAND_LABEL,
+        "BAND_NUMBER_LABEL": BAND_NUMBER_LABEL,
+        "BAND_POSITION_WORDS": BAND_POSITION_WORDS,
+        "ESCALATION_CLAIMS": ESCALATION_CLAIMS,
+        "SEVERITY_WORDS": SEVERITY_WORDS,
+        "BAND_VOCABULARY": BAND_VOCABULARY,
+        "ZERO_VARIANCE_CLAIMS": ZERO_VARIANCE_CLAIMS,
         "THRESHOLD_NAMES": THRESHOLD_NAMES,
         "BAND_COMPARATORS": BAND_COMPARATORS,
         "BAND_RANGE_WORD": BAND_RANGE_WORD,
@@ -381,6 +479,7 @@ def all_vocabularies() -> dict:
         "SPLIT_CLAIMS": SPLIT_CLAIMS,
         "SPLIT_CLAIM_SUBJECTS": SPLIT_CLAIM_SUBJECTS,
         "SPLIT_CLAIMS_SELF_NEGATED": SPLIT_CLAIMS_SELF_NEGATED,
+        "PARTIAL_QUALIFIERS": PARTIAL_QUALIFIERS,
         "COMPARISON_AFTER_AMOUNT": COMPARISON_AFTER_AMOUNT,
         "COMPARISON_AFTER_AMOUNT_BARE": COMPARISON_AFTER_AMOUNT_BARE,
         "LABEL_CUES": LABEL_CUES,
@@ -402,8 +501,14 @@ def all_vocabularies() -> dict:
         "PERIOD_CUES": PERIOD_CUES,
         "PERIOD_CUE_FILLER": PERIOD_CUE_FILLER,
         "QUARTER_PATTERNS": QUARTER_PATTERNS,
+        "FISCAL_PATTERNS": FISCAL_PATTERNS,
+        "BARE_MONTH_NAMES": BARE_MONTH_NAMES,
+        "BARE_MONTH_ABBREVIATIONS": BARE_MONTH_ABBREVIATIONS,
         "CURRENCY_PREFIXES": CURRENCY_PREFIXES,
         "CURRENCY_SUFFIXES": CURRENCY_SUFFIXES,
+        "UNKNOWN_DOLLAR_MARKER": UNKNOWN_DOLLAR_MARKER,
+        "SUFFIXED_ATTACHED": SUFFIXED_ATTACHED,
+        "SUFFIXED_WORDS": SUFFIXED_WORDS,
         "NON_USD_CURRENCY": NON_USD_CURRENCY,
         "MAGNITUDE_SUFFIXES": MAGNITUDE_SUFFIXES,
         "UNIT_WORDS": UNIT_WORDS,

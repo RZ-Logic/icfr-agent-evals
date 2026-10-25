@@ -192,6 +192,29 @@ def nfkc_spaced(text: str) -> str:
     return _WS_RE.sub(" ", text).strip()
 
 
+_DASHES = {
+    ord(ch): "-"
+    for ch in map(chr, range(0x10000))
+    if unicodedata.category(ch) == "Pd" and ch != "-"
+}
+_DASHES[0x2212] = "-"  # minus sign (category Sm)
+
+
+def fold_dashes(text: str) -> str:
+    """Map every Unicode dash (category Pd) and the minus sign to "-", one character
+    for one, so offsets into the folded text are offsets into the original. Used on
+    the narrative and in the canary search, never on structured identifiers, which
+    stay exact so a non-ASCII form there fails safe."""
+    return str(text).translate(_DASHES)
+
+
+def has_format_characters(text: str) -> bool:
+    """True when the text holds a Unicode format character (category Cf). Section 6
+    replaces each with a space before matching, which splits a word the reader sees
+    whole ("sur<U+00AD>plus"), so the narrative checks also route such text to review."""
+    return any(unicodedata.category(ch) == "Cf" for ch in str(text))
+
+
 def canonical_reference(value: object) -> str:
     """Comparison form of a reference number or tx hash: NFKC, Cf to space,
     whitespace collapsed, case kept. References are compared exactly (section 6)."""

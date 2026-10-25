@@ -233,21 +233,31 @@ def test_ticker_is_not_a_valid_citation():
     assert r.failure_modes == ("FM-005",)
 
 
-def test_narrative_org_routes_to_review_not_fm005():
-    r = check_fabrication({**GOOD, "narrative": "Confirmed balances with Ghost Custodian LLC today."}, TRUTH)
+# Sweep probes run on all seven assets (section 6; review finding F6-tests-5).
+
+@pytest.mark.parametrize("asset", ALL_ASSETS)
+def test_narrative_org_routes_to_review_not_fm005(asset):
+    truth = make_truth(asset)
+    out = {**good_output(truth), "narrative": "Confirmed balances with Ghost Custodian LLC today."}
+    r = check_fabrication(out, truth)
     assert r.points == 0 and r.failure_modes == () and r.requires_human_review
 
 
-def test_narrative_cited_wallet_is_grounded():
-    w = scope_wallet("BTC")
-    out = {**GOOD, "entities_cited": ["BitGo Trust", w], "narrative": f"Wallet {w} reconciled against ledger liabilities."}
-    r = check_fabrication(out, TRUTH)
+@pytest.mark.parametrize("asset", ALL_ASSETS)
+def test_narrative_cited_wallet_is_grounded(asset):
+    truth = make_truth(asset)
+    w = scope_wallet(asset)
+    out = {**good_output(truth), "entities_cited": ["BitGo Trust", w],
+           "narrative": f"Wallet {w} reconciled against ledger liabilities."}
+    r = check_fabrication(out, truth)
     assert r.points == 3 and r.failure_modes == ()
 
 
-def test_generic_titlecase_finance_terms_not_flagged():
-    out = {**GOOD, "narrative": "Reserve Reconciliation shows Ledger Liabilities exceeded On-Chain Reserves."}
-    r = check_fabrication(out, TRUTH)
+@pytest.mark.parametrize("asset", ALL_ASSETS)
+def test_generic_titlecase_finance_terms_not_flagged(asset):
+    truth = make_truth(asset)
+    out = {**good_output(truth), "narrative": "Reserve Reconciliation shows Ledger Liabilities exceeded On-Chain Reserves."}
+    r = check_fabrication(out, truth)
     assert r.points == 3 and not r.requires_human_review
 
 

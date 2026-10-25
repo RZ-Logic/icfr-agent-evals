@@ -462,7 +462,9 @@ def test_fabricated_reference_amount_fires_fm001(asset):
 def test_stated_sum_of_cited_items_grounds(asset):
     truth = two_item_truth(asset)
     assert outcome(run(truth, "WD-2512-04417 and WD-2512-04418 totaling $110,000 explain most of the shortfall.")) == ((), False)
-    assert outcome(run(truth, "WD-2512-04417 and WD-2512-04418 totaling $120,000 explain the shortfall.")) == (("FM-001",), False)
+    # the wrong total fires FM-001; "explain the shortfall" with an unexplained
+    # remainder also routes to review (review finding F2-falsepass-3)
+    assert outcome(run(truth, "WD-2512-04417 and WD-2512-04418 totaling $120,000 explain the shortfall.")) == (("FM-001",), True)
 
 
 @pytest.mark.parametrize("asset", ALL_ASSETS)
@@ -648,9 +650,12 @@ def test_non_latin_letters_route_to_review(asset):
 
 @pytest.mark.parametrize("asset", ALL_ASSETS)
 def test_format_characters_do_not_hide_statements(asset):
-    """A zero-width space inside a narrative becomes a space before extraction."""
+    """A zero-width space inside a narrative becomes a space before extraction, and
+    the narrative also routes to review: a format character inside a word would split
+    it unseen (review finding F5-parser-fm-1)."""
     result = run(shortfall_truth(asset), "On-chain reserves exceeded\u200bledger liabilities.")
-    assert outcome(result) == (("FM-003",), False)
+    assert outcome(result) == (("FM-003",), True)
+    assert result.review_reasons[0] == "format_characters_in_narrative"
 
 
 def test_empty_narrative_states_nothing():

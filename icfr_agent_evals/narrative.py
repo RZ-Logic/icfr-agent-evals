@@ -51,6 +51,8 @@ from .casefile import (
     CaseTruth,
     canonical_reference,
     explained_from_citations,
+    fold_dashes,
+    has_format_characters,
     item_effect_usd,
     nfkc_spaced,
     period_cutoff_date,
@@ -158,6 +160,23 @@ _AMOUNT_IN_WORDS_RE = re.compile(
 )
 _NEG_BEFORE_RE = re.compile(_w(_alt(V.NEGATION_BEFORE)), _I)
 _NEG_AFTER_RE = re.compile(rf"(?:{_alt(V.NEGATION_AFTER)})(?![A-Za-z0-9])", _I)
+_NEG_NOUN_ADJ = frozenset(V.NEGATION_NOUN_ADJECTIVES)
+_NEG_ITEM_NOUNS = frozenset(V.NEGATION_ITEM_NOUNS)
+_BAND_NUMBER_RE = re.compile(_w(V.BAND_NUMBER_LABEL), _I)
+_ESCALATION_RE = re.compile(_groups([row[0] for row in V.ESCALATION_CLAIMS]), _I)
+_BAND_POSITION_RE = re.compile(_groups([row[0] for row in V.BAND_POSITION_WORDS]), _I)
+_SEVERITY_RE = re.compile(_groups([row[0] for row in V.SEVERITY_WORDS]), _I)
+_BAND_VOCAB_RE = re.compile(_w(_alt(V.BAND_VOCABULARY)), _I)
+_ZERO_VARIANCE_RE = re.compile(_w(_alt(V.ZERO_VARIANCE_CLAIMS)), _I)
+_PARTIAL_RE = re.compile(_w(_alt(V.PARTIAL_QUALIFIERS)), _I)
+_UNKNOWN_DOLLAR_RE = re.compile(V.UNKNOWN_DOLLAR_MARKER)
+_FISCAL_RE = re.compile(_w(_alt(V.FISCAL_PATTERNS)), _I)
+_BARE_MONTH_RE = re.compile(
+    rf"(?<![A-Za-z0-9])(?:(?i:{_alt(V.BARE_MONTH_NAMES)})|{_alt(V.BARE_MONTH_ABBREVIATIONS)})\.?(?![A-Za-z0-9])"
+)
+_BARE_YEAR_RE = re.compile(r"(?<![0-9A-Za-z,.$/-])(20[0-9]{2})(?![0-9A-Za-z,])")
+# a dash right after an amount is a range separator ("$25,000 - $250,000"), not a sign
+_AMOUNT_BEFORE_RE = re.compile(r"[0-9](?: ?(?:k|m|mm|mn|bn|b|thousand|million|billion))?\s*$", _I)
 
 
 def _direction_patterns() -> list[tuple[str, str]]:
@@ -238,6 +257,12 @@ _BARE_RE = re.compile(
     rf"(?![0-9]|,[0-9]|\.[0-9]|/){_UNIT_AFTER}"
 )
 
+_SUFFIXED_RE = re.compile(
+    rf"(?<![A-Za-z0-9.,$/\-])(?P<num>[0-9]{{1,3}}(?:,[0-9]{{3}})+(?:\.[0-9]+)?|[0-9]+(?:\.[0-9]+)?)"
+    rf"(?:(?P<suf>{_alt(V.SUFFIXED_ATTACHED)})|[ ](?P<sufw>(?i:{_alt(V.SUFFIXED_WORDS)})))(?![A-Za-z0-9])"
+    rf"(?! ?(?i:{_alt(V.UNIT_WORDS)})(?![A-Za-z0-9]))"
+    rf"(?! ?(?:{_alt(V.IN_SCOPE_TICKERS + V.OTHER_TICKERS)})(?![A-Za-z0-9]))"
+)
 _REF_RE = re.compile(rf"(?<![A-Za-z0-9-]){REFERENCE_FORMAT}(?![A-Za-z0-9]|-[A-Za-z0-9])")
 _TOKEN_STANDARDS = frozenset(V.TOKEN_STANDARDS)
 _ENTITY_RES = [re.compile(_w(p)) for p in list(TX_HASH_FORMATS.values()) + list(ADDRESS_FORMATS.values())]
@@ -264,7 +289,7 @@ class _Tok:
 
 def _amount_value(m: re.Match) -> float:
     value = float(m.group("num").replace(",", ""))
-    suf = m.groupdict().get("suf")
+    suf = m.groupdict().get("suf") or m.groupdict().get("sufw")
     if suf:
         value *= V.MAGNITUDE_SUFFIXES[suf.lower()]
     return round(value, 2)
@@ -312,11 +337,17 @@ def _find_specials(text: str, truth: CaseTruth) -> list[_Tok]:
         add(m.start(), m.end(), "quarter")
     for rx in _AMOUNT_RES:
         for m in rx.finditer(text):
-            sign = (m.group("neg") or m.groupdict().get("neg2") or "").strip()
             s, e = m.span()
+            neg = m.group("neg") or ""
+            if neg and _AMOUNT_BEFORE_RE.search(text[:s]):
+                s, neg = s + len(neg), ""  # a range separator after another amount
+            sign = (neg or m.groupdict().get("neg2") or "").strip()
             paren = s > 0 and text[s - 1] == "(" and text[e:e + 1] == ")"
             add(s, e, "amount", value=_amount_value(m), negative=sign in ("-", "\u2212"), positive=sign == "+",
                 parenthesized=paren, bare=False)
+    for m in _SUFFIXED_RE.finditer(text):
+        add(m.start(), m.end(), "amount", value=_amount_value(m), negative=False, positive=False,
+            parenthesized=False, bare=False, suffixed=True)
     for m in _BARE_RE.finditer(text):
         add(m.start(), m.end(), "amount", value=_amount_value(m), negative=False, positive=False,
             parenthesized=False, bare=True)
@@ -577,6 +608,14 @@ def _resolve_role(clause: _Clause, i: int, ctx: "_Context") -> dict:
     d, side, role, cue, ci = nearest[0]
     if role in ("ledger", "onchain") and side == "before" and _parenthetical_subject(toks, i, ci, role):
         return {"role": "unresolved", "resolution": "parenthetical_subject", "cue": cue.text}
+    if side == "before":
+        subject = _aside_subject(toks, i, ci, role)
+        if subject is not None:
+            s_role, s_tok = subject
+            out = {"role": s_role, "resolution": "aside_subject", "cue": s_tok.text, "aside_cue": cue.text}
+            if s_role == "item":
+                out["ref_token"] = s_tok
+            return out
     out = {"role": role, "resolution": f"nearest_cue_{side}", "cue": cue.text, "distance": d}
     if role == "item":
         out["ref_token"] = cue
@@ -602,6 +641,46 @@ def _parenthetical_subject(toks: list[_Tok], i: int, c: int, role: str) -> bool:
         if t.kind == "cue" and t.role in ("ledger", "onchain") and t.role != role:
             return set_off
     return False
+
+
+_ASIDE_CLOSERS = {",": ",", "(": ")", "-": "-"}
+
+
+def _aside_subject(toks: list[_Tok], i: int, c: int, role: str) -> tuple[str, _Tok] | None:
+    """The clause subject when the nearest cue before an amount sits in an aside:
+    "The shortfall, measured against ledger liabilities, was $X" states the
+    shortfall, not the ledger balance. The aside opens with a comma, bracket or dash
+    (or a contrast word such as "unlike") before the cue, with no other cue between,
+    and a punctuation aside closes between the cue and the amount. The subject is the
+    nearest role cue or reference before the aside, with no amount between. None when
+    there is no aside, no subject, or the subject has the cue's own role."""
+    opener = None
+    for k in range(c - 1, -1, -1):
+        t = toks[k]
+        if t.kind == "amount" or t.kind == "ref" or (t.kind == "cue" and t.role != "neutral"):
+            return None
+        if (t.kind == "punct" and t.text in _ASIDE_CLOSERS) or (t.kind == "word" and t.low in _CONTRAST_WORDS):
+            opener = k
+            break
+    if opener is None:
+        return None
+    o = toks[opener]
+    between = toks[c + 1:i]
+    if o.kind == "punct":
+        if not any(t.kind == "punct" and t.text == _ASIDE_CLOSERS[o.text] for t in between):
+            return None
+    elif not any(t.low in _PARENTHETICAL_VERBS for t in between):
+        return None
+    for k in range(opener - 1, -1, -1):
+        t = toks[k]
+        if t.kind == "amount":
+            return None
+        if t.kind == "ref" or (t.kind == "cue" and t.role != "neutral"):
+            s_role = "item" if t.kind == "ref" else t.role
+            if s_role == role and t.kind != "ref":
+                return None
+            return s_role, t
+    return None
 
 
 @dataclass
@@ -776,16 +855,45 @@ def _negated(clause_text: str, rel_start: int, rel_end: int) -> bool:
     return bool(_NEG_AFTER_RE.match(clause_text[rel_end:].lstrip()))
 
 
+_N_COMPARATIVES = 4  # the first entries of _DIRECTIONS are the comparative patterns
+
+
+def _negation_binds_item(words: list[str], k: int) -> bool:
+    """True when the negation at words[k] negates an item noun ("no reconciling
+    item", "no eligible open entries"), not the direction stated later."""
+    j = k + 1
+    while j < len(words) and words[j].lower() in _NEG_NOUN_ADJ:
+        j += 1
+    return j < len(words) and words[j].lower() in _NEG_ITEM_NOUNS
+
+
+def _direction_negated(clause: str, start: int, end: int, comparative: bool) -> bool:
+    """Section 6: a negated direction statement routes to review. A negation inside a
+    comparative ("reserves did not exceed liabilities"), anywhere earlier in the
+    clause without a comma between (unless it negates an item noun), or a negating
+    phrase right after the statement marks it negated."""
+    if comparative and _NEG_BEFORE_RE.search(clause[start:end]):
+        return True
+    before = clause[:start].rsplit(",", 1)[-1]
+    words = re.findall(r"[A-Za-z0-9]+(?:['\u2019][A-Za-z]+)?", before)
+    for k, w in enumerate(words):
+        tail = " ".join(words[k:k + 2])
+        if (_NEG_BEFORE_RE.fullmatch(w) or _NEG_BEFORE_RE.match(tail)) and not _negation_binds_item(words, k):
+            return True
+    return bool(_NEG_AFTER_RE.match(clause[end:].lstrip()))
+
+
 def _direction_statements(clause: str, offset: int) -> list[dict]:
     out = []
     for m in _DIRECTION_RE.finditer(clause):
+        idx = _index(m)
         out.append({
             "kind": "direction",
             "text": m.group(0),
             "start": offset + m.start(),
             "end": offset + m.end(),
-            "direction": _DIRECTIONS[_index(m)][0],
-            "negated": _negated(clause, m.start(), m.end()),
+            "direction": _DIRECTIONS[idx][0],
+            "negated": _direction_negated(clause, m.start(), m.end(), idx < _N_COMPARATIVES),
         })
     return out
 
@@ -794,13 +902,20 @@ def _split_claims(clause: str, offset: int) -> list[dict]:
     """Explained or unexplained portion stated without an amount ("fully explained",
     "no item explains the variance"), each a $0 claim for its role."""
     out = []
+    partial = bool(_PARTIAL_RE.search(clause))
     for m in _SPLIT_CLAIM_RE.finditer(clause):
         role, _pattern, scope = V.SPLIT_CLAIMS[_index(m)]
+        if scope == "attribution" and partial:
+            continue  # "partly explains the shortfall" states no split; amounts are checked separately
         own_negation = bool(_SELF_NEGATED_RE.match(m.group(0)))
+        if scope in ("subject", "clause"):
+            named = scope == "subject" or bool(_SPLIT_SUBJECT_RE.search(clause))
+        else:
+            named = bool(_SPLIT_SUBJECT_RE.search(m.group(0)))
         out.append({
             "kind": "split_claim", "text": m.group(0), "start": offset + m.start(), "end": offset + m.end(),
-            "role": role, "value": 0.0,
-            "subject_named": scope == "subject" or bool(_SPLIT_SUBJECT_RE.search(clause)),
+            "role": role, "value": 0.0, "scope": scope,
+            "subject_named": named,
             "negated": (not own_negation) and _negated(clause, m.start(), m.end()),
         })
     return out
@@ -821,6 +936,10 @@ def _band_statements(clause: str, offset: int, amounts_at: dict[int, float]) -> 
             "kind": "band", "text": clause[m_start:m_end], "start": offset + m_start,
             "end": offset + m_end, "negated": _negated(clause, m_start, m_end), **rec,
         })
+
+    def table(rows: list, m: re.Match) -> dict:
+        row = rows[_index(m)]
+        return {"M1": row[1], "M2": row[2], "M3": row[3]}
 
     for m in _BAND_RANGE_RE.finditer(clause):
         v1, v2 = amounts_at.get(m.start("a1")), amounts_at.get(m.start("a2"))
@@ -852,17 +971,49 @@ def _band_statements(clause: str, offset: int, amounts_at: dict[int, float]) -> 
         else:
             bands = ["M3"] if side == "above" else ["M1", "M2"]
         emit(m.start(), m.end(), statement="comparison", side=side, threshold=value, bands=bands)
+    # escalation phrases carry their own negation ("does not require escalation")
+    for m in _ESCALATION_RE.finditer(clause):
+        if free(m.start(), m.end()):
+            consumed.append((m.start(), m.end()))
+            out.append({"kind": "band", "text": clause[m.start():m.end()], "start": offset + m.start(),
+                        "end": offset + m.end(), "negated": False, "statement": "escalation",
+                        "verdicts": table(V.ESCALATION_CLAIMS, m), "reason": "escalation_claim_unresolved"})
+    # numbered labels and band positions run before threshold names claim "materiality"
+    for m in _BAND_NUMBER_RE.finditer(clause):
+        if free(m.start(), m.end()):
+            digit = next(g for g in m.groups() if g)
+            emit(m.start(), m.end(), statement="label", bands=[f"M{digit}"])
+    for m in _BAND_POSITION_RE.finditer(clause):
+        if free(m.start(), m.end()):
+            emit(m.start(), m.end(), statement="word", verdicts=table(V.BAND_POSITION_WORDS, m),
+                 reason="band_word_ambiguous")
+    variance_named = bool(_SPLIT_SUBJECT_RE.search(clause))
+    for m in _SEVERITY_RE.finditer(clause):
+        if free(m.start(), m.end()):
+            if variance_named:
+                emit(m.start(), m.end(), statement="word", verdicts=table(V.SEVERITY_WORDS, m),
+                     reason="band_word_ambiguous")
+            else:
+                emit(m.start(), m.end(), statement="severity", bands=None, reason="severity_word_subject_unresolved")
     for m in _TREF_RE.finditer(clause):
         if free(m.start(), m.end()):
             consumed.append((m.start(), m.end()))  # a threshold named with no comparison claims no band
     for m in _BAND_LABEL_RE.finditer(clause):
         if free(m.start(), m.end()):
-            emit(m.start(), m.end(), statement="label", bands=[m.group(0)])
+            emit(m.start(), m.end(), statement="label", bands=[f"M{m.group(0)[-1]}"])
     for m in _BAND_WORD_RE.finditer(clause):
         if free(m.start(), m.end()):
             row = V.BAND_WORDS[_index(m)]
             emit(m.start(), m.end(), statement="word", verdicts={"M1": row[1], "M2": row[2], "M3": row[3]},
                  reason="band_word_ambiguous")
+    for m in _ZERO_VARIANCE_RE.finditer(clause):
+        if free(m.start(), m.end()):
+            emit(m.start(), m.end(), statement="zero_variance", bands=None)
+    if not out and _BAND_VOCAB_RE.search(clause):
+        m = _BAND_VOCAB_RE.search(clause)
+        out.append({"kind": "band", "text": m.group(0), "start": offset + m.start(), "end": offset + m.end(),
+                    "negated": False, "statement": "vocabulary", "bands": None,
+                    "reason": "band_vocabulary_unresolved"})
     return out
 
 
@@ -907,7 +1058,9 @@ def _period_statements(text: str, clause_start: int, toks: list[_Tok]) -> list[d
         else:
             cued = bool(_PERIOD_CUE_RE.search(clause_text))
             if not cued:
-                out.append({"kind": "date", "form": "transaction_date", "period": None, **rec})
+                d = t.data
+                out.append({"kind": "date", "form": "transaction_date", "period": None,
+                            "ym": None if d["ambiguous"] or not d["valid"] else (d["year"], d["month"]), **rec})
                 continue
             d = t.data
             if d["ambiguous"] or not d["valid"]:
@@ -917,6 +1070,28 @@ def _period_statements(text: str, clause_start: int, toks: list[_Tok]) -> list[d
             period = f"{d['year']:04d}-{d['month']:02d}"
             out.append({"kind": "period", "form": "cued_date", "period": period, "day": d["day"],
                         "negated": _negated(text[clause_start:], rel, rel + len(t.text)), **rec})
+    return out
+
+
+def _bare_period_statements(clause: str, offset: int) -> list[dict]:
+    """Period words that stand alone in a masked clause (dates and month-year forms
+    are already masked): fiscal and half-year forms, bare month names, bare years."""
+    out: list[dict] = []
+    taken: list[tuple[int, int]] = []
+    for m in _FISCAL_RE.finditer(clause):
+        taken.append(m.span())
+        out.append({"kind": "period_bare", "form": "fiscal", "text": m.group(0),
+                    "start": offset + m.start(), "end": offset + m.end()})
+    for m in _BARE_MONTH_RE.finditer(clause):
+        if any(a <= m.start() < b for a, b in taken):
+            continue
+        out.append({"kind": "period_bare", "form": "month", "month": _month_number(m.group(0)), "text": m.group(0),
+                    "start": offset + m.start(), "end": offset + m.end()})
+    for m in _BARE_YEAR_RE.finditer(clause):
+        if any(a <= m.start() < b for a, b in taken):
+            continue
+        out.append({"kind": "period_bare", "form": "year", "year": int(m.group(1)), "text": m.group(0),
+                    "start": offset + m.start(), "end": offset + m.end()})
     return out
 
 
@@ -938,13 +1113,24 @@ def check_narrative_consistency(parsed: dict, truth: CaseTruth) -> NarrativeResu
 
     A narrative longer than WINDOWS["max_narrative_chars"] is not extracted, and an
     internal error is caught; both route to review, so neither can pass."""
-    text = nfkc_spaced(str(parsed.get("narrative") or ""))
+    raw = str(parsed.get("narrative") or "")
+    # dashes fold one for one, so every offset below is an offset into nfkc_spaced(raw)
+    text = fold_dashes(nfkc_spaced(raw))
     if len(text) > V.WINDOWS["max_narrative_chars"]:
         return NarrativeResult(review_reasons=(f"narrative_too_long: {len(text)} characters",))
     try:
-        return _check(text, parsed, truth)
+        result = _check(text, parsed, truth)
     except Exception as exc:  # the extractor must never pass, or crash the scorer, on input it mishandles
         return NarrativeResult(review_reasons=(f"extractor_error: {type(exc).__name__}",))
+    if has_format_characters(raw):
+        # a format character inside a word splits it once replaced by a space
+        # ("sur<U+00AD>plus"), so the words it hides were never matched
+        result = NarrativeResult(
+            failure_modes=result.failure_modes,
+            review_reasons=("format_characters_in_narrative",) + result.review_reasons,
+            extractions=result.extractions,
+        )
+    return result
 
 
 def _check(text: str, parsed: dict, truth: CaseTruth) -> NarrativeResult:
@@ -970,6 +1156,8 @@ def _check(text: str, parsed: dict, truth: CaseTruth) -> NarrativeResult:
         review(f"non_usd_amount: {m.group(0)}")
     for m in _AMOUNT_IN_WORDS_RE.finditer(text):
         review(f"amount_in_words: {m.group(0)}")
+    for m in _UNKNOWN_DOLLAR_RE.finditer(text):
+        review(f"unknown_currency_marker: {m.group(0)}")
 
     specials = _find_specials(text, truth)
     masked = _mask(text, specials)
@@ -1014,6 +1202,7 @@ def _check(text: str, parsed: dict, truth: CaseTruth) -> NarrativeResult:
         bands += _band_statements(clause_masked, cs, amounts_at)
         assets += _asset_statements(clause_masked, cs)
         periods += _period_statements(text, cs, ctoks)
+        periods += _bare_period_statements(clause_masked, cs)
 
     for e in directions + splits + bands + assets + periods:
         e["text"] = text[e["start"]:e["end"]]  # statements were matched on masked text
@@ -1022,9 +1211,25 @@ def _check(text: str, parsed: dict, truth: CaseTruth) -> NarrativeResult:
     for c in splits:
         target = ctx.explained if c["role"] == "explained" else ctx.unexplained
         c["expected"] = abs(target)
-        if c["negated"]:
+        settled = abs(target) <= USD_TOLERANCE
+        if c["negated"] and c["scope"] == "attribution":
+            c["verdict"] = "ignored"  # "WD-1 does not explain the shortfall" states no split
+        elif c["negated"]:
             c["verdict"] = "review"
             review(f"split_claim_negated: {c['text']}")
+        elif c["scope"] == "attribution":
+            c["verdict"] = "ok" if settled else "review"
+            if not settled:
+                review(f"split_attribution_with_remainder: {c['text']}")
+        elif c["scope"] == "resolution":
+            if settled:
+                c["verdict"] = "ok"
+            elif c["subject_named"]:
+                c["verdict"] = "FM-001"
+                fire("FM-001")
+            else:
+                c["verdict"] = "review"
+                review(f"split_resolution_with_remainder: {c['text']}")
         elif not c["subject_named"]:
             c["verdict"] = "review"
             review(f"split_claim_subject_unresolved: {c['text']}")
@@ -1059,6 +1264,16 @@ def _check(text: str, parsed: dict, truth: CaseTruth) -> NarrativeResult:
 
     # band (FM-002)
     for b in bands:
+        if b.get("statement") == "zero_variance":
+            # "there is no variance", "the variance is zero": an amount-free variance claim
+            if b["negated"]:
+                b["verdict"] = "ignored"
+            elif abs(truth.variance_usd) > USD_TOLERANCE:
+                b["verdict"] = "FM-001"
+                fire("FM-001")
+            else:
+                b["verdict"] = "ok"
+            continue
         if b["negated"]:
             b["verdict"] = "review"
             review(f"band_negated: {b['text']}")
@@ -1115,10 +1330,39 @@ def _check(text: str, parsed: dict, truth: CaseTruth) -> NarrativeResult:
 
     # period (FM-016)
     cutoff_day = int(period_cutoff_date(truth.period)[-2:])
+    case_ym = (int(truth.period[:4]), int(truth.period[5:7]))
+    next_ym = (case_ym[0] + case_ym[1] // 12, case_ym[1] % 12 + 1)
     named_periods = set()
     for p in periods:
         if p["kind"] == "date":
-            p["verdict"] = "ignored"
+            # a transaction date after the cutoff is ordinary in a timing narrative; one
+            # before the period starts names another period without a cue
+            if p.get("ym") is not None and p["ym"] < case_ym:
+                p["verdict"] = "review"
+                review(f"period_date_uncued_before_period: {p['text']}")
+            else:
+                p["verdict"] = "ignored"
+            continue
+        if p["kind"] == "period_bare":
+            if p["form"] == "fiscal":
+                p["verdict"] = "review"
+                review(f"fiscal_or_half_year_period: {p['text']}")
+            elif p["form"] == "month":
+                if p["month"] == case_ym[1]:
+                    p["verdict"] = "ok"
+                elif p["month"] == next_ym[1]:
+                    p["verdict"] = "ignored"  # the month after the cutoff, as for post-cutoff dates
+                else:
+                    p["verdict"] = "review"
+                    review(f"bare_month_other_period: {p['text']}")
+            else:
+                if p["year"] == case_ym[0]:
+                    p["verdict"] = "ok"
+                elif p["year"] == next_ym[0] and next_ym[0] != case_ym[0]:
+                    p["verdict"] = "ignored"
+                else:
+                    p["verdict"] = "review"
+                    review(f"bare_year_other_period: {p['text']}")
             continue
         if p["form"] == "quarter":
             p["verdict"] = "review"
