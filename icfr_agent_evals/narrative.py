@@ -114,6 +114,11 @@ _COMPARISON_AFTER_RE = re.compile(
     rf"(?:{_alt(V.DIRECTION_LIABILITY_NOUNS + V.DIRECTION_RESERVE_NOUNS)})(?![A-Za-z0-9])",
     _I,
 )
+_COMPARISON_BARE_RE = re.compile(
+    rf" (?:{_alt(V.COMPARISON_AFTER_AMOUNT_BARE)})(?![- ](?:term|lived)| of| by)(?![A-Za-z0-9])", _I
+)
+_PARENTHETICAL_VERBS = frozenset(V.PARENTHETICAL_VERBS)
+_LABEL_RES = [(role, re.compile(rf"(?<![A-Za-z0-9])(?:{p}) ?:? ?$", _I)) for role, p in V.LABEL_CUES]
 _PARALLEL_RE = re.compile(_w(_alt(V.PARALLEL_LIST_WORDS)), _I)
 
 _BAND_CMP = {k: re.compile(_alt(v), _I) for k, v in V.BAND_COMPARATORS.items()}
@@ -132,7 +137,8 @@ _BAND_RANGE_RE = re.compile(
 _BAND_LABEL_RE = re.compile(_w(V.BAND_LABEL))  # case-sensitive
 _BAND_WORD_RE = re.compile(_groups([row[0] for row in V.BAND_WORDS]), _I)
 
-_SPLIT_CLAIM_RE = re.compile(_groups([p for _, p in V.SPLIT_CLAIMS]), _I)
+_SPLIT_CLAIM_RE = re.compile(_groups([row[1] for row in V.SPLIT_CLAIMS]), _I)
+_SPLIT_SUBJECT_RE = re.compile(_w(_alt(V.SPLIT_CLAIM_SUBJECTS)), _I)
 _SELF_NEGATED_RE = re.compile(_alt(V.SPLIT_CLAIMS_SELF_NEGATED), _I)
 _NON_USD_RE = re.compile(
     rf"(?<![A-Za-z0-9])(?:{_alt(V.NON_USD_CURRENCY)}) ?[0-9][0-9,.]*|[0-9][0-9,.]* ?(?:{_alt(V.NON_USD_CURRENCY)})(?![A-Za-z0-9])"
@@ -434,7 +440,7 @@ def _resolve_role(toks: list[_Tok], i: int, ctx: "_Context") -> dict:
 
     Rules, in order: a parallel list ("respectively") binds nothing; an amount right
     after a band comparator, or in a "between" range, that equals a policy threshold
-    is a threshold; "by $X" after a comparison word, or "$X below liabilities", is the
+    is a threshold; a bare balance word right before it ("ledger $X") labels it; "by $X" after a comparison word, or "$X below liabilities", is the
     variance; two amounts joined by "and" ("were $A and $B") bind nothing; otherwise the
     nearest cue binds, counting the words between that are not linking words. Ties
     at the same distance are unresolved, except at distance zero between a cue before
@@ -447,6 +453,13 @@ def _resolve_role(toks: list[_Tok], i: int, ctx: "_Context") -> dict:
         return {"role": "unresolved", "resolution": "parallel_list"}
 
     if _is_threshold_value(value):
+        # "$25,000-$250,000", "the $25,000 and $250,000 thresholds": a pair of policy thresholds
+        for a, b in ((i + 1, i + 2), (i - 1, i - 2)):
+            if 0 <= b < len(toks) and toks[a].low in ("-", "\u2013", "to", "and", "through") and (
+                toks[b].kind == "amount" and _is_threshold_value(toks[b].data["value"])
+                and not _near(toks[b].data["value"], value)
+            ):
+                return {"role": "threshold", "resolution": "threshold_pair", "cue": toks[a].text}
         words = _preceding_words(toks, i, _ARTICLES)
         for n in range(len(words), 0, -1):
             if _BAND_CMP_FULL.fullmatch(" ".join(words[-n:])):
@@ -454,6 +467,12 @@ def _resolve_role(toks: list[_Tok], i: int, ctx: "_Context") -> dict:
         window = toks[max(0, i - V.WINDOWS["range_window"]):i]
         if any(t.kind == "word" and t.low == V.BAND_RANGE_WORD for t in window):
             return {"role": "threshold", "resolution": "band_range", "cue": V.BAND_RANGE_WORD}
+
+    before = ctx.text[max(0, amt.start - 24):amt.start]
+    for role, rx in _LABEL_RES:
+        lab = rx.search(before)
+        if lab:
+            return {"role": role, "resolution": "label", "cue": lab.group(0).strip()}
 
     if i >= 1 and toks[i - 1].kind == "word" and toks[i - 1].low == "by":
         k = i - 2
@@ -468,7 +487,7 @@ def _resolve_role(toks: list[_Tok], i: int, ctx: "_Context") -> dict:
         ):
             return {"role": "variance", "resolution": "comparison_by", "cue": toks[k].text}
 
-    m = _COMPARISON_AFTER_RE.match(ctx.masked, amt.end)
+    m = _COMPARISON_AFTER_RE.match(ctx.masked, amt.end) or _COMPARISON_BARE_RE.match(ctx.masked, amt.end)
     if m:
         return {"role": "variance", "resolution": "comparison_amount", "cue": ctx.text[m.start():m.end()].strip()}
 
@@ -522,10 +541,31 @@ def _resolve_role(toks: list[_Tok], i: int, ctx: "_Context") -> dict:
             "cues": sorted({c[3].text for c in nearest}),
         }
     d, side, role, cue = nearest[0]
+    if role in ("ledger", "onchain") and side == "before" and _parenthetical_subject(toks, i, toks.index(cue), role):
+        return {"role": "unresolved", "resolution": "parenthetical_subject", "cue": cue.text}
     out = {"role": role, "resolution": f"nearest_cue_{side}", "cue": cue.text, "distance": d}
     if role == "item":
         out["ref_token"] = cue
     return out
+
+
+def _parenthetical_subject(toks: list[_Tok], i: int, c: int, role: str) -> bool:
+    """True for "reserves, unlike ledger liabilities, were $X": the nearest balance
+    cue sits in a comma-delimited aside, a verb joins the amount, and a balance cue of
+    the other role, with no amount in between, may be the real subject."""
+    between = toks[c + 1:i]
+    if not any(t.text == "," for t in between) or not any(t.low in _PARENTHETICAL_VERBS for t in between):
+        return False
+    seen_comma = False
+    for k in range(c - 1, -1, -1):
+        t = toks[k]
+        if t.kind == "amount":
+            return False
+        if t.text == ",":
+            seen_comma = True
+        if t.kind == "cue" and t.role in ("ledger", "onchain") and t.role != role:
+            return seen_comma
+    return False
 
 
 @dataclass
@@ -719,11 +759,12 @@ def _split_claims(clause: str, offset: int) -> list[dict]:
     "no item explains the variance"), each a $0 claim for its role."""
     out = []
     for m in _SPLIT_CLAIM_RE.finditer(clause):
-        role, pattern = V.SPLIT_CLAIMS[_index(m)]
+        role, _pattern, scope = V.SPLIT_CLAIMS[_index(m)]
         own_negation = bool(_SELF_NEGATED_RE.match(m.group(0)))
         out.append({
             "kind": "split_claim", "text": m.group(0), "start": offset + m.start(), "end": offset + m.end(),
             "role": role, "value": 0.0,
+            "subject_named": scope == "subject" or bool(_SPLIT_SUBJECT_RE.search(clause)),
             "negated": (not own_negation) and _negated(clause, m.start(), m.end()),
         })
     return out
@@ -931,6 +972,9 @@ def check_narrative_consistency(parsed: dict, truth: CaseTruth) -> NarrativeResu
         if c["negated"]:
             c["verdict"] = "review"
             review(f"split_claim_negated: {c['text']}")
+        elif not c["subject_named"]:
+            c["verdict"] = "review"
+            review(f"split_claim_subject_unresolved: {c['text']}")
         elif abs(target) <= USD_TOLERANCE:
             c["verdict"] = "ok"
         else:

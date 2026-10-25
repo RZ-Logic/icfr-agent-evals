@@ -725,6 +725,7 @@ def fully_explained_truth(asset):
     "The shortfall of $120,000 is fully explained by WD-2512-04417.",
     "Reconciling items explain the shortfall in full.",
     "WD-2512-04417 explains the entire shortfall.",
+    "WD-2512-04417 fully explains the shortfall.",
     "No unexplained remainder is left.",
 ])
 def test_full_explanation_claim_checked_against_citations(asset, text):
@@ -785,3 +786,63 @@ def test_parallel_amounts_route_to_review(asset, text):
 def test_shortfall_phrasings_contradict_a_surplus(asset, text):
     assert outcome(run(surplus_truth(asset), text)) == (("FM-003",), False)
     assert outcome(run(shortfall_truth(asset), text)) == ((), False)
+
+
+@pytest.mark.parametrize("asset", ALL_ASSETS)
+@pytest.mark.parametrize("text", [
+    "No reconciling item explains the remaining $40,000.",
+    "No reconciling item explains the rest of the shortfall.",
+    "WD-2512-04417 fully explains $80,000 of the shortfall.",
+])
+def test_claims_about_part_of_the_variance_are_not_zero_claims(asset, text):
+    assert outcome(run(shortfall_truth(asset), text)) == ((), False)
+
+
+@pytest.mark.parametrize("asset", ALL_ASSETS)
+@pytest.mark.parametrize("text", [
+    "The withdrawal WD-2512-04417 is fully explained by the custodian's transfer log.",
+    "Reconciling items explain it in full.",
+])
+def test_full_explanation_claim_without_a_variance_subject_routes_to_review(asset, text):
+    result = run(shortfall_truth(asset), text)
+    assert outcome(result) == ((), True)
+    assert result.review_reasons[0].startswith("split_claim_subject_unresolved")
+
+
+@pytest.mark.parametrize("asset", ALL_ASSETS)
+@pytest.mark.parametrize("text", [
+    "The entire $120,000 shortfall is unexplained.",
+    "The shortfall is $120,000 (ledger $10,000,000, reserves $9,880,000), all of which is unexplained.",
+])
+def test_nothing_explained_claim_contradicts_a_cited_item(asset, text):
+    assert outcome(run(shortfall_truth(asset), text)) == (("FM-001",), False)
+    assert outcome(run(shortfall_truth(asset), text, reconciling_items=[])) == ((), False)
+
+
+@pytest.mark.parametrize("asset", ALL_ASSETS)
+def test_balance_named_in_an_aside_routes_to_review(asset):
+    """The nearest balance word may not be the subject, so the swapped figure is
+    neither passed nor fired on."""
+    truth = shortfall_truth(asset)
+    assert outcome(run(truth, "Reserves, unlike ledger liabilities, were $10,000,000.")) == ((), True)
+    assert outcome(run(truth, "Ledger liabilities, as reported, were $9,880,000.")) == (("FM-001",), False)
+
+
+@pytest.mark.parametrize("asset", ALL_ASSETS)
+@pytest.mark.parametrize("text", [
+    "Liabilities, at $10,000,000, exceeded reserves, at $9,880,000.",
+    "The variance is in M2 ($25,000-$250,000).",
+    "The $25,000 and $250,000 thresholds bracket the variance.",
+    "Reserves were $120,000 short.",
+    "Reserves came up $120,000 short at the cutoff.",
+    "Liabilities were $120,000 over reserves.",
+    "Reserves were $120,000 under liabilities.",
+])
+def test_compact_correct_phrasings_pass(asset, text):
+    assert outcome(run(shortfall_truth(asset), text)) == ((), False)
+
+
+@pytest.mark.parametrize("asset", ALL_ASSETS)
+@pytest.mark.parametrize("text", ["Reserves were $120,000 short.", "Liabilities were $120,000 over reserves."])
+def test_compact_shortfall_phrasings_contradict_a_surplus(asset, text):
+    assert outcome(run(surplus_truth(asset), text)) == (("FM-003",), False)

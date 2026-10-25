@@ -43,6 +43,7 @@ DIRECTION_WORDS: list[list[str]] = [
     ["shortfall", r"(?:fell|falls|fall|falling) short(?: of)?"],
     ["shortfall", r"(?:came|comes|come|coming) up short"],
     ["shortfall", r"short (?:by|of)"],
+    ["shortfall", r"(?<=\ue000 )short(?![- ](?:term|lived)| of| by)"],  # "$120,000 short"
     ["shortfall", r"under[- ]?collaterali[sz](?:ed|ation)"],
     ["shortfall", r"under[- ]?reserved"],
     ["shortfall", r"negative variance"],
@@ -63,7 +64,7 @@ DIRECTION_COPULAS: list[str] = [
     r"were", r"was", r"are", r"is", r"stood", r"remained", r"remain", r"remains", r"came in",
 ]
 DIRECTION_ABOVE_VERBS: list[str] = [
-    r"above", r"higher than", r"greater than", r"more than", r"in excess of",
+    r"above", r"over", r"higher than", r"greater than", r"more than", r"in excess of",
     r"exceed(?:s|ed|ing)?", r"surpass(?:es|ed|ing)?", r"outstrip(?:s|ped|ping)?",
 ]
 DIRECTION_BELOW_VERBS: list[str] = [
@@ -163,19 +164,30 @@ ROLE_CUES: list[list[str]] = [
     ["variance", r"variances?|differences?|gap|net position"],
 ]
 # Phrases that state the explained or unexplained portion without an amount. Each
-# is checked as a $0 claim: [role, pattern], where role is the quantity stated to be
-# zero. Phrases that carry their own negation are listed in SPLIT_CLAIMS_SELF_NEGATED
-# and are not re-checked for negation.
+# is checked as a $0 claim: [role, pattern, scope], where role is the quantity stated
+# to be zero. scope "subject": the phrase itself names the variance. scope "clause":
+# the claim counts only when its clause names the variance (SPLIT_CLAIM_SUBJECTS);
+# otherwise its subject is unknown ("the withdrawal is fully explained") and it
+# routes to review. Phrases that carry their own negation are listed in
+# SPLIT_CLAIMS_SELF_NEGATED and are not re-checked for negation.
+_V = r"(?:variance|shortfall|surplus|deficit|difference)"
 SPLIT_CLAIMS: list[list[str]] = [
-    ["unexplained", r"(?:fully|entirely|completely|wholly) (?:explained|reconciled|accounted for)"],
-    ["unexplained", r"(?:explained|reconciled|accounted for) (?:in full|in its entirety|completely|entirely|fully)"],
-    ["unexplained", r"explain(?:s|ed)? (?:the )?(?:(?:entire|whole|full) )?(?:variance|shortfall|surplus|deficit|difference) (?:in full|in its entirety|completely|entirely|fully)"],
-    ["unexplained", r"explain(?:s|ed)? (?:the )?(?:entire|whole|full) (?:variance|shortfall|surplus|deficit|difference)"],
-    ["unexplained", r"no (?:unexplained|unreconciled|residual|remaining) (?:remainder|balance|amount|portion|difference|variance|shortfall|surplus)"],
-    ["unexplained", r"nothing (?:remains |is left )?(?:unexplained|unreconciled)"],
-    ["explained", r"(?:fully|entirely|completely|wholly) (?:unexplained|unreconciled)"],
-    ["explained", r"none of the (?:variance|shortfall|surplus|deficit|difference) is (?:explained|reconciled|accounted for)"],
-    ["explained", r"no (?:(?:eligible|open|reconciling|pending|cited) )*items? (?:explains?|accounts? for|reconciles?|offsets?)"],
+    ["unexplained", rf"(?:fully|entirely|completely|wholly) (?:explains?|reconciles?|accounts? for) (?:the )?(?:\ue000+ )?{_V}", "subject"],
+    ["unexplained", rf"(?:explains?|explained|reconciles?|reconciled|accounts? for|accounted for) (?:the )?(?:entire|whole|full|total) (?:\ue000+ )?{_V}", "subject"],
+    ["unexplained", rf"(?:explains?|explained|reconciles?|reconciled|accounts? for|accounted for) (?:the )?(?:\ue000+ )?{_V} (?:in full|in its entirety|completely|entirely|fully)", "subject"],
+    ["unexplained", r"no (?:unexplained|unreconciled|residual|remaining) (?:remainder|balance|amount|portion|difference|variance|shortfall|surplus)", "subject"],
+    ["unexplained", r"nothing (?:remains |is left )?(?:unexplained|unreconciled)", "subject"],
+    ["unexplained", r"(?:fully|entirely|completely|wholly) (?:explained|reconciled|accounted for)", "clause"],
+    ["unexplained", r"(?:explained|reconciled|accounted for) (?:in full|in its entirety|completely|entirely|fully)", "clause"],
+    ["unexplained", r"(?:explains?|explained|reconciles?|reconciled|accounts? for|accounted for) (?:it|this|them) (?:in full|in its entirety|completely|entirely|fully)", "clause"],
+    ["explained", rf"none of the (?:\ue000+ )?{_V} is (?:explained|reconciled|accounted for)", "subject"],
+    ["explained", rf"no (?:(?:eligible|open|reconciling|pending|cited) )*items? (?:explains?|accounts? for|reconciles?|offsets?) (?:any (?:part|portion) of )?(?:the )?(?:\ue000+ )?{_V}", "subject"],
+    ["explained", rf"(?:entire|whole|full|total) (?:\ue000+ )?{_V} (?:is|was|remains|remained|stays|stayed) (?:unexplained|unreconciled)", "subject"],
+    ["explained", r"all of (?:which|it) (?:is|was|remains|remained) (?:unexplained|unreconciled)", "clause"],
+    ["explained", r"(?:fully|entirely|completely|wholly) (?:unexplained|unreconciled)", "clause"],
+]
+SPLIT_CLAIM_SUBJECTS: list[str] = [
+    r"variances?", r"shortfalls?", r"surplus(?:es)?", r"deficits?", r"differences?", r"gap", r"excess",
 ]
 SPLIT_CLAIMS_SELF_NEGATED: list[str] = [r"no ", r"nothing ", r"none "]
 
@@ -201,6 +213,21 @@ LINK_PUNCT: list[str] = ["(", ")", ":", "=", "-", "\u2013", "\u2014", "'", '"']
 COMPARISON_AFTER_AMOUNT: list[str] = [
     r"below", r"above", r"under", r"over", r"short of", r"more than", r"less than",
     r"higher than", r"lower than", r"greater than", r"in excess of", r"ahead of", r"behind",
+]
+# A bare balance word right before an amount labels it ("ledger $10,000,000,
+# reserves $9,880,000"): [role, pattern], matched against the text just before the
+# amount, with only a space or colon between.
+LABEL_CUES: list[list[str]] = [
+    ["ledger", r"ledger|books"],
+    ["onchain", r"on[- ]?chain|wallets?"],
+]
+# The same with nothing after the comparator: "reserves were $120,000 short."
+COMPARISON_AFTER_AMOUNT_BARE: list[str] = [r"short"]
+# Verbs that join a balance to its amount across a parenthetical ("reserves, unlike
+# ledger liabilities, were $X"), where the nearest balance word may not be the subject.
+PARENTHETICAL_VERBS: list[str] = [
+    "were", "was", "are", "is", "stood", "stand", "stands", "totaled", "totalled", "totals",
+    "came", "amounted", "remained", "remain",
 ]
 # Words that make "by $X" a comparison amount ("reserves exceeded liabilities by $X").
 COMPARISON_WORDS: list[str] = [
@@ -333,8 +360,12 @@ def all_vocabularies() -> dict:
         "LINK_WORDS": LINK_WORDS,
         "LINK_PUNCT": LINK_PUNCT,
         "SPLIT_CLAIMS": SPLIT_CLAIMS,
+        "SPLIT_CLAIM_SUBJECTS": SPLIT_CLAIM_SUBJECTS,
         "SPLIT_CLAIMS_SELF_NEGATED": SPLIT_CLAIMS_SELF_NEGATED,
         "COMPARISON_AFTER_AMOUNT": COMPARISON_AFTER_AMOUNT,
+        "COMPARISON_AFTER_AMOUNT_BARE": COMPARISON_AFTER_AMOUNT_BARE,
+        "LABEL_CUES": LABEL_CUES,
+        "PARENTHETICAL_VERBS": PARENTHETICAL_VERBS,
         "COMPARISON_WORDS": COMPARISON_WORDS,
         "PARALLEL_LIST_WORDS": PARALLEL_LIST_WORDS,
         "IN_SCOPE_TICKERS": IN_SCOPE_TICKERS,
