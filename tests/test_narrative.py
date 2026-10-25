@@ -846,3 +846,51 @@ def test_compact_correct_phrasings_pass(asset, text):
 @pytest.mark.parametrize("text", ["Reserves were $120,000 short.", "Liabilities were $120,000 over reserves."])
 def test_compact_shortfall_phrasings_contradict_a_surplus(asset, text):
     assert outcome(run(surplus_truth(asset), text)) == (("FM-003",), False)
+
+
+# --- Robustness ---------------------------------------------------------------------
+
+
+def test_overlong_narrative_routes_to_review():
+    truth = shortfall_truth("BTC")
+    text = "The shortfall is $120,000. " * (narrative_vocab.WINDOWS["max_narrative_chars"] // 20)
+    result = run(truth, text)
+    assert outcome(result) == ((), True)
+    assert result.review_reasons[0].startswith("narrative_too_long")
+
+
+def test_internal_error_routes_to_review(monkeypatch):
+    def boom(*args):
+        raise RuntimeError("simulated")
+
+    monkeypatch.setattr(narrative, "_check", boom)
+    result = run(shortfall_truth("BTC"), "The shortfall is $120,000.")
+    assert outcome(result) == ((), True)
+    assert result.review_reasons == ("extractor_error: RuntimeError",)
+
+
+FUZZ_PIECES = [
+    "$120,000", "$1.2M", "USD 1,234,567", "-$40,000", "($40,000)", "$25,000", "$250,000", "+$5", "$", "120,000",
+    "12.5 BTC", "WD-2512-04417", "JE-25-12-0193", "ERC-20", "DEC-25", "Dec.", "Dec 2025", "December 31, 2025",
+    "2025-12-31", "2025-12", "12/31/2025", "01/02/2026", "13/13/2025", "2025-13", "Q4 2025", "as of",
+    "period ended", "variance", "shortfall", "surplus", "excess of", "fell short of", "exceeded", "below", "by",
+    "and", ",", ".", ";", ":", "(", ")", "\u2212", "\u200b", "\uff04", "\u0661", "not", "no",
+    "reserves", "ledger", "liabilities", "ledger:", "explained", "unexplained", "fully explained", "respectively",
+    "M2", "M3 floor", "material", "between", "BTC", "USDC", "Bitcoin", "XRP Ledger", "\ue000", "\ue001",
+    "short", "$99999999999999999999", "$1,2345", "$,000", "Sept. 2025",
+]
+
+
+@pytest.mark.parametrize("seed", range(5))
+def test_fuzzed_narratives_never_raise(seed):
+    import random
+
+    rng = random.Random(seed)
+    truths = [_control_truth(k, a, "2025-12") for k in ("shortfall", "surplus", "m1", "m3") for a in ALL_ASSETS]
+    for _ in range(300):
+        words = [rng.choice(FUZZ_PIECES) for _ in range(rng.randint(1, 25))]
+        text = " ".join(words) if rng.random() < 0.8 else "".join(words)
+        truth = rng.choice(truths)
+        result = run(truth, text)
+        assert not any(r.startswith("extractor_error") for r in result.review_reasons), text
+        assert set(result.failure_modes) <= {"FM-001", "FM-002", "FM-003", "FM-016"}

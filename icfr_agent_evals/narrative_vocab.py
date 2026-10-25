@@ -335,6 +335,8 @@ WINDOWS: dict[str, int] = {
     "negation_words_before": 3,  # a negation this many words or fewer before a statement
     "cue_max_distance": 4,       # a cue farther than this many binding words binds nothing
     "range_window": 6,           # "between $25,000 and $250,000" spans at most this many tokens
+    "cue_search_tokens": 40,     # cues are looked for this many tokens either side of an amount
+    "max_narrative_chars": 20000,  # a longer narrative is not extracted; it routes to review
 }
 
 

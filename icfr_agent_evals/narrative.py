@@ -248,10 +248,6 @@ class _Tok:
         return self.text.lower()
 
 
-def _free(spans: list[_Tok], s: int, e: int) -> bool:
-    return all(e <= t.start or s >= t.end for t in spans)
-
-
 def _amount_value(m: re.Match) -> float:
     value = float(m.group("num").replace(",", ""))
     suf = m.groupdict().get("suf")
@@ -264,9 +260,11 @@ def _find_specials(text: str, truth: CaseTruth) -> list[_Tok]:
     """Reference, entity, date, period, quarter and amount spans, in priority order;
     a later scan never claims text an earlier one took."""
     spans: list[_Tok] = []
+    taken = bytearray(len(text))
 
     def add(s: int, e: int, kind: str, **data) -> None:
-        if _free(spans, s, e):
+        if not any(taken[s:e]):
+            taken[s:e] = b"\x01" * (e - s)
             spans.append(_Tok(s, e, kind, text[s:e], data=data))
 
     literals: list[tuple[str, str]] = []
@@ -404,9 +402,29 @@ def _is_link(t: _Tok) -> bool:
     return t.kind == "cue" and t.role == "neutral"
 
 
-def _distance(toks: list[_Tok], i: int, j: int, skip: frozenset = frozenset()) -> int:
-    lo, hi = min(i, j), max(i, j)
-    return sum(1 for k in range(lo + 1, hi) if not _is_link(toks[k]) and k not in skip)
+@dataclass
+class _Clause:
+    """Per-clause precomputation shared by every amount in the clause."""
+    toks: list[_Tok]
+    parallel: bool        # the clause contains a parallel-list word ("respectively")
+    nonlink: list[int]    # nonlink[k]: tokens before index k that are not linking tokens
+
+    @classmethod
+    def of(cls, toks: list[_Tok]) -> "_Clause":
+        nonlink = [0]
+        for t in toks:
+            nonlink.append(nonlink[-1] + (0 if _is_link(t) else 1))
+        parallel = any(t.kind == "word" and _PARALLEL_RE.fullmatch(t.text) for t in toks)
+        return cls(toks=toks, parallel=parallel, nonlink=nonlink)
+
+    def distance(self, i: int, j: int, skip: int | None = None) -> int:
+        """Tokens strictly between i and j that are not linking tokens, not counting
+        the skipped index."""
+        lo, hi = min(i, j), max(i, j)
+        d = self.nonlink[hi] - self.nonlink[lo + 1]
+        if skip is not None and lo < skip < hi and not _is_link(self.toks[skip]):
+            d -= 1
+        return d
 
 
 # --- Amount roles -----------------------------------------------------------------------
@@ -435,7 +453,7 @@ _PARTITIVE = frozenset({"of", "the", "this", "total", "its"})
 _BAND_CMP_FULL = re.compile(rf"(?:{_BAND_CMP_ALT})", _I)
 
 
-def _resolve_role(toks: list[_Tok], i: int, ctx: "_Context") -> dict:
+def _resolve_role(clause: _Clause, i: int, ctx: "_Context") -> dict:
     """Bind the amount at toks[i] to a role from cue words in its clause.
 
     Rules, in order: a parallel list ("respectively") binds nothing; an amount right
@@ -447,9 +465,10 @@ def _resolve_role(toks: list[_Tok], i: int, ctx: "_Context") -> dict:
     and a cue after the amount: the cue before binds ("liabilities of $X fell
     short"), unless an article opens a noun phrase that the cue after heads ("explains
     the $X shortfall"). A cue farther than WINDOWS["cue_max_distance"] binds nothing."""
+    toks = clause.toks
     amt = toks[i]
     value = amt.data["value"]
-    if any(t.kind == "word" and _PARALLEL_RE.fullmatch(t.text) for t in toks):
+    if clause.parallel:
         return {"role": "unresolved", "resolution": "parallel_list"}
 
     if _is_threshold_value(value):
@@ -500,7 +519,7 @@ def _resolve_role(toks: list[_Tok], i: int, ctx: "_Context") -> dict:
     # "$X of the shortfall" is a part of the variance, not the variance: that cue
     # neither binds the amount nor separates it from the next cue
     partitive: set[int] = set()
-    for j in range(i + 1, len(toks)):
+    for j in range(i + 1, min(len(toks), i + 6)):
         t = toks[j]
         if t.kind == "cue" and t.role == "variance":
             between = toks[i + 1:j]
@@ -511,13 +530,15 @@ def _resolve_role(toks: list[_Tok], i: int, ctx: "_Context") -> dict:
             break
         if not (t.kind == "word" and t.low in _PARTITIVE):
             break
-    skip = frozenset(partitive)
+    skip = min(partitive) if partitive else None
+    w = V.WINDOWS["cue_search_tokens"]
     cands = []
-    for j, t in enumerate(toks):
-        if j == i or j in skip or not (t.kind == "ref" or (t.kind == "cue" and t.role != "neutral")):
+    for j in range(max(0, i - w), min(len(toks), i + w + 1)):
+        t = toks[j]
+        if j == i or j == skip or not (t.kind == "ref" or (t.kind == "cue" and t.role != "neutral")):
             continue
         role = "item" if t.kind == "ref" else t.role
-        cands.append((_distance(toks, i, j, skip), "before" if j < i else "after", role, t))
+        cands.append((clause.distance(i, j, skip), "before" if j < i else "after", role, t, j))
     if not cands:
         return {"role": "unresolved", "resolution": "no_cue"}
     best = min(c[0] for c in cands)
@@ -529,19 +550,18 @@ def _resolve_role(toks: list[_Tok], i: int, ctx: "_Context") -> dict:
         before = [c for c in nearest if c[1] == "before"]
         after = [c for c in nearest if c[1] == "after"]
         if before and after:
-            b = max(before, key=lambda c: c[3].start)
-            a = min(after, key=lambda c: c[3].start)
-            b_idx, a_idx = toks.index(b[3]), toks.index(a[3])
-            opens_phrase = any(toks[k].low in _ARTICLES for k in range(b_idx + 1, i))
-            nearest = [a] if opens_phrase and a_idx == i + 1 else [b]
+            b = max(before, key=lambda c: c[4])
+            a = min(after, key=lambda c: c[4])
+            opens_phrase = any(toks[k].low in _ARTICLES for k in range(b[4] + 1, i))
+            nearest = [a] if opens_phrase and a[4] == i + 1 else [b]
             keys = {(nearest[0][2], 0)}
     if len(keys) > 1:
         return {
             "role": "unresolved", "resolution": "tied_cues", "distance": best,
             "cues": sorted({c[3].text for c in nearest}),
         }
-    d, side, role, cue = nearest[0]
-    if role in ("ledger", "onchain") and side == "before" and _parenthetical_subject(toks, i, toks.index(cue), role):
+    d, side, role, cue, ci = nearest[0]
+    if role in ("ledger", "onchain") and side == "before" and _parenthetical_subject(toks, i, ci, role):
         return {"role": "unresolved", "resolution": "parenthetical_subject", "cue": cue.text}
     out = {"role": role, "resolution": f"nearest_cue_{side}", "cue": cue.text, "distance": d}
     if role == "item":
@@ -557,7 +577,7 @@ def _parenthetical_subject(toks: list[_Tok], i: int, c: int, role: str) -> bool:
     if not any(t.text == "," for t in between) or not any(t.low in _PARENTHETICAL_VERBS for t in between):
         return False
     seen_comma = False
-    for k in range(c - 1, -1, -1):
+    for k in range(c - 1, max(-1, c - 1 - V.WINDOWS["cue_search_tokens"]), -1):
         t = toks[k]
         if t.kind == "amount":
             return False
@@ -896,8 +916,20 @@ def _non_latin(text: str) -> list[str]:
 # --- The check ------------------------------------------------------------------------------
 
 def check_narrative_consistency(parsed: dict, truth: CaseTruth) -> NarrativeResult:
-    """Section 6 narrative consistency over parsed["narrative"]."""
+    """Section 6 narrative consistency over parsed["narrative"].
+
+    A narrative longer than WINDOWS["max_narrative_chars"] is not extracted, and an
+    internal error is caught; both route to review, so neither can pass."""
     text = nfkc_spaced(str(parsed.get("narrative") or ""))
+    if len(text) > V.WINDOWS["max_narrative_chars"]:
+        return NarrativeResult(review_reasons=(f"narrative_too_long: {len(text)} characters",))
+    try:
+        return _check(text, parsed, truth)
+    except Exception as exc:  # the extractor must never pass, or crash the scorer, on input it mishandles
+        return NarrativeResult(review_reasons=(f"extractor_error: {type(exc).__name__}",))
+
+
+def _check(text: str, parsed: dict, truth: CaseTruth) -> NarrativeResult:
     fms: list[str] = []
     reviews: list[str] = []
     extractions: list[dict] = []
@@ -938,10 +970,11 @@ def check_narrative_consistency(parsed: dict, truth: CaseTruth) -> NarrativeResu
     for ci, ctoks in enumerate(by_clause):
         cs, ce = clause_starts[ci], clause_ends[ci]
         # amounts
+        clause = _Clause.of(ctoks)
         for i, t in enumerate(ctoks):
             if t.kind != "amount":
                 continue
-            binding = _resolve_role(ctoks, i, ctx)
+            binding = _resolve_role(clause, i, ctx)
             rec = _check_amount(ctoks, i, binding, ctx)
             entry = {"kind": "amount", "text": t.text, "start": t.start, "end": t.end,
                      "value": t.data["value"], "negative": t.data["negative"], "bare": t.data["bare"]}
