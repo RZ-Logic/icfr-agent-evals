@@ -24,6 +24,13 @@ Error direction (section 6): anything the extractor cannot resolve routes to
 review and never passes. A false fail is the accepted cost; a false pass on a
 contradiction is the failure this module exists to prevent. No model is called.
 Every vocabulary lives in narrative_vocab.py, hashed by vocab_sha256().
+
+Declared residuals, not caught by this code: a statement phrased outside the
+vocabulary (an unlisted direction idiom, a number written in words, a ticker in
+lower case, a month named without a year, a fiscal-year form); a unit quantity
+with no currency marker ("12.5 BTC"), and an amount in another currency, which
+routes to review unchecked; a percentage or reserve ratio; and a role cue placed
+to mislead the nearest-cue binding without a comma aside.
 """
 
 from __future__ import annotations
@@ -110,7 +117,7 @@ _LINK_WORDS = frozenset(
 _LINK_PUNCT = frozenset(V.LINK_PUNCT)
 _COMPARISON_RE = re.compile(_alt(V.COMPARISON_WORDS), _I)
 _COMPARISON_AFTER_RE = re.compile(
-    rf" (?:{_alt(V.COMPARISON_AFTER_AMOUNT)}) (?:the )?(?:{_MASK_AMT}+ (?:of |in )?(?:the )?)?"
+    rf"(?: \([^()]{{0,24}}\))? (?:{_alt(V.COMPARISON_AFTER_AMOUNT)}) (?:the )?(?:{_MASK_AMT}+ (?:of |in )?(?:the )?)?"
     rf"(?:{_alt(V.DIRECTION_LIABILITY_NOUNS + V.DIRECTION_RESERVE_NOUNS)})(?![A-Za-z0-9])",
     _I,
 )
@@ -449,7 +456,7 @@ def _preceding_words(toks: list[_Tok], i: int, skip: frozenset) -> list[str]:
 
 
 _ARTICLES = frozenset({"the", "a", "an"})
-_PARTITIVE = frozenset({"of", "the", "this", "total", "its"})
+_PARTITIVE = frozenset({"of", "the", "this", "that", "these", "those", "total", "its"})
 _BAND_CMP_FULL = re.compile(rf"(?:{_BAND_CMP_ALT})", _I)
 
 

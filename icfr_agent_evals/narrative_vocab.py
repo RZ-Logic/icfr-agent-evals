@@ -152,6 +152,7 @@ ROLE_CUES: list[list[str]] = [
     ["unexplained", r"(?:not|not yet) (?:explained|reconciled|accounted for)"],
     ["unexplained", r"net of (?:the )?(?:(?:open|eligible|cited|pending|reconciling) )*items?"],
     ["unexplained", r"after (?:the )?(?:(?:open|eligible|cited|pending) )*reconciling items?"],
+    ["unexplained", r"(?:reduces?|reduced|reducing|leaves?|leaving|left|brings?|bringing|brought) (?:the )?(?:variance|shortfall|surplus|deficit|difference|gap|excess) (?:down )?to"],
     ["unexplained", r"unexplained|unreconciled|unaccounted for|remainder|residual|remaining"],
     ["explained", r"(?:explained|reconciled) (?:portion|amount|part|total)"],
     ["explained", r"explain(?:s|ed|ing)?|accounted for|accounts? for|accounting for|reconciled|offset(?:s|ting)?"],

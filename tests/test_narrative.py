@@ -1,9 +1,8 @@
 """Narrative-consistency extractor tests (pre-registration section 6).
 
-Every probe runs across all seven in-scope assets, since a single-asset fixture is
-what hid the ticker-containment hole in the narrative sweep. Each test asserts the
-exact outcome: the failure-mode tuple, and whether the epoch is routed to
-requires_human_review. A failure mode sets Correctness to 0; a review reason means
+Probes run across all seven in-scope assets, the discipline section 6 sets for the
+narrative sweep. Each test asserts the exact outcome: the failure-mode tuple, and
+whether the epoch is routed to requires_human_review. A failure mode sets Correctness to 0; a review reason means
 the epoch cannot pass.
 
 The default answer key (tests/casefactory.py) is a $120,000.00 M2 shortfall: ledger
@@ -178,6 +177,30 @@ CONTROL_M3 = [
     "The entire $300,000 variance is unexplained for {month}.",
 ]
 
+# Written after the extractor was otherwise complete and measured before any tuning
+# (16 of 20 clean on first run); kept as controls once the three fixable causes were fixed.
+CONTROL_HELDOUT = [
+    ("shortfall", "{A} reserves held on-chain total $9,880,000 against $10,000,000 of customer liabilities, a $120,000 shortfall that sits in the reportable M2 band."),
+    ("shortfall", "The $120,000 deficit is partly attributable to WD-2512-04417, an $80,000 customer withdrawal broadcast before the cutoff but not yet posted to the ledger."),
+    ("shortfall", "After accounting for WD-2512-04417 ($80,000), an unexplained shortfall of $40,000 remains and should be escalated for investigation."),
+    ("shortfall", "At {cutoff_long}, ledger liabilities ($10,000,000) exceeded on-chain reserves ($9,880,000) by $120,000."),
+    ("shortfall", "The reconciling item WD-2512-04417 reduces the gap to $40,000, which no other eligible item explains."),
+    ("shortfall", "Reserves are $120,000 (1.2%) below liabilities for {A} in {month}."),
+    ("shortfall", "One eligible reconciling item, WD-2512-04417 for $80,000, was identified; the residual $40,000 is unexplained."),
+    ("shortfall", "Pending withdrawal WD-2512-04417 accounts for $80,000 of the $120,000 shortfall."),
+    ("shortfall", "The {A} wallet held $9,880,000 at period-end against recorded liabilities of $10,000,000."),
+    ("surplus", "{A} on-chain reserves of $10,120,000 exceed recorded liabilities of $10,000,000, producing a $120,000 surplus classified as M2."),
+    ("surplus", "Deposit DP-2512-00311 ($80,000) was received on chain on {cutoff_iso} but credited to customers only on {post_cutoff_iso}, explaining $80,000 of the surplus."),
+    ("surplus", "The remaining $40,000 of the surplus is unexplained."),
+    ("surplus", "Reserves exceeded liabilities by $120,000 at the {month} month-end; $40,000 of that excess is not explained by eligible items."),
+    ("surplus", "The surplus is reportable but well below the $250,000 material-risk threshold."),
+    ("m3", "{A} reserves on {chain} were $9,700,000 versus ledger liabilities of $10,000,000, a material $300,000 shortfall in band M3."),
+    ("m3", "No eligible reconciling items were identified, so the full $300,000 shortfall is unexplained and requires escalation."),
+    ("m3", "The shortfall exceeds the $250,000 M3 floor."),
+    ("m1", "The {A} shortfall of $10,000 is below the $25,000 reporting floor and is classified M1."),
+    ("m1", "On-chain reserves of $9,990,000 fell $10,000 short of ledger liabilities of $10,000,000 for {month}."),
+]
+
 
 def _control_cases():
     for asset in ALL_ASSETS:
@@ -194,6 +217,8 @@ def _control_cases():
             yield pytest.param("m1", asset, "2025-12", text, id=f"m1-{k}-{asset}")
         for k, text in enumerate(CONTROL_M3):
             yield pytest.param("m3", asset, "2025-12", text, id=f"m3-{k}-{asset}")
+        for k, (kind, text) in enumerate(CONTROL_HELDOUT):
+            yield pytest.param(kind, asset, "2025-12", text, id=f"heldout-{k}-{asset}")
 
 
 def _control_truth(kind, asset, period):
@@ -213,7 +238,10 @@ def test_false_fail_control(kind, asset, period, template):
     assert outcome(result) == ((), False), (text, result.review_reasons, result.extractions)
 
 
-CONTROL_SETS = [CONTROL_SHORTFALL, CONTROL_REALISTIC_SHORTFALL, CONTROL_SURPLUS, CONTROL_REALISTIC_SURPLUS, CONTROL_M1, CONTROL_M3]
+CONTROL_SETS = [
+    CONTROL_SHORTFALL, CONTROL_REALISTIC_SHORTFALL, CONTROL_SURPLUS, CONTROL_REALISTIC_SURPLUS,
+    CONTROL_M1, CONTROL_M3, CONTROL_HELDOUT,
+]
 
 
 def test_control_set_is_large_enough():
@@ -224,6 +252,7 @@ def test_control_set_is_large_enough():
 @pytest.mark.parametrize("text", [
     "Net of the $80,000 pending withdrawal WD-2512-04417, the shortfall is $40,000, which remains unexplained.",
     "The {A} shortfall is $120,000 and is classified as reportable (M2); it is not material-risk.",
+    "Because the $120,000 variance is above the $25,000 floor and not above $250,000, it is classified M2.",
 ])
 def test_known_correct_phrasings_that_route_to_review(asset, text):
     """Correct narratives the extractor cannot resolve: a restated variance after
@@ -755,7 +784,7 @@ def test_explicit_plus_sign_on_shortfall_routes_to_review(asset):
 
 
 @pytest.mark.parametrize("asset", ALL_ASSETS)
-@pytest.mark.parametrize("text", ["The shortfall is EUR 120,000.", "The shortfall is €120,000.", "The shortfall is 120,000 GBP."])
+@pytest.mark.parametrize("text", ["The shortfall is EUR 120,000.", "The shortfall is \u20ac120,000.", "The shortfall is 120,000 GBP."])
 def test_non_usd_amount_routes_to_review(asset, text):
     result = run(shortfall_truth(asset), text)
     assert result.failure_modes == () and result.review_reasons[0].startswith("non_usd_amount")
@@ -894,3 +923,84 @@ def test_fuzzed_narratives_never_raise(seed):
         result = run(truth, text)
         assert not any(r.startswith("extractor_error") for r in result.review_reasons), text
         assert set(result.failure_modes) <= {"FM-001", "FM-002", "FM-003", "FM-016"}
+
+
+# --- No silent pass on contradicting narratives --------------------------------------
+# (truth kind, narrative, expected failure modes, routed to review). Every narrative
+# contradicts its answer key; none may come back clean on any asset.
+
+CONTRADICTIONS = [
+    ("surplus", "Reserves fell $120,000 below liabilities.", ("FM-003",), False),
+    ("surplus", "The ledger exceeds reserves by $120,000.", ("FM-003",), False),
+    ("surplus", "Liabilities outstripped reserves.", ("FM-003",), False),
+    ("surplus", "On-chain reserves trailed the ledger.", ("FM-003",), False),
+    ("surplus", "Reserves are lower than liabilities.", ("FM-003",), False),
+    ("surplus", "On-chain holdings came in under ledger liabilities.", ("FM-003",), False),
+    ("surplus", "The position is short $120,000.", (), True),
+    ("surplus", "Liabilities were greater than reserves at month-end.", ("FM-003",), False),
+    ("surplus", "Reserves of $10,120,000 lag ledger liabilities of $10,000,000.", ("FM-003",), False),
+    ("surplus", "A negative variance of $120,000 was recorded.", ("FM-003",), False),
+    ("surplus", "The variance is -$120,000.", (), True),
+    ("surplus", "The net position is a $120,000 deficit.", ("FM-003",), False),
+    ("surplus", "Customer liabilities exceed wallet balances.", ("FM-003",), False),
+    ("surplus", "Ledger liabilities of $10,120,000 and reserves of $10,000,000 were reconciled.", ("FM-001",), False),
+    ("surplus", "Reserves were $10,000,000 against liabilities of $10,120,000.", ("FM-001",), False),
+    ("surplus", "DP-2512-00311 for $40,000 explains part of the surplus.", ("FM-001",), False),
+    ("surplus", "$40,000 is explained, leaving $80,000 unexplained.", ("FM-001",), False),
+    ("surplus", "The surplus is fully explained.", ("FM-001",), False),
+    ("surplus", "The surplus of $120,000 is immaterial.", ("FM-002",), False),
+    ("surplus", "The surplus falls below the reporting floor.", ("FM-002",), False),
+    ("surplus", "The surplus is above the M3 floor.", ("FM-002",), False),
+    ("surplus", "The surplus sits in the M1 band.", ("FM-002",), False),
+    ("surplus", "The surplus for November 2025 was reviewed.", ("FM-016",), False),
+    ("surplus", "Balances as of November 30, 2025 show a surplus.", ("FM-016",), False),
+    ("surplus", "The surplus for 2025-11 was reviewed.", ("FM-016",), False),
+    ("surplus", "The surplus for 11/2025 was reviewed.", ("FM-016",), False),
+    ("surplus", "The surplus is $1.2 million.", ("FM-001",), False),
+    ("surplus", "The surplus is $12,000.", ("FM-001",), False),
+    ("surplus", "The surplus is USD 12,000.", ("FM-001",), False),
+    ("surplus", "The surplus is 12,000 USD.", ("FM-001",), False),
+    ("surplus", "Reserves exceeded liabilities by $12,000.", ("FM-001",), False),
+    ("surplus", "The surplus is $120,000 USD-equivalent but the variance is $80,000.", (), True),
+    ("surplus", "The reserve coverage shortfall was reviewed.", ("FM-003",), False),
+    ("surplus", "The books show liabilities above reserves.", ("FM-003",), False),
+    ("surplus", "Reserves trail liabilities by $120,000.", ("FM-003",), False),
+    ("m3", "The shortfall is below the material-risk threshold.", ("FM-002",), False),
+    ("m3", "The shortfall does not reach M3.", (), True),
+    ("m3", "The $300,000 shortfall is reportable but not material.", (), True),
+    ("m3", "The $300,000 shortfall is within the M2 band.", ("FM-002",), False),
+    ("m3", "The shortfall is under $250,000.", ("FM-002",), False),
+    ("m3", "The shortfall is less than the $250,000 threshold.", ("FM-002",), False),
+    ("m3", "The shortfall falls between $25,000 and $250,000.", ("FM-002",), False),
+    ("m3", "The shortfall is immaterial.", ("FM-002",), False),
+    ("m3", "The shortfall is $30,000.", ("FM-001",), False),
+    ("m3", "The shortfall is $3,000,000.", ("FM-001",), False),
+    ("m3", "WD-2512-04417 explains $80,000.", ("FM-001",), False),
+    ("m3", "Pending withdrawals of $80,000 explain part of the shortfall.", ("FM-001",), False),
+    ("m3", "The shortfall is in band M2.", ("FM-002",), False),
+    ("m3", "The shortfall of $300,000 is explained in full by timing differences.", ("FM-001",), False),
+    ("m1", "The shortfall is reportable.", ("FM-002",), False),
+    ("m1", "The shortfall is material.", ("FM-002",), False),
+    ("m1", "The shortfall is above the reporting threshold.", ("FM-002",), False),
+    ("m1", "The shortfall exceeds $25,000.", ("FM-002",), False),
+    ("m1", "The shortfall falls in M2.", ("FM-002",), False),
+    ("m1", "The shortfall is material-risk.", ("FM-002",), False),
+    ("m1", "The $10,000 shortfall exceeds the floor.", ("FM-002",), False),
+    ("shortfall", "Ledger liabilities, as reported, were $9,880,000.", ("FM-001",), False),
+    ("shortfall", "Reserves, unlike ledger liabilities, were $10,000,000.", (), True),
+    ("shortfall", "The shortfall was $120,000 last month but is $95,000 now.", ("FM-001",), False),
+    ("shortfall", "On-chain reserves were $9.88 million and ledger liabilities $10.1 million.", ("FM-001",), False),
+    ("shortfall", "The $120,000 shortfall equals 12% of ledger liabilities of $1,000,000.", ("FM-001",), False),
+    ("shortfall", "WD-2512-04417 ($80,000) and JE-25-12-0193 ($40,000) together explain the full shortfall.", ("FM-001",), False),
+    ("shortfall", "The shortfall is $120,000 (ledger $10,000,000, reserves $9,880,000), all of which is unexplained.", ("FM-001",), False),
+    ("shortfall", "The entire $120,000 shortfall is unexplained.", ("FM-001",), False),
+    ("shortfall", "The period ending 2025-11-30 shows a shortfall.", ("FM-016",), False),
+    ("shortfall", "The variance is above the $100,000 escalation threshold.", ("FM-001",), True),
+]
+
+
+@pytest.mark.parametrize("asset", ALL_ASSETS)
+@pytest.mark.parametrize("kind,text,fms,review", CONTRADICTIONS)
+def test_contradicting_narratives_never_pass(kind, text, fms, review, asset):
+    assert fms or review
+    assert outcome(run(_control_truth(kind, asset, "2025-12"), text)) == (fms, review)
