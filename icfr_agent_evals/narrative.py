@@ -125,6 +125,7 @@ _COMPARISON_BARE_RE = re.compile(
     rf" (?:{_alt(V.COMPARISON_AFTER_AMOUNT_BARE)})(?![- ](?:term|lived)| of| by)(?![A-Za-z0-9])", _I
 )
 _PARENTHETICAL_VERBS = frozenset(V.PARENTHETICAL_VERBS)
+_CONTRAST_WORDS = frozenset(V.CONTRAST_WORDS)
 _LABEL_RES = [(role, re.compile(rf"(?<![A-Za-z0-9])(?:{p}) ?:? ?$", _I)) for role, p in V.LABEL_CUES]
 _PARALLEL_RE = re.compile(_w(_alt(V.PARALLEL_LIST_WORDS)), _I)
 
@@ -149,6 +150,11 @@ _SPLIT_SUBJECT_RE = re.compile(_w(_alt(V.SPLIT_CLAIM_SUBJECTS)), _I)
 _SELF_NEGATED_RE = re.compile(_alt(V.SPLIT_CLAIMS_SELF_NEGATED), _I)
 _NON_USD_RE = re.compile(
     rf"(?<![A-Za-z0-9])(?:{_alt(V.NON_USD_CURRENCY)}) ?[0-9][0-9,.]*|[0-9][0-9,.]* ?(?:{_alt(V.NON_USD_CURRENCY)})(?![A-Za-z0-9])"
+)
+_NUMBER_WORDS_ALT = _alt(V.NUMBER_WORDS)
+_AMOUNT_IN_WORDS_RE = re.compile(
+    rf"(?<![A-Za-z0-9])(?<![0-9.,] )(?:{_NUMBER_WORDS_ALT})(?:[ -](?:and |{_NUMBER_WORDS_ALT}))* (?:{_alt(V.CURRENCY_SUFFIXES)})(?![A-Za-z0-9])",
+    _I,
 )
 _NEG_BEFORE_RE = re.compile(_w(_alt(V.NEGATION_BEFORE)), _I)
 _NEG_AFTER_RE = re.compile(rf"(?:{_alt(V.NEGATION_AFTER)})(?![A-Za-z0-9])", _I)
@@ -183,6 +189,7 @@ _ASSET_NAME_ROWS: list[tuple[str, str]] = (
 )
 _ASSET_NAME_RE = re.compile(_groups([p for _, p in _ASSET_NAME_ROWS]), _I)
 _TICKER_RE = re.compile(_w(_alt(sorted(set(V.IN_SCOPE_TICKERS) | set(V.OTHER_TICKERS), key=len, reverse=True))))
+_CASE_FREE_TICKER_RE = re.compile(_w(_alt(V.CASE_FREE_TICKERS)), _I)
 
 _MONTH_ALT = _alt(sorted(V.MONTHS, key=len, reverse=True))
 _PERIOD_CUE_RE = re.compile(
@@ -578,20 +585,22 @@ def _resolve_role(clause: _Clause, i: int, ctx: "_Context") -> dict:
 
 def _parenthetical_subject(toks: list[_Tok], i: int, c: int, role: str) -> bool:
     """True for "reserves, unlike ledger liabilities, were $X": the nearest balance
-    cue sits in a comma-delimited aside, a verb joins the amount, and a balance cue of
-    the other role, with no amount in between, may be the real subject."""
+    cue sits in an aside (set off by commas or a contrast word such as "unlike"), a
+    verb joins the amount, and a balance cue of the other role, with no amount in
+    between, may be the real subject."""
     between = toks[c + 1:i]
-    if not any(t.text == "," for t in between) or not any(t.low in _PARENTHETICAL_VERBS for t in between):
+    if not any(t.low in _PARENTHETICAL_VERBS for t in between):
         return False
-    seen_comma = False
+    comma_after = any(t.text == "," for t in between)
+    set_off = False
     for k in range(c - 1, max(-1, c - 1 - V.WINDOWS["cue_search_tokens"]), -1):
         t = toks[k]
         if t.kind == "amount":
             return False
-        if t.text == ",":
-            seen_comma = True
+        if (t.text == "," and comma_after) or t.low in _CONTRAST_WORDS:
+            set_off = True
         if t.kind == "cue" and t.role in ("ledger", "onchain") and t.role != role:
-            return seen_comma
+            return set_off
     return False
 
 
@@ -871,11 +880,13 @@ def _asset_statements(clause: str, offset: int) -> list[dict]:
             out.append({"kind": "chain", "chain": "other:" + m.group(0).lower(), **rec})
         else:
             out.append({"kind": "asset", "asset": name, "form": "name", **rec})
-    for m in _TICKER_RE.finditer(clause):
-        if all(m.end() <= a or m.start() >= b for a, b in consumed):
-            out.append({"kind": "asset", "asset": m.group(0), "form": "ticker", "text": m.group(0),
-                        "start": offset + m.start(), "end": offset + m.end(),
-                        "negated": _negated(clause, m.start(), m.end())})
+    for rx in (_TICKER_RE, _CASE_FREE_TICKER_RE):
+        for m in rx.finditer(clause):
+            if all(m.end() <= a or m.start() >= b for a, b in consumed):
+                consumed.append(m.span())
+                out.append({"kind": "asset", "asset": m.group(0).upper(), "form": "ticker", "text": m.group(0),
+                            "start": offset + m.start(), "end": offset + m.end(),
+                            "negated": _negated(clause, m.start(), m.end())})
     return out
 
 
@@ -957,6 +968,8 @@ def _check(text: str, parsed: dict, truth: CaseTruth) -> NarrativeResult:
         review("non_latin_characters: " + "".join(dict.fromkeys(odd)))
     for m in _NON_USD_RE.finditer(text):
         review(f"non_usd_amount: {m.group(0)}")
+    for m in _AMOUNT_IN_WORDS_RE.finditer(text):
+        review(f"amount_in_words: {m.group(0)}")
 
     specials = _find_specials(text, truth)
     masked = _mask(text, specials)

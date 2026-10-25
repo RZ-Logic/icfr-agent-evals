@@ -1004,3 +1004,46 @@ CONTRADICTIONS = [
 def test_contradicting_narratives_never_pass(kind, text, fms, review, asset):
     assert fms or review
     assert outcome(run(_control_truth(kind, asset, "2025-12"), text)) == (fms, review)
+
+
+@pytest.mark.parametrize("asset", ALL_ASSETS)
+@pytest.mark.parametrize("text", [
+    "Reserves unlike ledger liabilities were $10,000,000.",
+    "Reserves and not ledger liabilities were $10,000,000.",
+    "The shortfall is one hundred thousand dollars.",
+])
+def test_contrast_asides_and_amounts_in_words_route_to_review(asset, text):
+    assert outcome(run(shortfall_truth(asset), text)) == ((), True)
+
+
+@pytest.mark.parametrize("asset", ALL_ASSETS)
+@pytest.mark.parametrize("text", [
+    "The shortfall is $0.12 million USD.",
+    "The shortfall of $120 thousand dollars is reportable.",
+    "WD-2512-04417 is a USD-equivalent withdrawal of $80,000.",
+    "Ledger liabilities were $10,000,000, not reserves; reserves were $9,880,000.",
+])
+def test_currency_words_after_a_numeral_are_not_amounts_in_words(asset, text):
+    assert outcome(run(shortfall_truth(asset), text)) == ((), False)
+
+
+@pytest.mark.parametrize("asset", ALL_ASSETS)
+def test_lower_case_unambiguous_tickers_are_asset_statements(asset):
+    truth = shortfall_truth(asset)
+    assert outcome(run(truth, f"The {asset.lower()} shortfall was reviewed.")) == ((), False)
+    other = next(t for t in narrative_vocab.CASE_FREE_TICKERS if t not in (asset, narrative_vocab.GAS_ASSET[truth.chain]))
+    assert outcome(run(truth, f"The {other.lower()} shortfall was reviewed.")) == (("FM-016",), False)
+
+
+@pytest.mark.parametrize("word", ["sol", "ada", "Ada", "Sol"])
+def test_sol_and_ada_match_in_capitals_only(word):
+    assert outcome(run(shortfall_truth("BTC"), f"The shortfall was reviewed by {word}.")) == ((), False)
+
+
+@pytest.mark.parametrize("kind", ["shortfall", "surplus", "m1", "m3"])
+@pytest.mark.parametrize("asset", ALL_ASSETS)
+@pytest.mark.parametrize("period", PERIODS)
+def test_casefactory_default_narrative_is_clean(kind, asset, period):
+    """The correctness anchor's tests build outputs with good_output's default narrative."""
+    truth = _control_truth(kind, asset, period)
+    assert outcome(check_narrative_consistency(good_output(truth), truth)) == ((), False)

@@ -226,6 +226,11 @@ LABEL_CUES: list[list[str]] = [
 COMPARISON_AFTER_AMOUNT_BARE: list[str] = [r"short"]
 # Verbs that join a balance to its amount across a parenthetical ("reserves, unlike
 # ledger liabilities, were $X"), where the nearest balance word may not be the subject.
+# Words that set a balance aside the way a comma pair does ("reserves unlike ledger
+# liabilities were $X").
+CONTRAST_WORDS: list[str] = [
+    "unlike", "not", "rather", "instead", "versus", "vs", "opposed", "excluding", "except",
+]
 PARENTHETICAL_VERBS: list[str] = [
     "were", "was", "are", "is", "stood", "stand", "stands", "totaled", "totalled", "totals",
     "came", "amounted", "remained", "remain",
@@ -241,6 +246,9 @@ PARALLEL_LIST_WORDS: list[str] = [r"respectively"]
 
 # --- Assets (section 6: asset tickers; FM-016 on a contradicting asset) --------------
 IN_SCOPE_TICKERS: list[str] = ["BTC", "ETH", "SOL", "USDC", "USDT", "XRP", "ADA"]  # case-sensitive
+# In-scope tickers that are not ordinary words, also matched in any case ("btc").
+# "sol" and "ada" are words or names, so SOL and ADA match in capitals only.
+CASE_FREE_TICKERS: list[str] = ["BTC", "ETH", "USDC", "USDT", "XRP"]
 # Full names of in-scope assets that are not chain names.
 ASSET_NAMES: dict[str, list[str]] = {
     "BTC": [], "ETH": [r"ether"], "SOL": [], "USDC": [r"usd coin"],
@@ -322,6 +330,14 @@ UNIT_WORDS: list[str] = [
     r"%", r"percent", r"bps", r"basis points", r"wallets?", r"days?", r"sats?",
     r"satoshis?", r"wei", r"gwei", r"lamports?", r"drops", r"lovelace",
 ]
+# Number words: an amount written out ("one hundred thousand dollars") is not
+# checked; it routes to review.
+NUMBER_WORDS: list[str] = [
+    "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven",
+    "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen",
+    "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety", "hundred",
+    "thousand", "million", "billion",
+]
 # A bare number counts only when it is comma-grouped or has at least this many digits,
 # so years, days and short counts are not read as amounts.
 BARE_NUMBER_MIN_DIGITS = 5
@@ -368,10 +384,12 @@ def all_vocabularies() -> dict:
         "COMPARISON_AFTER_AMOUNT": COMPARISON_AFTER_AMOUNT,
         "COMPARISON_AFTER_AMOUNT_BARE": COMPARISON_AFTER_AMOUNT_BARE,
         "LABEL_CUES": LABEL_CUES,
+        "CONTRAST_WORDS": CONTRAST_WORDS,
         "PARENTHETICAL_VERBS": PARENTHETICAL_VERBS,
         "COMPARISON_WORDS": COMPARISON_WORDS,
         "PARALLEL_LIST_WORDS": PARALLEL_LIST_WORDS,
         "IN_SCOPE_TICKERS": IN_SCOPE_TICKERS,
+        "CASE_FREE_TICKERS": CASE_FREE_TICKERS,
         "ASSET_NAMES": ASSET_NAMES,
         "OTHER_TICKERS": OTHER_TICKERS,
         "OTHER_ASSET_NAMES": OTHER_ASSET_NAMES,
@@ -389,6 +407,7 @@ def all_vocabularies() -> dict:
         "NON_USD_CURRENCY": NON_USD_CURRENCY,
         "MAGNITUDE_SUFFIXES": MAGNITUDE_SUFFIXES,
         "UNIT_WORDS": UNIT_WORDS,
+        "NUMBER_WORDS": NUMBER_WORDS,
         "BARE_NUMBER_MIN_DIGITS": BARE_NUMBER_MIN_DIGITS,
         "ABBREVIATIONS": ABBREVIATIONS,
         "WINDOWS": WINDOWS,
