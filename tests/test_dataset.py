@@ -53,13 +53,34 @@ def test_default_sizes():
     dev split is 30 cases; the CI regression split is 146 standard plus 54 generated
     hard cases. Hard cases come from hardcases.build_hard_cases."""
     assert len(_ds("eval").samples) == STANDARD_CASES == 146
-    dev_hard = build_hard_cases("dev", split_seed("dev"), DEV_HARD_COMPOSITION)
-    ci_hard = build_hard_cases("ci", split_seed("ci"), CI_HARD_COMPOSITION)
-    assert len(_ds("dev").samples) == 14 + len(dev_hard)
-    assert 14 + sum(DEV_HARD_COMPOSITION.values()) == 30
-    assert len(_ds("ci").samples) == 146 + len(ci_hard)
-    assert sum(CI_HARD_COMPOSITION.values()) == 54
+    assert len(_ds("dev").samples) == 30 == 14 + sum(DEV_HARD_COMPOSITION.values())
+    assert len(_ds("ci").samples) == 200 == 146 + sum(CI_HARD_COMPOSITION.values())
     assert len(_standard("dev")) == 14 and len(_standard("ci")) == 146
+
+
+@pytest.mark.parametrize("split,composition", [("ci", CI_HARD_COMPOSITION), ("dev", DEV_HARD_COMPOSITION)])
+def test_hard_case_composition_by_category(split, composition):
+    """Section 4: the CI split's 54 hard cases are 30 edge-type (10 per edge template)
+    and 24 adversarial-type (AC-1 to AC-6, 4 each); dev takes 16 by DEV_HARD_COMPOSITION."""
+    ts = [truth_of(s.metadata) for s in _ds(split).samples if s.metadata["truth"]["case_kind"] != "standard"]
+    assert Counter(t.category for t in ts) == composition
+    kinds = Counter(t.case_kind for t in ts)
+    edge = sum(composition[c] for c in ("band_boundary", "ambiguous_narrative", "incomplete_data"))
+    assert kinds == {"edge": edge, "adversarial": len(ts) - edge}
+    if split == "ci":
+        assert kinds == {"edge": 30, "adversarial": 24}
+        assert all(composition[f"AC-{i}"] == 4 for i in range(1, 7))
+    hard = build_hard_cases(split, split_seed(split), composition)
+    assert sorted(c.truth.case_id for c in hard) == sorted(t.case_id for t in ts)
+
+
+def test_dev_pilot_subset_is_20():
+    """8 standard pilot cases (D4) plus the 6 dev edge cases and one dev case per AC
+    category, the 20-case pilot of section 13."""
+    pilot = [truth_of(s.metadata) for s in _ds("dev").samples if s.metadata["truth"]["notes"].get("pilot")]
+    assert len(pilot) == 20
+    assert Counter(t.case_kind for t in pilot) == {"standard": 8, "edge": 6, "adversarial": 6}
+    assert {t.category for t in pilot if t.case_kind == "adversarial"} == {f"AC-{i}" for i in range(1, 7)}
 
 
 def test_ground_truth_band_is_self_consistent():
