@@ -104,9 +104,25 @@ def test_fm_counts_are_per_sample_epoch_not_per_scorer():
 
 def test_gate_asserts_scored_samples_equal_split_count():
     rep = reliability_report([_sample("a", 1), _sample("b", 1)], k=1)
-    assert_gate(rep, expected_samples=2)
+    assert_gate(rep, expected_samples=2, expected_k=1)
     with pytest.raises(GateError, match="split sample count"):
-        assert_gate(rep, expected_samples=3)
+        assert_gate(rep, expected_samples=3, expected_k=1)
+
+
+def test_gate_requires_the_preregistered_k():
+    """Review finding F5-parser-fm-6: a k = 1 report never passes a gated check."""
+    rep = reliability_report([_sample("a", 1)], k=1)
+    with pytest.raises(GateError, match="pre-registered k 4"):
+        assert_gate(rep, expected_samples=1)
+
+
+def test_error_with_full_mark_scores_still_fails_the_trial():
+    """Review finding F6-tests-4: an epoch that carries an error fails its trial
+    even when every trial anchor scored 3."""
+    sample = _sample("a", 1)
+    sample.error = SimpleNamespace(message="boom")
+    t = evaluate_trial(sample)
+    assert not t.success and "sample error" in t.failed_because
 
 
 # --- Required Inspect-level test -----------------------------------------------------
@@ -153,3 +169,17 @@ def test_flag_raised_only_on_epoch_three_reaches_the_queue(tmp_path):
     assert reduced["fabrication_anchor"].value == pytest.approx(2.25)
     assert reduced["correctness_anchor"].value == 3
     assert not (reduced["fabrication_anchor"].metadata or {}).get("requires_human_review")
+
+
+def test_epochs_override_fails_the_report(tmp_path):
+    """Review finding F5-parser-fm-6: eval(epochs=1) on a task declared with 4
+    (the same as CLI --epochs 1) is refused, not reported as content-pass^1."""
+    from icfr_agent_evals.task import variance_commentary
+
+    task = variance_commentary(split="dev", epochs=4)
+    first = next(iter(task.dataset))
+    task.dataset = task.dataset.filter(lambda s: s.id == first.id)
+    log = inspect_eval(task, model="mockllm/model", model_roles={"grader": "mockllm/grader", "calibrator": "mockllm/calibrator"},
+                       epochs=1, log_dir=str(tmp_path), display="none")[0]
+    with pytest.raises(GateError, match="differ from the task argument"):
+        report_from_log(log)

@@ -148,9 +148,13 @@ PRICE_MARKS = {
     "ADA": {"2025-10": "0.6120", "2025-11": "0.4210", "2025-12": "0.3390"},
 }
 UNIT_DP = {"BTC": 8, "ETH": 6, "SOL": 4, "USDC": 2, "USDT": 2, "XRP": 6, "ADA": 6}
-# Network-fee range (USD) for unbooked sweep fees. Stablecoin gas is paid in ETH,
-# so USDC and USDT get no fee items; SOL and XRP fees are too small to matter.
-FEE_RANGE_USD = {"BTC": (6.0, 140.0), "ETH": (3.0, 95.0), "ADA": (0.4, 6.0)}
+# Network-fee range in native units for sweep fees, from what these chains charged
+# for an ordinary transaction (review finding F4-realism-3): BTC 500 to 50,000 sats,
+# ETH a 21,000-gas transfer at about 1 to 24 gwei, ADA a normal transaction's fee,
+# below the 0.876 ADA fee of a maximum-size one. The USD fee is derived from the
+# period mark. Stablecoin gas is paid in ETH, so USDC and USDT get no fee items;
+# SOL and XRP fees are too small to matter.
+FEE_RANGE_UNITS = {"BTC": (0.000005, 0.0005), "ETH": (0.00002, 0.0005), "ADA": (0.17, 0.6)}
 # Another asset that can move through the same wallet (wrong-asset near misses).
 OTHER_ASSET_ON_WALLET = {"ETH": ("USDC", "USDT"), "USDC": ("USDT", "ETH"), "USDT": ("USDC", "ETH"), "SOL": ("USDC",)}
 
@@ -643,14 +647,19 @@ class _Builder:
 
     # -- items -----------------------------------------------------------------------
 
+    def fee_cents(self) -> int:
+        """A sweep fee drawn in native units and valued at the period mark."""
+        lo, hi = FEE_RANGE_UNITS[self.asset]
+        units = Decimal(str(round(self.rng.uniform(lo, hi), 8)))
+        return max(1, int((units * Decimal(self.price) * 100).to_integral_value(rounding=ROUND_HALF_EVEN)))
+
     def draw_explaining(self, total_cents: int, memo_only: bool) -> list[ItemPlan]:
         rng = self.rng
         sign = 1 if total_cents > 0 else -1
         plans: list[ItemPlan] = []
         effects = 0
-        if self.asset in FEE_RANGE_USD and abs(total_cents) > 50_000 and rng.random() < 0.35:
-            lo, hi = FEE_RANGE_USD[self.asset]
-            fee = max(1, _cents(rng.uniform(lo, hi)))
+        if self.asset in FEE_RANGE_UNITS and abs(total_cents) > 50_000 and rng.random() < 0.35:
+            fee = self.fee_cents()
             plans.append(explaining_plan("fee_unbooked", fee / 100))
             effects -= fee
         if rng.random() < 0.3:
@@ -805,7 +814,7 @@ class _Builder:
             "wallet": w["label"], "time": t1[11:16], "date": f"[[date:{t1[:10]}]]",
             "next_time": t2[11:16] if t2 else "", "next_date": f"[[date:{t2[:10]}]]" if t2 else "",
             "tx": aliases[0] if aliases else "", "to": to_label, "custodian": self.custodian,
-            "counterparty": plan.counterparty or "", "other": asset,
+            "counterparty": plan.counterparty or "", "other": asset, "flow": flow,
         }
         if plan.channel == "structured":
             # generated comments are filled here; a spec's comment is kept verbatim
@@ -836,6 +845,9 @@ class _Builder:
             if plan.asset and plan.asset != self.asset:
                 return rng.choice(("{other} on same address", "{other}", ""))
             if plan.date and plan.date > self.cutoff:
+                # keyed on the item's flow (review finding F3-truth-3): a withdrawal never "arrives"
+                if c.get("flow") == "outflow":
+                    return rng.choice(("sent {date}", "January activity" if self.cut_d.month == 12 else "next month", ""))
                 return rng.choice(("arrived {date}", "January activity" if self.cut_d.month == 12 else "next month", ""))
             return rng.choice(("per controller", "true-up, see JE support", "to be reversed", ""))
         options = {
@@ -869,6 +881,11 @@ class _Builder:
                     "Also saw {ref}, {units} through {wallet} at {time} on {date}.",
                 )).format(**c)
             if plan.date and plan.date > self.cutoff:
+                if item.flow == "outflow":
+                    return rng.choice((
+                        "{ref} {units} was booked {date} and broadcast after the cutoff.",
+                        "{ref} ({usd}) left {wallet} {time} {date}, posts next batch.",
+                    )).format(**c)
                 return rng.choice((
                     "{ref} {units} came in at {time} on {date}; credit pending.",
                     "{ref} ({usd}) hit {wallet} {time} {date}.",
@@ -987,9 +1004,8 @@ class _Builder:
             moved = int(self.ledger_cents * rng.uniform(0.002, 0.02))
             h = self.tx()
             fee_u = ""
-            if self.asset in FEE_RANGE_USD:
-                lo, hi = FEE_RANGE_USD[self.asset]
-                fee_c = max(1, _cents(rng.uniform(lo, hi)))
+            if self.asset in FEE_RANGE_UNITS:
+                fee_c = self.fee_cents()
                 fee_u = str(_units(fee_c, self.price, self.dp))
                 r = self.ref("FEE", day)
                 self.ledger_lines.append({"ref": r, "wallet": src["label"], "asset": self.asset, "units": "-" + fee_u,
@@ -1107,7 +1123,7 @@ def build_case(spec: CaseSpec) -> CaseFile:
 
     n_item_lines = len(b.ledger_lines) + len(b.chain_lines)
     n_sweeps = rng.randint(1, 3)
-    sweep_lines = n_sweeps * (2 if b.asset in FEE_RANGE_USD else 1)
+    sweep_lines = n_sweeps * (2 if b.asset in FEE_RANGE_UNITS else 1)
     target = rng.randint(24, 54)
     n_pairs = max(6, (target - n_item_lines - sweep_lines) // 2)
     b.add_background(n_pairs, n_sweeps)
@@ -1259,11 +1275,16 @@ def _plan_effect(p: ItemPlan) -> int:
     return _cents(p.amount_usd) * (1 if plus else -1)
 
 
+# A person's name as the generator writes one: an initial, a full stop and a surname.
+_PERSON_NAME_RE = re.compile(r"(?<![A-Za-z.])[A-Z]\. [A-Z][a-z]+(?:-[A-Z][a-z]+)?(?![A-Za-z])")
+
+
 def check_entity_closure(rendered: str, truth: CaseTruth) -> None:
-    """Every entity-shaped token and organization word in the rendered text belongs
-    to truth.valid_entities / truth.organizations."""
+    """Every entity-shaped token, person name and organization word in the rendered
+    text belongs to truth.valid_entities / truth.organizations."""
     valid = set(truth.valid_entities)
     missing = [t for t in entity_tokens(rendered) if t not in valid]
+    missing += [m.group(0) for m in _PERSON_NAME_RE.finditer(rendered) if m.group(0) not in valid]
     if missing:
         raise TruthError(f"{truth.case_id}: rendered entity tokens missing from valid_entities: {missing[:5]}")
     stray = unowned_org_words(rendered, truth.organizations)

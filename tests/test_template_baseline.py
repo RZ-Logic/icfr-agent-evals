@@ -231,7 +231,7 @@ def test_runs_complete_with_every_epoch_scored(runs, split):
     assert log.eval.config.epochs_reducer == [task_module.TASK_REDUCER]
     n = len(build_cases(split))
     assert len(samples) == n * EPOCHS[split]
-    assert_gate(report_from_log(log, k=EPOCHS[split]), expected_samples=n)
+    assert_gate(report_from_log(log, k=EPOCHS[split]), expected_samples=n, expected_k=EPOCHS[split])
 
 
 @pytest.mark.parametrize("split", SPLITS)

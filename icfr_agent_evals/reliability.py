@@ -30,6 +30,7 @@ TRIAL_ANCHORS: tuple[str, ...] = (
     "completeness_anchor",
 )
 FULL_MARKS = 3
+PREREGISTERED_K = 4  # section 5: epochs = 4, the k of content-pass^4
 SAMPLE_ERROR_SCORER = "sample_error"
 
 
@@ -155,14 +156,23 @@ def report_from_log(log: Any, k: int | None = None) -> ReliabilityReport:
     defaults to the run's configured epochs."""
     if log.samples is None:
         raise GateError("EvalLog has no samples; read it with header_only=False and keep sample logging on")
+    ran = int(log.eval.config.epochs or 1)
+    declared = (log.eval.task_args or {}).get("epochs")
+    if declared is not None and int(declared) != ran:
+        # an --epochs override records the run's epochs in the config while
+        # task_args keeps the task's own, so a gated k = 4 could silently become k = 1
+        raise GateError(f"run epochs {ran} differ from the task argument epochs {declared}")
     if k is None:
-        k = int(log.eval.config.epochs or 1)
+        k = ran
     return reliability_report(log.samples, k)
 
 
-def assert_gate(report: ReliabilityReport, expected_samples: int) -> None:
-    """Section 6: scored samples must equal the split's sample count, and every
-    sample must carry exactly k epochs. Any mismatch fails the gate."""
+def assert_gate(report: ReliabilityReport, expected_samples: int, expected_k: int = PREREGISTERED_K) -> None:
+    """Section 6: scored samples must equal the split's sample count, the report's
+    k must be the pre-registered k, and every sample must carry exactly k epochs.
+    Any mismatch fails the gate."""
+    if report.k != expected_k:
+        raise GateError(f"report k {report.k} != pre-registered k {expected_k}")
     if report.scored_samples != expected_samples:
         raise GateError(f"scored samples {report.scored_samples} != split sample count {expected_samples}")
     if report.epoch_anomalies:
