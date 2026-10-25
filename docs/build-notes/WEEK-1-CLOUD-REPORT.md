@@ -273,7 +273,7 @@ Part (a) holds offline. Caveat: it rests on D1, as section 1 point 2 explains. P
 
 C1 to C4 involve the private spec (CONTEXT.md, paraphrased). C5 to C8 are between the brief or the build and the pre-registration.
 
-- **C1, branch base:** the brief says cut `week1-build` from main. Main lacks the owner's commit 4b3bcf4, which updates the section 13 hash pin. I cut from 4b3bcf4, so main is fully contained and the pre-registration is unchanged (its SHA-256 equals that commit's) [M]. The harness designated `claude/admiring-planck-cgjmyk` as the session branch, so the same head is also pushed there.
+- **C1, branch base:** the brief says cut `week1-build` from main. Main lacks the owner's commit 4b3bcf4, which updates the section 13 hash pin. I cut from 4b3bcf4, so main is fully contained and the pre-registration is unchanged (its SHA-256 equals that commit's) [M]. By the end of the session `origin/main` had moved to 4b3bcf4, so `week1-build` is now a fast-forward of main [M, `git fetch`]. The harness designated `claude/admiring-planck-cgjmyk` as the session branch, so the same head is also pushed there. Nothing was pushed to main and no PR was opened.
 - **C2, Python:** the private spec's status line records the parent's run on Python 3.12.11; section 5 pins 3.12.3. This session ran on 3.12.3.
 - **C3, touching the evaluation split:** the private spec says evaluation sets are touched only after the prompt locks. Section 13 says the tag precedes any evaluation-split generation. Brief step 7 requires a disjointness check against the evaluation split. B5 also scored it with code during development.
 - **C4, cost and stablecoin bands:**
