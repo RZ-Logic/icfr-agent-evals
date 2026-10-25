@@ -329,3 +329,23 @@ def test_narrative_amount_tolerance_boundary(asset, text, ok):
         assert passes(result)
     else:
         assert "FM-001" in outcome(result)[0]
+
+
+# --- Main-thread false-fail measurement (20 correct phrasings x 7 assets) -----------
+# Found after the review: a correct comparison sentence fired FM-001, and a portion
+# stated "of the shortfall" bound to the shortfall.
+
+@pytest.mark.parametrize("asset", ALL_ASSETS)
+@pytest.mark.parametrize("text", [
+    "The reconciliation shows that on-chain reserves were lower than ledger liabilities by $120,000.",
+    "Reserves were less than liabilities by $120,000.",
+    "The unexplained portion of the shortfall is $40,000.",
+    "The explained portion of the shortfall is $80,000.",
+])
+def test_correct_comparison_and_portion_sentences_pass(asset, text):
+    assert passes(run(shortfall(asset), text))
+
+
+@pytest.mark.parametrize("asset", ALL_ASSETS)
+def test_wrong_portion_amount_still_fails(asset):
+    assert not passes(run(shortfall(asset), "The unexplained portion of the shortfall is $50,000."))

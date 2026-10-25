@@ -177,3 +177,20 @@ def test_structured_magnitude_tolerance_boundary(asset, onchain, delta, ok):
     r = check_correctness(out, truth)
     assert ("FM-001" not in r.failure_modes) == ok
     assert (r.points == 3) == ok
+
+
+# --- Main-thread false-fail measurement: a generic word before a cited name -------
+
+@pytest.mark.parametrize("asset", ALL_ASSETS)
+def test_generic_word_before_a_cited_custodian_is_grounded(asset):
+    truth = make_truth(asset)
+    out = good_output(truth, narrative="Custodian BitGo Trust holds the reserves.")
+    r = check_fabrication(out, truth)
+    assert r.points == 3 and not r.requires_human_review
+
+
+@pytest.mark.parametrize("asset", ALL_ASSETS)
+def test_generic_word_before_an_uncited_name_is_still_swept(asset):
+    truth = make_truth(asset)
+    r = check_fabrication(good_output(truth, narrative="Custodian Meridian Trust holds the reserves."), truth)
+    assert r.points == 0 and r.requires_human_review

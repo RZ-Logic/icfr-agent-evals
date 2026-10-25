@@ -572,11 +572,26 @@ def sweep_narrative(parsed: dict, truth: CaseTruth) -> list[SweepHit]:
         spans.update(_capitalized_spans(clause))
 
     allowed = citation_index(parsed, truth)
-    grounded = [(s, e) for s, e, _ in spans if allowed.contains(text[s:e])]
+
+    def grounded_token(token: str, kind: str) -> bool:
+        if allowed.contains(token):
+            return True
+        if kind not in ("capitalized_run", "organization_suffix"):
+            return False
+        # "Custodian BitGo Trust": leading generic words before a cited name. The
+        # rest must itself be a citation, so "Digital Asset Custody Trust" stays swept.
+        words = token.split()
+        while len(words) > 1 and words[0].casefold() in GENERIC_WORDS:
+            words = words[1:]
+            if allowed.contains(" ".join(words)):
+                return True
+        return False
+
+    grounded = [(s, e) for s, e, k in spans if grounded_token(text[s:e], k)]
     seen: set[str] = set()
     for start, end, kind in sorted(spans):
         token = text[start:end]
-        if allowed.contains(token):
+        if grounded_token(token, kind):
             continue
         if any(gs <= start and end <= ge and (gs, ge) != (start, end) for gs, ge in grounded):
             continue

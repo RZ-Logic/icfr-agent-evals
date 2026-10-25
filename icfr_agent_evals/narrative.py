@@ -543,6 +543,7 @@ def _resolve_role(clause: _Clause, i: int, ctx: "_Context") -> dict:
         while k >= 0 and (
             _is_link(toks[k]) or toks[k].kind == "amount" or toks[k].text == ","
             or (toks[k].kind == "cue" and toks[k].role in ("ledger", "onchain"))
+            or (toks[k].kind == "word" and toks[k].low == "than")  # "lower than liabilities by $X"
         ):
             k -= 1
         if k >= 0 and (
@@ -576,11 +577,23 @@ def _resolve_role(clause: _Clause, i: int, ctx: "_Context") -> dict:
         if not (t.kind == "word" and t.low in _PARTITIVE):
             break
     skip = min(partitive) if partitive else None
+    # "the unexplained portion of the shortfall is $X": a variance cue right after
+    # "of (the)" following an explained or unexplained cue names what the portion is
+    # of, so the portion cue binds
+    complement: set[int] = set()
+    for j in range(max(0, i - V.WINDOWS["cue_search_tokens"]), i):
+        t = toks[j]
+        if t.kind == "cue" and t.role == "variance":
+            k = j - 1
+            while k >= 0 and toks[k].kind == "word" and toks[k].low in ("the", "this", "that"):
+                k -= 1
+            if k >= 1 and toks[k].low == "of" and toks[k - 1].kind == "cue" and toks[k - 1].role in ("explained", "unexplained"):
+                complement.add(j)
     w = V.WINDOWS["cue_search_tokens"]
     cands = []
     for j in range(max(0, i - w), min(len(toks), i + w + 1)):
         t = toks[j]
-        if j == i or j == skip or not (t.kind == "ref" or (t.kind == "cue" and t.role != "neutral")):
+        if j == i or j == skip or j in complement or not (t.kind == "ref" or (t.kind == "cue" and t.role != "neutral")):
             continue
         role = "item" if t.kind == "ref" else t.role
         cands.append((clause.distance(i, j, skip), "before" if j < i else "after", role, t, j))
