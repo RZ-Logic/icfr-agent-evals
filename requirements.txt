@@ -1,6 +1,11 @@
-# Runtime + dev dependencies. Versions below are the exact set this skeleton was
-# built and validated against (Python 3.12.3). Pin these in CI for reproducibility;
-# loosen deliberately, not by accident.
-inspect-ai==0.3.237
+# Exact pins (pre-registration section 5, recorded at the tag in section 13).
+# inspect-ai 0.3.278 is the first release after 0.3.277 whose CHANGELOG carries the
+# Claude Haiku 5.5 support entry. openai 3.27.0 is the newest release published
+# before inspect-ai 0.3.278. inspect-scout 0.5.5 is the newest release that accepts
+# inspect-ai 0.3.278 (0.6.x needs 0.3.281 or later). Validated on Python 3.12.3.
+inspect-ai==0.3.278
+inspect-scout==0.5.5
+anthropic==1.12.1
+openai==3.27.0
 pydantic==2.13.4
 pytest==9.0.3

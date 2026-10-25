@@ -9,13 +9,20 @@ description = "Pre-registered LLM-as-judge eval harness measuring whether an AI 
 requires-python = ">=3.11"
 readme = "README.md"
 license = { text = "Apache-2.0" }
+# Floors match the exact pins in requirements.txt. The anthropic and openai SDKs are
+# listed because no documented inspect-ai install brings them in. anthropic stays
+# below 2: Inspect's Anthropic provider failed on anthropic 2.0 until inspect-ai
+# 0.3.283. inspect-scout 0.6 requires a newer inspect-ai than the pin.
 dependencies = [
-    "inspect-ai>=0.3.230",
-    "pydantic>=2.0",
+    "inspect-ai>=0.3.278,<0.4",
+    "inspect-scout>=0.5.5,<0.6",
+    "anthropic>=1.12.1,<2",
+    "openai>=3.27.0,<4",
+    "pydantic>=2.13.4",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=9.0.3"]
 
 [tool.setuptools.packages.find]
 include = ["icfr_agent_evals*"]
