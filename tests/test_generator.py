@@ -392,7 +392,17 @@ def test_build_case_with_memo_only_item_blank_fields_and_missing_amount():
     assert "USD per ETH" not in c.rendered and "RR-ETH" not in c.rendered
 
 
+def test_spec_text_with_an_entity_needs_extra_entities():
+    line = "Per the note from treasury, also see ticket OPS-2511-77777 before you sign."
+    with pytest.raises(TruthError):
+        build_case(_spec(extra_memo_lines=(line,)))
+    c = build_case(_spec(extra_memo_lines=(line,), extra_entities=("OPS-2511-77777",)))
+    assert "OPS-2511-77777" in c.truth.valid_entities and line in c.rendered
+
+
 def test_build_case_rejects_bad_specs():
+    with pytest.raises(ValueError):
+        build_case(_spec(case_id="dev-unit-0001"))
     with pytest.raises(ValueError):
         build_case(_spec(blank_fields=("header.nonexistent",)))
     with pytest.raises(ValueError):

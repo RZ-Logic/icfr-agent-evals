@@ -37,11 +37,18 @@ Reuse API (for the hard-case templates):
     adds to them), memo overrides (`memo_lines` replaces the generic notes,
     `extra_memo_lines` adds lines, rendered verbatim with no noise),
     `header_notes`, `request_text`, `blank_fields` (see BLANKABLE_FIELDS),
-    `extra_organizations`, `injection`, `notes`, `template_params`, and case_kind,
-    category and template_id.
-  - ItemPlan: one reconciling-item candidate by kind (ITEM_KINDS) with amount,
-    role, channel, wallet slot or address, asset, date, flow, memo and comment
-    overrides. Helpers `decoy_plan` and `explaining_plan` build common ones.
+    `extra_organizations` and `extra_entities` (names and entity-shaped strings
+    the spec's own text shows; build_case refuses a case whose rendered text holds
+    an entity it does not know), `injection`, `notes` (merged into truth.notes,
+    e.g. {"pilot": True}), `template_params` (hashed into template_instance), and
+    case_kind, category and template_id. The case id must start with the split.
+  - ItemPlan: one reconciling-item candidate by kind (ITEM_KINDS) with amount
+    (None renders blank and makes the item ineligible), role, channel, wallet slot
+    or address, asset, date, flow, memo and comment overrides. An ItemPlan memo is
+    a str.format template (double any literal brace); a comment is kept verbatim.
+    Notes and comments may use the markup [[usd:<cents>]] and [[date:<ISO>]],
+    which the renderer formats in the case's style. Helpers `decoy_plan` and
+    `explaining_plan` build common plans.
   - build_case(spec) -> CaseFile: builds, renders and validates one case.
   - render_case(fixture) -> str: the renderer.
   - draw_variance_cents, draw_ledger_cents: the standard magnitude and book rules.
@@ -297,6 +304,7 @@ class CaseSpec:
     request_text: str | None = None
     blank_fields: tuple[str, ...] = ()
     extra_organizations: tuple[tuple[str, str], ...] = ()  # (name, role)
+    extra_entities: tuple[str, ...] = ()  # entity-shaped strings a spec's own text shows
     injection: InjectionSpec | None = None
     notes: dict = field(default_factory=dict)
     template_params: dict = field(default_factory=dict)
@@ -840,7 +848,7 @@ class _Builder:
             "deposit_ledger_first": ("on chain {next_time} {next_date}", "timing", ""),
             "withdrawal_ledger_first": ("broadcast {next_time} {next_date}", "timing", ""),
             "fee_unbooked": ("fee on sweep {tx}", "network fee, sweep to {to}, not booked", "sweep fee not booked"),
-            "transfer_in_flight": ("to {to}, {custodian} credit pending", "in transit to {to}", ""),
+            "transfer_in_flight": ("to {to}, vault credit pending", "in transit to {to}", ""),
         }
         return rng.choice(options[k])
 
@@ -910,8 +918,8 @@ class _Builder:
                 "{ref} withdrawal {units} debited {time} {date} and sent {next_time} {next_date}; open at cutoff",
             ),
             "transfer_in_flight": (
-                "{ref}: {units} sent from {wallet} to {to} at {time} on {date}; {custodian} had not credited the vault at cutoff, so it was in flight and open at period end",
-                "{ref} transfer {wallet} to {to} ({units}) broadcast {time} {date}, {custodian} credit pending at cutoff (open)",
+                "{ref}: {units} sent from {wallet} to {to} at {time} on {date}; the vault credit had not posted at cutoff, so it was in flight and open at period end",
+                "{ref} transfer {wallet} to {to} ({units}) broadcast {time} {date}, vault credit pending at cutoff (open)",
             ),
         }[k]
         text = rng.choice(lead) + "; it " + move + "."
@@ -1048,6 +1056,8 @@ def build_case(spec: CaseSpec) -> CaseFile:
     for key in spec.blank_fields:
         if key not in BLANKABLE_FIELDS:
             raise ValueError(f"cannot blank {key!r}; blankable fields are {BLANKABLE_FIELDS}")
+    if not spec.case_id.startswith(f"{spec.split}-"):
+        raise ValueError(f"case id {spec.case_id!r} must start with the split name")
     b = _Builder(spec)
     rng = b.rng
     b.build_wallets()
@@ -1055,6 +1065,8 @@ def build_case(spec: CaseSpec) -> CaseFile:
     org_entity = b.org(REPORTING_ENTITY, "reporting_entity")
     for name, role in spec.extra_organizations:
         b.org(name, role)
+    for entity in spec.extra_entities:
+        b.candidates[entity] = None
 
     v = b.variance_cents
     if spec.items is not None:
