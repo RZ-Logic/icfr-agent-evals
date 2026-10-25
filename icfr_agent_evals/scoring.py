@@ -285,8 +285,12 @@ REAL_CUSTODIANS: tuple[str, ...] = (
 
 # Organization suffixes and custody words, matched case-insensitively with up to
 # four preceding words. LEGAL_SUFFIXES always mark a name.
-LEGAL_SUFFIXES = frozenset({"llc", "inc", "ltd", "corp"})
-CUSTODY_WORDS = frozenset({"trust", "custody", "capital", "partners", "holdings", "bank"})
+# Beyond the section 6 list: the legal forms LLP, PLC and GmbH, and Company,
+# Corporation and Limited as custody-like words (swept unless generic prose precedes).
+LEGAL_SUFFIXES = frozenset({"llc", "inc", "ltd", "corp", "llp", "plc", "gmbh"})
+CUSTODY_WORDS = frozenset({
+    "trust", "custody", "capital", "partners", "holdings", "bank", "company", "corporation", "limited",
+})
 ORG_SUFFIXES = LEGAL_SUFFIXES | CUSTODY_WORDS
 MAX_PRECEDING_WORDS = 4
 
@@ -330,17 +334,17 @@ dollar dollars amount amounts value unexplained explained remaining remainder po
 residual overall current prior previous opening closing existing approximately roughly
 fully partly partially unreconciled outstanding unconfirmed proof por commentary analysis
 review control controls sox icfr audit auditor attestation regulated regulatory scope
-in-scope out-of-scope network-fee gas
+in-scope out-of-scope network-fee gas sub multi sig flight cut
 january february march april may june july august september october november december
 jan feb mar apr jun jul aug sep sept oct nov dec m1 m2 m3 t1 t2 t3
 """.split())
 
 # Connectors allowed between capitalized words of one name ("Bank of ...").
-_RUN_CONNECTORS = frozenset({"of", "&", "de"})
+_RUN_CONNECTORS = frozenset({"of", "de"})
 
 # Tokens with digits that are not references: token standards and similar, period,
-# tier and band labels. Applied only to tokens of at most two letter/digit runs, so
-# a reference with more segments is never excused.
+# tier and band labels. Applied only to tokens of at most two separator-delimited
+# parts, so a reference with more segments is never excused.
 _NOT_REFERENCE_PREFIXES = frozenset("""
 erc trc bep brc eip bip cip slip spl iso soc as asc sha ifrs ias sab fy cy q h ytd mtd
 m t tier band layer l mid early late pre post end usd k mm bn
@@ -348,8 +352,13 @@ jan feb mar apr may jun jul aug sep sept oct nov dec january february march apri
 july august september october november december
 """.split())
 
-_SPLIT_CHARS = set(".,;:!?()[]{}\"“”«»/|–—")
-_WORD_RE = re.compile(r"[^\W_](?:[\w&'’\-]*[^\W_])?|&")
+# Candidate runs split at sentence punctuation followed by a space or the end of
+# the text, and at en and em dashes. Quotes and brackets do not split a run.
+_CLAUSE_BREAK_RE = re.compile(r"[.,;:!?](?=\s|$)|[\u2013\u2014]")
+# A compound is word characters joined by - _ . or / with no space (on-chain,
+# Ghost-Custody-LLC, WD-2512-04417), with an optional possessive 's.
+_COMPOUND_RE = re.compile(r"[^\W_]+(?:[-_./][^\W_]+)*(?:['\u2019][sS](?![^\W_]))?")
+_PART_RE = re.compile(r"[^\W_]+")
 
 _LONG_TOKEN_RE = re.compile(r"(?<![0-9A-Za-z])[0-9A-Za-z]{16,}(?![0-9A-Za-z])")
 _HEX_PREFIXED_RE = re.compile(r"(?<![0-9A-Za-z])0[xX][0-9a-fA-F]{6,}(?![0-9A-Za-z])")
@@ -393,8 +402,9 @@ class SweepHit:
 @dataclass(frozen=True)
 class _Word:
     start: int
-    end: int  # possessive 's trimmed
+    end: int
     text: str
+    breaker: bool = False  # a compound with a digit: a reference or amount, not a name word
 
     @property
     def key(self) -> str:
@@ -406,47 +416,48 @@ def _is_latin_letter(ch: str) -> bool:
 
 
 def _clauses(text: str) -> list[list[_Word]]:
-    """Words grouped into runs that sentence punctuation does not cross."""
+    """Name words grouped into runs that sentence punctuation does not cross. A
+    compound without digits is split into its parts, so a hyphen or a dot cannot
+    glue a name into one token; a compound with a digit is one breaker token,
+    left to the reference and identifier sweeps."""
     clauses: list[list[_Word]] = [[]]
     last_end = 0
-    for m in _WORD_RE.finditer(text):
-        if any(ch in _SPLIT_CHARS for ch in text[last_end : m.start()]):
+    for m in _COMPOUND_RE.finditer(text):
+        if _CLAUSE_BREAK_RE.search(text[last_end : m.start()]):
             clauses.append([])
-        end = m.end()
-        if text[m.start() : end].endswith(("'s", "’s")):
-            end -= 2
-        clauses[-1].append(_Word(m.start(), end, text[m.start() : end]))
         last_end = m.end()
+        compound = m.group(0)
+        if compound[-2:] in ("'s", "\u2019s", "'S", "\u2019S"):
+            compound = compound[:-2]
+        if any(ch.isdigit() for ch in compound):
+            clauses[-1].append(_Word(m.start(), m.start() + len(compound), compound, breaker=True))
+            continue
+        for part in _PART_RE.finditer(compound):
+            clauses[-1].append(_Word(m.start() + part.start(), m.start() + part.end(), part.group(0)))
     return [c for c in clauses if c]
-
-
-def _has_digit(word: _Word) -> bool:
-    return any(ch.isdigit() for ch in word.text)
 
 
 def _suffix_spans(clause: list[_Word]) -> Iterable[tuple[int, int, str]]:
     """An organization suffix or custody word with up to four preceding words. The
-    backward run stops at a function word or a token with digits. A run whose
-    preceding words are all generic prose is not a name, unless the suffix is a
-    legal suffix (LLC, Inc, Ltd, Corp). Chain names and tickers count as name words
-    here, so "SOL Custody" or "Bitcoin Trust" is swept."""
+    backward run stops at a function word or a token with digits. A custody word
+    whose preceding words are absent or all generic prose is not a name. A legal
+    suffix is always swept, alone if nothing precedes it. Chain names and tickers
+    count as name words here, so "SOL Custody" or "Bitcoin Trust" is swept."""
     for i, word in enumerate(clause):
-        if word.key not in ORG_SUFFIXES:
+        if word.breaker or word.key not in ORG_SUFFIXES:
             continue
         run: list[_Word] = []
         for prev in reversed(clause[max(0, i - MAX_PRECEDING_WORDS) : i]):
-            if prev.key in FUNCTION_WORDS or _has_digit(prev):
+            if prev.key in FUNCTION_WORDS or prev.breaker:
                 break
             run.insert(0, prev)
-        if not run:
-            continue
         if word.key not in LEGAL_SUFFIXES and all(w.key in GENERIC_WORDS for w in run):
             continue
-        yield run[0].start, word.end, "organization_suffix"
+        yield (run[0].start if run else word.start), word.end, "organization_suffix"
 
 
 def _is_capitalized(word: _Word) -> bool:
-    return word.text[:1].isupper() and not _has_digit(word)
+    return word.text[:1].isupper() and not word.breaker
 
 
 def _capitalized_spans(clause: list[_Word]) -> Iterable[tuple[int, int, str]]:

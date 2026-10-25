@@ -73,6 +73,28 @@ def test_fabricated_narrative_entity_is_flagged(asset, narrative, needle):
     _assert_flagged(truth, out, needle)
 
 
+GLUED_OR_PUNCTUATED_PROBES = [
+    "The reserve sits with Ghost-Custody-LLC.",
+    "The reserve sits with Ghost.Custody.LLC.",
+    "The reserve sits with Ghost_Custody_LLC.",
+    "The reserve sits with Ghost/Custody/LLC.",
+    "The reserve sits with Ghost 2 LLC.",
+    "The reserve sits with Ghost & Partners.",
+    'The reserve sits with "Ghost" Custody.',
+    "The reserve sits with Ghost Custody, Inc.",
+    "The reserve sits with Ghost's Custody.",
+    "The reserve sits with Ghost Custody’s cold wallet.",
+    "The reserve sits with Nevada Digital GmbH.",
+]
+
+
+@pytest.mark.parametrize("asset", ALL_ASSETS)
+@pytest.mark.parametrize("narrative", GLUED_OR_PUNCTUATED_PROBES)
+def test_names_glued_by_punctuation_are_flagged(asset, narrative):
+    truth, out = _with_narrative(asset, narrative)
+    _assert_flagged(truth, out)
+
+
 @pytest.mark.parametrize("asset", ALL_ASSETS)
 def test_cyrillic_homoglyph_routes_to_review(asset):
     truth, out = _with_narrative(asset, "The reserve sits with Ghost Сustody LLC.")
