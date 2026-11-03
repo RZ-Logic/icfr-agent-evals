@@ -15,6 +15,10 @@ Run configuration (pre-registration section 5):
     pinned inspect-ai writes no reducer into the log header;
   - the generator seed is a task argument, so the log header carries it in
     task_args; the --seed option is not used;
+  - subset is a task argument too ("pilot": the 20 flagged dev cases of the
+    section 13 pilot row), so task_args records it; dataset_sha256 hashes the
+    samples that actually run, and split_dataset_sha256 the whole split they
+    were selected from, so a pilot log never carries the full split's hash;
   - Task version and metadata carry everything needed to reproduce the run
     config from the EvalLog header alone.
 
@@ -34,7 +38,7 @@ from inspect_ai.solver import generate, system_message
 # imports would fail there. The package is installed, so absolute imports resolve
 # both under the CLI and under normal `import icfr_agent_evals.task`.
 from icfr_agent_evals.casefile import DATASET_VERSION, EVAL_SEED, SCHEMA_VERSION, dataset_sha256, split_seed
-from icfr_agent_evals.dataset import build_dataset
+from icfr_agent_evals.dataset import build_dataset, check_subset, dataset_name, select_subset
 from icfr_agent_evals.roster import REASONING_EFFORT, retirement_metadata, roster_check, roster_metadata
 from icfr_agent_evals.scorers import (
     completeness_anchor,
@@ -55,6 +59,7 @@ def variance_commentary(
     seed: int = EVAL_SEED,
     epochs: int = 4,
     grader_step: int = 1,
+    subset: str | None = None,
 ) -> Task:
     """Variance-commentary content eval over the seeded synthetic set.
 
@@ -68,8 +73,16 @@ def variance_commentary(
             trials for content-pass^4.
         grader_step: 1, or 2 once step 2 of the judge remedy order (section 7)
             moves the grader to its escalation pin.
+        subset: None (the whole split) or 'pilot' (the 20 dev cases flagged for
+            the section 13 pilot; split must be 'dev'). Checked before the split
+            is built.
     """
-    dataset = build_dataset(split=split, seed=seed)
+    check_subset(split, subset)
+    full = build_dataset(split=split, seed=seed)
+    dataset = full
+    if subset is not None:
+        chosen = {s.id for s in select_subset(full, split, subset)}
+        dataset = full.filter(lambda s: s.id in chosen, name=dataset_name(split, subset))
     return Task(
         dataset=dataset,
         setup=roster_check(grader_step=grader_step),
@@ -90,6 +103,8 @@ def variance_commentary(
             "worker_prompt_sha256": WORKER_PROMPT_SHA256,
             "dataset_version": DATASET_VERSION,
             "dataset_sha256": dataset_sha256(list(dataset)),
+            "split_dataset_sha256": dataset_sha256(list(full)),
+            "subset": subset,
             "schema_version": SCHEMA_VERSION,
             "split": split,
             "split_seed": split_seed(split, seed),

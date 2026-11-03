@@ -14,6 +14,10 @@ Splits, each from its own RNG stream (casefile.split_seed):
     DEV_HARD_COMPOSITION, 30 in all. Used only for elicitation and the pilot.
   - calibration: built later.
 
+Subsets (pre-registration section 13, pilot row): "pilot" keeps the 20 dev cases
+whose truth.notes flag pilot (8 standard per D4, 4 memo-only and 4 not, the 6 dev
+edge cases and one case per AC category). It exists only on the dev split.
+
 Standard composition: 126 = 7 assets x 3 bands x 3 periods x 2 directions, one
 each, plus 20 seeded draws, so asset, band, period and direction are decorrelated.
 Within each asset x band cell the six period x direction slots take the evidence
@@ -25,8 +29,9 @@ from __future__ import annotations
 
 import json
 import random
+from collections.abc import Iterable
 
-from inspect_ai.dataset import MemoryDataset
+from inspect_ai.dataset import MemoryDataset, Sample
 
 from .casefile import ASSETS as _ASSETS
 from .casefile import BANDS, DIRECTIONS, EVIDENCE_STATES, SPLITS, CaseFile, split_seed, to_sample
@@ -37,7 +42,8 @@ ASSETS = list(_ASSETS)
 PERIODS = list(_PERIODS)
 __all__ = [
     "ASSETS", "PERIODS", "CUSTODIANS", "BAND_RANGES", "EVIDENCE_MIX", "CI_HARD_COMPOSITION",
-    "DEV_HARD_COMPOSITION", "STANDARD_CASES", "build_cases", "build_dataset", "standard_specs",
+    "DEV_HARD_COMPOSITION", "PILOT_CASES", "STANDARD_CASES", "SUBSETS", "build_cases", "build_dataset",
+    "check_subset", "dataset_name", "is_pilot", "select_subset", "standard_specs",
 ]
 
 STANDARD_CASES = 146
@@ -68,6 +74,9 @@ DEV_HARD_COMPOSITION = {
 }
 DEV_STANDARD_CASES = 14
 DEV_PILOT_PER_GROUP = 4  # memo-only and non-memo dev standard cases flagged for the pilot
+
+SUBSETS = {"pilot": "dev"}  # subset -> the only split it is defined on
+PILOT_CASES = 20  # section 13 pilot row: 20 dev-split cases
 
 assert sum(CI_HARD_COMPOSITION.values()) == 54
 assert DEV_STANDARD_CASES + sum(DEV_HARD_COMPOSITION.values()) == 30
@@ -160,13 +169,53 @@ def build_cases(split: str = "eval", seed: int = 20260607) -> list[CaseFile]:
     return cases
 
 
-def build_dataset(split: str = "eval", n: int | None = None, seed: int = 20260607) -> MemoryDataset:
-    """The Inspect dataset for a split; n, when given, keeps the first n samples."""
+def check_subset(split: str, subset: str | None) -> None:
+    """Raise ValueError unless subset is None or a known subset of this split. Runs
+    before any case is built, so a bad pairing never builds the split."""
+    if subset is None:
+        return
+    if subset not in SUBSETS:
+        raise ValueError(f"unknown subset {subset!r}; known: {sorted(SUBSETS)}")
+    if split != SUBSETS[subset]:
+        raise ValueError(f"subset {subset!r} is defined only on split {SUBSETS[subset]!r}, not {split!r}")
+
+
+def is_pilot(sample: Sample) -> bool:
+    """True when the sample's answer key flags it for the pilot. Only a literal True
+    counts, so a missing or malformed flag keeps the case out."""
+    truth = (sample.metadata or {}).get("truth") or {}
+    return (truth.get("notes") or {}).get("pilot") is True
+
+
+def select_subset(samples: Iterable[Sample], split: str, subset: str | None) -> list[Sample]:
+    """The samples of a subset, in sample order; every sample when subset is None.
+    The pilot must come to exactly PILOT_CASES, or the dev build has moved and the
+    pilot is not the one section 13 registers."""
+    check_subset(split, subset)
+    samples = list(samples)
+    if subset is None:
+        return samples
+    chosen = [s for s in samples if is_pilot(s)]
+    if len(chosen) != PILOT_CASES:
+        raise ValueError(f"subset 'pilot' selected {len(chosen)} cases, expected {PILOT_CASES}")
+    return chosen
+
+
+def dataset_name(split: str, subset: str | None = None) -> str:
+    return f"variance-commentary-{split}" + (f"-{subset}" if subset else "")
+
+
+def build_dataset(split: str = "eval", n: int | None = None, seed: int = 20260607,
+                  subset: str | None = None) -> MemoryDataset:
+    """The Inspect dataset for a split; subset, when given, keeps that subset's
+    samples (checked before anything is built); n, when given, then keeps the
+    first n samples."""
+    check_subset(split, subset)
     cases = build_cases(split, seed)
-    samples = [to_sample(c) for c in cases]
+    samples = select_subset((to_sample(c) for c in cases), split, subset)
     if n is not None:
         samples = samples[:n]
-    return MemoryDataset(samples=samples, name=f"variance-commentary-{split}")
+    return MemoryDataset(samples=samples, name=dataset_name(split, subset))
 
 
 def split_jsonl(split: str, seed: int = 20260607) -> bytes:

@@ -159,7 +159,9 @@ def baseline_check():
 
 
 @task
-def variance_commentary_template_baseline(split: str = "eval", seed: int = EVAL_SEED, epochs: int = 4) -> Task:
+def variance_commentary_template_baseline(
+    split: str = "eval", seed: int = EVAL_SEED, epochs: int = 4, subset: str | None = None
+) -> Task:
     """The template baseline over a split, scored exactly as the main task scores a
     model: the same dataset, scorers, Epochs and metadata, taken from
     task.variance_commentary so the two can never drift apart.
@@ -168,8 +170,10 @@ def variance_commentary_template_baseline(split: str = "eval", seed: int = EVAL_
     Task-level model overriding --model is the safe direction, because whatever
     --model says, nothing can be sampled. Epochs stay at the main task's value so
     the reference row has the same trial structure; every epoch is identical.
+    subset passes through unchanged ('pilot' on split 'dev' gives the section 13
+    pilot's baseline row over the same 20 cases).
     """
-    main = variance_commentary(split=split, seed=seed, epochs=epochs)
+    main = variance_commentary(split=split, seed=seed, epochs=epochs, subset=subset)
     return Task(
         dataset=main.dataset,
         setup=baseline_check(),

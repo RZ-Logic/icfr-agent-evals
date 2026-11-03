@@ -36,7 +36,11 @@ ANCHOR_STATUS: dict[Dimension, str] = {
         "sweep (review); reconciling items with eligibility and code-computed split (FM-015)"
     ),
     Dimension.COMPLETENESS: "wired: required-element presence as parseable fields (FM-004)",
-    Dimension.CALIBRATION: "pending: Sample Consistency via epochs = 4 (Week 1 derisk)",
+    Dimension.CALIBRATION: (
+        "measured, unscored: consistency.py computes deterministic Sample Consistency over the k = 4 "
+        "epochs (agreement, ROC AUC discrimination, calibration table by subset, FM-007 candidates "
+        "reported only); pending: the 0 to 3 anchor scale and calibration.semantic_agreement (grader)"
+    ),
     Dimension.ROBUSTNESS: "pending: structured-field diff across input perturbations (Week 2)",
 }
 
