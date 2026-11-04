@@ -4,6 +4,8 @@ One test per violation the setup check must reject, plus the offline mockllm mod
 the smoke and unit tests run in.
 """
 
+import re
+
 import pytest
 
 from icfr_agent_evals.roster import (
@@ -12,10 +14,15 @@ from icfr_agent_evals.roster import (
     EVALUATED_MODELS,
     GRADER,
     GRADER_ESCALATION,
+    NOTICE_POLICIES,
     RETIREMENT_FLOORS,
+    RETIREMENT_FLOORS_RECORDED,
+    SCOUT_SCANNER,
+    SERVING_PLATFORMS,
     WORKER,
     RosterError,
     calibrator_may_sample,
+    retirement_metadata,
     roster_metadata,
     validate_roster,
 )
@@ -79,9 +86,41 @@ def test_calibrator_bound_away_from_its_pin_is_rejected():
         validate_roster(WORKER, {**PINNED, "calibrator": "anthropic/claude-sonnet-5-5"})
 
 
-def test_grader_equal_to_evaluated_model_is_rejected():
+@pytest.mark.parametrize("model", EVALUATED_MODELS)
+@pytest.mark.parametrize("step", [1, 2])
+def test_grader_equal_to_evaluated_model_is_rejected(model, step):
     with pytest.raises(RosterError, match="equals the evaluated model"):
-        validate_roster(WORKER, {**PINNED, "grader": WORKER})
+        validate_roster(model, {**PINNED, "grader": model}, grader_step=step)
+
+
+@pytest.mark.parametrize("role", ["grader", "calibrator"])
+@pytest.mark.parametrize("model", ["anthropic/claude-sonnet-4-6", "openai/gpt-6", "openai/gpt-6-luna-latest"])
+def test_judge_role_bound_off_the_roster_is_rejected(role, model):
+    with pytest.raises(RosterError, match="not its pin"):
+        validate_roster(WORKER, {**PINNED, role: model})
+
+
+@pytest.mark.parametrize(
+    "evaluated,roles,needle",
+    [
+        ("anthropic/bedrock/claude-sonnet-5-5", PINNED, "not on the roster"),
+        ("anthropic/vertex/claude-sonnet-5-5", PINNED, "not on the roster"),
+        (WORKER, {**PINNED, "grader": "openai/azure/gpt-6-luna"}, "not its pin"),
+        (WORKER, {**PINNED, "calibrator": "anthropic/bedrock/claude-opus-5-5"}, "not its pin"),
+    ],
+)
+def test_partner_platform_service_prefix_is_rejected(evaluated, roles, needle):
+    # Inspect routes anthropic/bedrock/, anthropic/vertex/ and openai/azure/ to a partner
+    # platform with its own retirement schedule; the exact-pin match keeps them out.
+    with pytest.raises(RosterError, match=needle):
+        validate_roster(evaluated, roles)
+
+
+def test_none_model_is_rejected_by_the_main_roster_check():
+    # The template baseline's none/none exception lives only in baseline.baseline_check,
+    # on its own Task; the main task's roster check never accepts it.
+    with pytest.raises(RosterError, match="not on the roster"):
+        validate_roster("none/none", PINNED)
 
 
 def test_role_not_on_the_roster_is_rejected():
@@ -129,3 +168,38 @@ def test_roster_metadata_records_pins_and_effort():
     meta = roster_metadata()
     assert meta["roles"] == PINNED and meta["reasoning_effort"] == "high"
     assert roster_metadata(2)["roles"]["grader"] == GRADER_ESCALATION
+    assert meta["serving_platforms"] == SERVING_PLATFORMS
+
+
+# --- Reperformance window and serving platform (section 5, section 13) --------------------
+
+def test_retirement_floors_cover_exactly_the_anthropic_roster_models():
+    anthropic = {m for m in (*EVALUATED_MODELS, CALIBRATOR) if m.startswith("anthropic/")}
+    assert set(RETIREMENT_FLOORS) == anthropic
+    assert all(re.fullmatch(r"\d{4}-\d{2}-\d{2}", d) for d in RETIREMENT_FLOORS.values())
+    assert min(RETIREMENT_FLOORS.values()) == RETIREMENT_FLOORS["anthropic/claude-sonnet-5"] == "2027-06-30"
+
+
+def test_retirement_floors_recorded_date_is_iso_and_not_before_first_read():
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", RETIREMENT_FLOORS_RECORDED)
+    assert RETIREMENT_FLOORS_RECORDED >= "2026-10-08"
+
+
+def test_every_roster_provider_has_a_serving_platform_and_notice_policy():
+    providers = {m.split("/", 1)[0] for m in (*EVALUATED_MODELS, GRADER, GRADER_ESCALATION, CALIBRATOR, SCOUT_SCANNER)}
+    assert providers == set(SERVING_PLATFORMS) == set(NOTICE_POLICIES) == {"anthropic", "openai"}
+    assert "first-party" in SERVING_PLATFORMS["anthropic"] and "Claude API" in SERVING_PLATFORMS["anthropic"]
+    assert "first-party" in SERVING_PLATFORMS["openai"] and "OpenAI API" in SERVING_PLATFORMS["openai"]
+    assert "60 days" in NOTICE_POLICIES["anthropic"]
+    assert "6 months" in NOTICE_POLICIES["openai"] and "generally available" in NOTICE_POLICIES["openai"]
+
+
+def test_retirement_metadata_records_floors_policies_and_platforms():
+    meta = retirement_metadata()
+    assert meta["recorded"] == RETIREMENT_FLOORS_RECORDED
+    assert meta["platform"] == SERVING_PLATFORMS["anthropic"]
+    assert meta["floors"] == RETIREMENT_FLOORS
+    assert meta["notice_policies"] == NOTICE_POLICIES
+    assert meta["serving_platforms"] == SERVING_PLATFORMS
+    meta["floors"]["anthropic/claude-sonnet-5"] = "changed"
+    assert RETIREMENT_FLOORS["anthropic/claude-sonnet-5"] == "2027-06-30"  # a copy, not the constant

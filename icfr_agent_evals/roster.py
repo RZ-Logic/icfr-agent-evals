@@ -48,16 +48,39 @@ OFFLINE_PROVIDER = "mockllm"
 
 # --- Reperformance window (section 5) ------------------------------------------------
 
-RETIREMENT_FLOORS_RECORDED = "2026-10-08"   # date the floors were read for the Claude API
+# Date the floors were last read for the Claude API, from the model status table at
+# https://platform.claude.com/docs/en/about-claude/model-deprecations ("Tentative
+# retirement date: Not sooner than ..."), cross-checked against the Retirement row of
+# https://platform.claude.com/docs/en/about-claude/models/overview. First read 2026-10-08.
+RETIREMENT_FLOORS_RECORDED = "2026-11-04"
 RETIREMENT_FLOORS: dict[str, str] = {
     "anthropic/claude-sonnet-5": "2027-06-30",
     "anthropic/claude-opus-5-5": "2027-09-22",
     "anthropic/claude-sonnet-5-5": "2027-09-28",
     "anthropic/claude-haiku-5-5": "2027-10-07",
 }
+# Wording follows each vendor's deprecation page as read on RETIREMENT_FLOORS_RECORDED:
+# https://platform.claude.com/docs/en/about-claude/model-deprecations (Notifications) and
+# https://developers.openai.com/api/docs/deprecations (Model deprecation notice periods).
 NOTICE_POLICIES: dict[str, str] = {
-    "anthropic": "not retired before the listed floor; 60 or more days of notice before retirement",
-    "openai": "6 or more months of notice for a generally available model",
+    "anthropic": (
+        "not retired before the listed floor; at least 60 days of notice before retirement "
+        "for publicly released models, sent to customers with active deployments"
+    ),
+    "openai": (
+        "at least 6 months of notice before retirement for a generally available model, "
+        "unless safety or compliance concerns require a faster timeline"
+    ),
+}
+
+# Serving platform per provider prefix (section 5: partner platforms set their own
+# retirement schedules, so the run config names the platform). The pins name no
+# service prefix (such as anthropic/bedrock/ or openai/azure/), and validate_roster
+# rejects any name that differs from its pin, so every roster model is served by its
+# vendor's first-party API.
+SERVING_PLATFORMS: dict[str, str] = {
+    "anthropic": "Claude API (Anthropic first-party)",
+    "openai": "OpenAI API (OpenAI first-party)",
 }
 
 
@@ -126,15 +149,17 @@ def roster_metadata(grader_step: int = 1) -> dict:
         "grader_step": grader_step,
         "scout_scanner": SCOUT_SCANNER,
         "reasoning_effort": REASONING_EFFORT,
+        "serving_platforms": dict(SERVING_PLATFORMS),
     }
 
 
 def retirement_metadata() -> dict:
     return {
         "recorded": RETIREMENT_FLOORS_RECORDED,
-        "platform": "Claude API",
+        "platform": SERVING_PLATFORMS["anthropic"],
         "floors": dict(RETIREMENT_FLOORS),
         "notice_policies": dict(NOTICE_POLICIES),
+        "serving_platforms": dict(SERVING_PLATFORMS),
     }
 
 

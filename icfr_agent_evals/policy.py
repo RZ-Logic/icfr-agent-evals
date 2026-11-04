@@ -1,4 +1,4 @@
-"""Asset tiers and materiality bands — the deterministic policy lookup.
+"""Asset tiers and materiality bands: the deterministic policy lookup.
 
 Phase 1 uses the materiality-band lookup inside the Correctness anchor (the
 worker's stated band must equal the band the inputs actually fall into). Phase 2
@@ -80,5 +80,5 @@ def band_error(claimed: Iterable[str], true_band: str) -> str:
 # --- Phase 2 placeholder ----------------------------------------------------------
 # The 9-cell action matrix (3 asset tiers x 3 materiality bands) and the
 # action-vs-policy lookup land here in Week 5, AFTER CPA review of policy.md.
-# Not built yet on purpose — the contested stablecoin cell (M1xT1) is a genuine
+# Not built yet on purpose: the contested stablecoin cell (M1xT1) is a genuine
 # industry-practice judgment that gets external review before it is encoded.

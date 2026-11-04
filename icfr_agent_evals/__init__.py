@@ -1,4 +1,4 @@
-"""icfr-agent-evals — eval harness for AI-as-actor in regulated finance.
+"""icfr-agent-evals: eval harness for AI-as-actor in regulated finance.
 
 Phase 1 skeleton: variance-commentary content eval. Deterministic anchors wired;
 calibration is reported (Sample Consistency), not scored, in Phase 1; robustness

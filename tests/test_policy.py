@@ -1,4 +1,4 @@
-"""Policy lookup tests — asset tiers and materiality-band boundaries.
+"""Policy lookup tests: asset tiers and materiality-band boundaries.
 
 The band boundaries are a defensibility-critical detail: an off-by-one at a
 threshold is exactly the kind of silent error that lets a material variance be

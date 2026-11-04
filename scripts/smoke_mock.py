@@ -1,4 +1,4 @@
-"""End-to-end plumbing proof with a mock model — runs with NO API key.
+"""End-to-end plumbing proof with a mock model; runs with NO API key.
 
 Purpose: prove the whole graph executes and the deterministic anchors discriminate
 *through Inspect*, not just in unit tests. Five dev-split cases each get one
@@ -153,7 +153,7 @@ def main() -> int:
         ok = False
         print("   MISMATCH: only the correct answer may pass its trial")
 
-    print("\nSMOKE RESULT:", "PASS — graph executed and anchors discriminated" if ok else "FAIL")
+    print("\nSMOKE RESULT:", "PASS: graph executed and anchors discriminated" if ok else "FAIL")
     return 0 if ok else 1
 
 

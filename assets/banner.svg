@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 540" width="1600" height="540" role="img" aria-labelledby="banner-title banner-desc">
+  <title id="banner-title">icfr-agent-evals: a pre-registered eval harness for AI agents on crypto reserve reconciliation</title>
+  <desc id="banner-desc">A dark banner with the project name, the two-line tagline and the Phase 1 scoring pipeline: case file, worker, strict parser, deterministic anchors (highlighted in amber), reliability per sample and epoch, and paired regression gates. Footer lines give the repository, license and status: pre-registration, pre-pilot.</desc>
+
+  <defs>
+    <pattern id="ledger-grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M40 0H0V40" fill="none" stroke="#8293A7" stroke-width="0.6"/>
+    </pattern>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10Z" fill="#5B6B7F"/>
+    </marker>
+  </defs>
+
+  <rect width="1600" height="540" fill="#0B1220"/>
+  <rect width="1600" height="540" fill="url(#ledger-grid)" opacity="0.05"/>
+
+  <!-- Native text keeps the copy exact. No raster, no external fonts. -->
+  <g font-family="'IBM Plex Mono', 'JetBrains Mono', Consolas, monospace" font-size="15" fill="#7BC4AC" letter-spacing="2.5">
+    <text x="64" y="72">VELOCYT CONSULTING · PHASE 1 PRE-REGISTRATION · INSPECT AI</text>
+  </g>
+
+  <g font-family="'Segoe UI', 'IBM Plex Sans', Helvetica, Arial, sans-serif">
+    <text id="wordmark" x="60" y="160" font-size="84" font-weight="800" letter-spacing="-3"><tspan fill="#F2F5F4">icfr-agent-</tspan><tspan fill="#7BC4AC">evals</tspan></text>
+    <text id="tagline-1" x="64" y="214" font-size="28" font-weight="400" letter-spacing="-0.3" fill="#D7DFE5">A pre-registered eval harness for AI agents on crypto reserve reconciliation.</text>
+    <text id="tagline-2" x="64" y="254" font-size="28" font-weight="400" letter-spacing="-0.3" fill="#AAB7C3">Consequential failures are scored by code. No model judge decides one.</text>
+  </g>
+
+  <!-- Pipeline: one box per stage, the deterministic anchors highlighted. -->
+  <g font-family="'IBM Plex Mono', 'JetBrains Mono', Consolas, monospace">
+    <g stroke-width="1.2">
+      <rect x="64" y="310" width="210" height="64" rx="4" fill="#101B2A" stroke="#26364B"/>
+      <rect x="317" y="310" width="210" height="64" rx="4" fill="#101B2A" stroke="#26364B"/>
+      <rect x="570" y="310" width="210" height="64" rx="4" fill="#101B2A" stroke="#26364B"/>
+      <rect x="823" y="310" width="210" height="64" rx="4" fill="#2A1F0C" stroke="#D7A24E" stroke-width="1.6"/>
+      <rect x="1076" y="310" width="210" height="64" rx="4" fill="#101B2A" stroke="#26364B"/>
+      <rect x="1329" y="310" width="210" height="64" rx="4" fill="#101B2A" stroke="#26364B"/>
+    </g>
+    <g stroke="#5B6B7F" stroke-width="1.4" marker-end="url(#arrow)">
+      <path d="M276 342H313"/>
+      <path d="M529 342H566"/>
+      <path d="M782 342H819"/>
+      <path d="M1035 342H1072"/>
+      <path d="M1288 342H1325"/>
+    </g>
+    <g font-size="16" font-weight="600" text-anchor="middle">
+      <text x="169" y="348" fill="#C9D3DC">CASE FILE</text>
+      <text x="422" y="348" fill="#C9D3DC">WORKER</text>
+      <text x="675" y="348" fill="#C9D3DC">STRICT PARSER</text>
+      <text x="928" y="348" fill="#F0C982">ANCHORS IN CODE</text>
+      <text x="1181" y="348" fill="#C9D3DC">PASS^4 + REVIEW</text>
+      <text x="1434" y="348" fill="#C9D3DC">PAIRED GATES</text>
+    </g>
+    <g font-size="13" fill="#6F8094" text-anchor="middle">
+      <text x="169" y="402">seeded, answer key in code</text>
+      <text x="422" y="402">evaluated model, k = 4</text>
+      <text x="675" y="402">one JSON object or FM-000</text>
+      <text x="928" y="402" fill="#D7A24E">FM-001 to 006, 015, 016</text>
+      <text x="1181" y="402">per (sample, epoch)</text>
+      <text x="1434" y="402">Holm t-tests, McNemar</text>
+    </g>
+  </g>
+
+  <!-- Footer strip. -->
+  <line x1="64" y1="456" x2="1536" y2="456" stroke="#1E293B" stroke-width="1"/>
+  <g font-family="'IBM Plex Mono', 'JetBrains Mono', Consolas, monospace" font-size="14" fill="#5B6B7F" letter-spacing="0.5">
+    <text x="64" y="490">RZ-Logic / icfr-agent-evals · Apache-2.0 · NOV 2026 · velocyt.ca</text>
+    <text x="1536" y="490" text-anchor="end">Status: pre-registration, pre-pilot · no model results</text>
+  </g>
+</svg>

@@ -17,7 +17,13 @@ from inspect_ai.model import ModelOutput, ModelUsage, get_model
 import icfr_agent_evals
 from icfr_agent_evals import task as task_module
 from icfr_agent_evals.casefile import DATASET_VERSION, SCHEMA_VERSION, CaseFile, split_seed, to_sample
-from icfr_agent_evals.roster import RETIREMENT_FLOORS, WORKER
+from icfr_agent_evals.roster import (
+    NOTICE_POLICIES,
+    RETIREMENT_FLOORS,
+    RETIREMENT_FLOORS_RECORDED,
+    SERVING_PLATFORMS,
+    WORKER,
+)
 from icfr_agent_evals.rubric import WIRED_SCORERS
 from icfr_agent_evals.solver import WORKER_PROMPT_SHA256, WORKER_PROMPT_VERSION
 
@@ -69,6 +75,11 @@ def test_metadata_keys_and_values(unit_dataset):
     assert meta["schema_version"] == SCHEMA_VERSION
     assert meta["roster"]["worker"] == WORKER
     assert meta["retirement_floors"]["floors"] == RETIREMENT_FLOORS
+    # Section 13: retirement floors, notice policies and serving platform in the run config.
+    assert meta["retirement_floors"]["recorded"] == RETIREMENT_FLOORS_RECORDED
+    assert meta["retirement_floors"]["notice_policies"] == NOTICE_POLICIES
+    assert meta["retirement_floors"]["serving_platforms"] == SERVING_PLATFORMS
+    assert meta["roster"]["serving_platforms"] == SERVING_PLATFORMS
 
 
 def test_task_binds_no_model_and_sets_no_sampling_parameter(unit_dataset):
@@ -139,8 +150,8 @@ def test_format_break_scores_zero_everywhere_without_crashing(unit_dataset, tmp_
             assert "FM-005" not in v.metadata["failure_modes"]
 
 
-# Provider SDKs are not installed in the test venv, so a role bound to a real
-# provider cannot be instantiated here; the "none" provider stands in for a real
+# The tests run with no API key, so a role bound to a real provider cannot be
+# instantiated here; the "none" provider stands in for a real
 # model (it is not offline mockllm), and an off-roster role name is the other case.
 @pytest.mark.parametrize(
     "roles,needle",
@@ -171,3 +182,4 @@ def test_unbound_role_fails_the_run(unit_dataset, tmp_path):
     )[0]
     assert log.status == "error"
     assert "calibrator" in log.error.message
+    assert not log.samples or all(not s.scores for s in log.samples)

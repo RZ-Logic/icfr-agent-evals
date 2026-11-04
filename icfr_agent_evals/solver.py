@@ -1,7 +1,7 @@
 """Worker (the agent under evaluation) for Phase 1.
 
 The agent receives a crypto reserve reconciliation case file and must produce
-variance commentary as a single JSON object. This is the *content* task — no
+variance commentary as a single JSON object. This is the *content* task, with no
 action/disposition yet (that is Phase 2).
 
 WORKER_PROMPT_VERSION is pinned because a prompt change is a code change. The
