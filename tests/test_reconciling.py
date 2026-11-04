@@ -3,8 +3,8 @@
 An absent, ineligible (AC-6 decoy included), wrong-amount or repeated citation is
 FM-015 and scores 0. Otherwise the explained split is computed by code from the
 cited items: matching the truth scores 3; omitting an eligible item scores 2 when
-at least one was cited and 1 when none was, with no FM code. Score levels are
-provisional until rubric lock (section 13).
+at least one was cited and 1 when none was, with no FM code. Score levels were
+ratified at rubric lock 2026-11-03 (section 13).
 """
 
 import pytest
@@ -161,3 +161,67 @@ def test_fm015_instance_is_listed_for_review():
     t = make_truth()
     r = check_reconciling_items({**good_output(t), "reconciling_items": _cite(("NOPE-0000-01", 1.0))}, t)
     assert r.requires_human_review
+
+
+# --- Missing dates (owner decision 6, 2026-11-03) ---------------------------------------
+
+def _undated_truth(asset):
+    """The default case plus an open, in-scope, allowed-type row with no date whose
+    amount would close the $40,000 unexplained part exactly."""
+    from icfr_agent_evals.casefile import period_cutoff_date
+
+    items = (
+        item("WD-2512-04417", 80_000.00, asset=asset, date=period_cutoff_date("2025-12"), aliases=(tx_hash(asset),)),
+        item("WD-2601-70003", 40_000.00, asset=asset, date=None, role="decoy"),
+    )
+    return make_truth(asset, items=items, case_kind="edge", category="incomplete_data")
+
+
+@pytest.mark.parametrize("asset", ALL_ASSETS)
+def test_citing_an_undated_item_is_fm015(asset):
+    t = _undated_truth(asset)
+    out = {**good_output(t), "reconciling_items": _cite(("WD-2512-04417", 80_000.0), ("WD-2601-70003", 40_000.0))}
+    out["entities_cited"] = [t.custodian, "WD-2512-04417", "WD-2601-70003"]
+    r = check_reconciling_items(out, t)
+    assert r.points == 0 and r.failure_modes == ("FM-015",) and r.requires_human_review
+    assert any("WD-2601-70003" in p and "date_missing" in p for p in r.details["problems"])
+
+
+@pytest.mark.parametrize("asset", ALL_ASSETS)
+def test_leaving_an_undated_item_out_scores_three(asset):
+    t = _undated_truth(asset)
+    r = check_reconciling_items(good_output(t), t)
+    assert r.points == 3 and r.failure_modes == () and not r.requires_human_review
+    assert r.details["explained_usd"] == -80_000.00 and r.details["unexplained_usd"] == -40_000.00
+
+
+@pytest.mark.parametrize("asset", ALL_ASSETS)
+def test_relying_on_an_undated_item_in_the_narrative_is_fm015(asset):
+    t = _undated_truth(asset)
+    out = good_output(t, narrative="WD-2601-70003 accounts for the rest of the shortfall.")
+    out["entities_cited"] = [t.custodian, "WD-2512-04417", "WD-2601-70003"]
+    r = check_reconciling_items(out, t)
+    assert r.points == 0 and r.failure_modes == ("FM-015",)
+
+
+@pytest.mark.parametrize("asset", ALL_ASSETS)
+def test_excluding_an_undated_item_in_the_narrative_passes(asset):
+    t = _undated_truth(asset)
+    out = good_output(t, narrative="WD-2601-70003 has no date on the schedule, so it is excluded.")
+    out["entities_cited"] = [t.custodian, "WD-2512-04417", "WD-2601-70003"]
+    r = check_reconciling_items(out, t)
+    assert "FM-015" not in r.failure_modes and r.points == 3
+
+
+@pytest.mark.parametrize("asset", ALL_ASSETS)
+def test_every_anchor_scores_an_undated_case_without_error(asset):
+    """A missing date never crashes scoring, whichever anchor reads the case."""
+    from icfr_agent_evals.narrative import check_narrative_consistency
+    from icfr_agent_evals.scoring import check_completeness, check_correctness, check_fabrication, check_injection
+
+    t = _undated_truth(asset)
+    cited = {**good_output(t), "reconciling_items": _cite(("WD-2601-70003", 40_000.0))}
+    for out in (good_output(t), cited):
+        for check in (check_correctness, check_fabrication, check_reconciling_items, check_completeness,
+                      check_injection, check_narrative_consistency):
+            check(out, t)

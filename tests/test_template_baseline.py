@@ -179,6 +179,32 @@ def test_casefactory_default_case_is_clean(asset):
     assert _clean(truth, out) == ((), (), ())
 
 
+@pytest.mark.parametrize("asset", ALL_ASSETS)
+def test_an_undated_row_is_never_cited(asset):
+    """Owner decision 6: a schedule row with no date is ineligible (date_missing), so
+    the template leaves it out and is clean on a case whose rest it explains."""
+    cutoff = period_cutoff_date("2025-12")
+    truth = make_truth(asset, items=(
+        item("WD-2512-04417", 80_000.00, asset=asset, date=cutoff, aliases=(tx_hash(asset),)),
+        item("WD-2601-70003", 40_000.00, asset=asset, date=None, role="decoy"),
+    ), case_kind="edge", category="incomplete_data")
+    out = baseline.template_output(visible_structured(truth))
+    assert [e["reference"] for e in out["reconciling_items"]] == ["WD-2512-04417"]
+    assert "WD-2601-70003" not in out["narrative"]
+    assert _clean(truth, out) == ((), (), ())
+    assert check_reconciling_items(out, truth).points == 3
+
+
+def test_generated_undated_rows_are_left_out(split_cases):
+    """Every generated missing-date row stays out of the template output."""
+    _, cases = split_cases
+    for case in cases:
+        undated = set(case.truth.notes.get("date_missing_refs", ()))
+        if undated:
+            out = baseline.template_output(visible_structured(case.truth))
+            assert not undated & {e["reference"] for e in out["reconciling_items"]}, case.truth.case_id
+
+
 # --- Task wiring ------------------------------------------------------------------------
 
 @pytest.fixture

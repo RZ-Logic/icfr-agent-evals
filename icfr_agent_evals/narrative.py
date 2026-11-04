@@ -27,10 +27,12 @@ Every vocabulary lives in narrative_vocab.py, hashed by vocab_sha256().
 
 Declared residuals, not caught by this code: a statement phrased outside the
 vocabulary (an unlisted direction idiom, a number written in words, a ticker in
-lower case, a month named without a year, a fiscal-year form); a unit quantity
-with no currency marker ("12.5 BTC"), and an amount in another currency, which
-routes to review unchecked; a percentage or reserve ratio; and a role cue placed
-to mislead the nearest-cue binding without a comma aside.
+lower case, a month or a spelled-out half year named without a year); a unit
+quantity with no currency marker ("12.5 BTC"), and an amount in another currency,
+which routes to review unchecked; a percentage or reserve ratio; and a role cue
+placed to mislead the nearest-cue binding without a comma aside. Fiscal-year and
+half-year forms in the vocabulary (FY/CY, H1/H2, 1H/2H, "fiscal 2025", "fiscal
+year", "first half of 2025") route to review.
 """
 
 from __future__ import annotations

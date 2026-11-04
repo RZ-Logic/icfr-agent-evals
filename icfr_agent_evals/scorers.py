@@ -125,7 +125,7 @@ def reconciling_items_anchor():
 
 @scorer(metrics=[mean(), stderr()])
 def faithfulness_anchor():
-    """min(fabrication, reconciling items); provisional pending rubric lock."""
+    """min(fabrication, reconciling items); ratified at rubric lock 2026-11-03."""
 
     async def score(state: TaskState, target: Target) -> Score:
         truth = truth_of(state.metadata)

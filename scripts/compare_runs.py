@@ -8,14 +8,17 @@ Every --candidate is a run of the same gated content; they pool (section 10(d)).
 The ladder defaults to R1, the rule with the most triggers, until the A/A estimate
 records the choice (section 10(c)).
 
-Exit codes:
+Every candidate run must hold the baseline's full sample id set and the same
+dataset content, so the comparison never runs on an overlap (ratified 2026-11-03).
+
+Exit codes (ratified 2026-11-03):
   0  pass: no automatic block and no sign-off case
   1  automatic block: a Holm rejection in 10(a) or a fabrication rejection in 10(b)
   2  no automatic block, sign-off cases pending under 10(c)
   3  refused: an evaluation-split log, a truncated run (--limit, --sample-id, or
      scored samples short of the dataset's count), runs whose split, seed, subset,
      Task version or dataset content (version and hashes) differ, a help request,
-     or any other input the gates cannot read
+     a --json path that cannot be written, or any other input the gates cannot read
 """
 
 from __future__ import annotations
@@ -124,6 +127,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--json", dest="json_out", help="write the report as JSON to this path")
     args = parser.parse_args(argv)
 
+    # Everything runs inside the try, the --json write included, and the report
+    # prints only after it: any failure exits 3, never 1 (a block) after a PASS line.
     try:
         base_log = load_log(args.baseline)
         cand_logs = [load_log(p) for p in args.candidate]
@@ -132,6 +137,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         check_matching_runs(base_log, cand_logs, args.candidate)
         report = compare(baseline, candidates, k=PREREGISTERED_K, ladder=args.ladder)
         instances = fabrication_instances(candidates)
+        text = render(report, args.ladder, instances)
+        code = EXIT_BLOCK if report.blocked else EXIT_SIGNOFF if report.signoff else EXIT_PASS
+        if args.json_out:
+            payload = {
+                "baseline": args.baseline,
+                "candidates": list(args.candidate),
+                "ladder": args.ladder,
+                "exit_code": code,
+                **asdict(report),
+                "fabrication_instances": [asdict(f) for f in instances],
+            }
+            body = json.dumps(payload, indent=2, sort_keys=True)
+            try:
+                with open(args.json_out, "w", encoding="utf-8", newline="\n") as fh:
+                    fh.write(body)
+            except OSError as e:
+                raise GateError(f"cannot write --json {args.json_out}: {type(e).__name__}: {e}") from e
     except GateError as e:
         print(f"REFUSED: {e}", file=sys.stderr)
         return EXIT_REFUSED
@@ -139,21 +161,30 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"REFUSED: {type(e).__name__}: {e}", file=sys.stderr)
         return EXIT_REFUSED
 
-    print(render(report, args.ladder, instances))
-    code = EXIT_BLOCK if report.blocked else EXIT_SIGNOFF if report.signoff else EXIT_PASS
-    if args.json_out:
-        payload = {
-            "baseline": args.baseline,
-            "candidates": list(args.candidate),
-            "ladder": args.ladder,
-            "exit_code": code,
-            **asdict(report),
-            "fabrication_instances": [asdict(f) for f in instances],
-        }
-        with open(args.json_out, "w", encoding="utf-8") as fh:
-            json.dump(payload, fh, indent=2, sort_keys=True)
+    _emit(text)
     return code
 
 
+def _emit(text: str) -> None:
+    """Print the report; a console that cannot encode a route key's token gets
+    backslash escapes rather than a traceback (exit 1 would read as a block)."""
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        enc = getattr(sys.stdout, "encoding", None) or "ascii"
+        print(text.encode(enc, "backslashreplace").decode(enc))
+
+
+def _run(argv: Sequence[str] | None = None) -> int:
+    """main, with any uncaught exception exiting 3 (refused), never Python's 1."""
+    try:
+        return main(argv)
+    except SystemExit:
+        raise
+    except Exception as e:
+        print(f"REFUSED: {type(e).__name__}: {e}", file=sys.stderr)
+        return EXIT_REFUSED
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(_run())

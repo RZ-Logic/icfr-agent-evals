@@ -17,8 +17,12 @@ Run configuration (pre-registration section 5):
     task_args; the --seed option is not used;
   - subset is a task argument too ("pilot": the 20 flagged dev cases of the
     section 13 pilot row), so task_args records it; dataset_sha256 hashes the
-    samples that actually run, and split_dataset_sha256 the whole split they
-    were selected from, so a pilot log never carries the full split's hash;
+    samples the task selects (the split, or the subset), and split_dataset_sha256
+    the whole split they were selected from, so a pilot log never carries the
+    full split's hash. Both are computed when the task is built, before Inspect
+    applies --limit or --sample-id, so on such a run dataset_sha256 also covers
+    samples that never ran; the section 10 gates refuse those runs, and any
+    other reader that trusts the hash must check the samples that ran;
   - Task version and metadata carry everything needed to reproduce the run
     config from the EvalLog header alone.
 

@@ -28,6 +28,7 @@ from icfr_agent_evals.consistency import (
     canonical_answer,
     consistency_report,
     format_report,
+    h4_verdict,
     modal_class,
     read_epoch,
     report_from_log,
@@ -36,6 +37,7 @@ from icfr_agent_evals.consistency import (
     whole_dollars,
 )
 from icfr_agent_evals.reliability import GateError
+from icfr_agent_evals.reliability import report_from_log as reliability_report_from_log
 from icfr_agent_evals.rubric import ANCHOR_STATUS, WIRED_SCORERS, Dimension
 
 PROSE = "Here is my commentary: the reserves look fine."
@@ -195,11 +197,11 @@ def test_four_different_answers_with_one_correct_is_wrong_at_one_quarter():
     assert (s.agreement, s.modal_correct, s.tie) == (0.25, False, True)
 
 
-def test_all_agree_wrong_is_unanimous_and_an_fm007_candidate():
+def test_all_agree_wrong_is_unanimous_and_fires_fm007():
     report = consistency_report([_record(e, _wrong_band()) for e in range(1, 5)], k=4)
     s = report.samples[0]
     assert (s.agreement, s.modal_correct, s.unanimous) == (1.0, False, True)
-    assert report.fm007_candidates == (TRUTH.case_id,)
+    assert report.fm007 == (TRUTH.case_id,)
 
 
 def test_a_class_with_mixed_correctness_is_wrong():
@@ -274,7 +276,7 @@ def test_report_splits_synthetic_and_difficulty_bearing():
     assert syn.n == 2 and syn.accuracy == 1.0 and syn.discrimination.auc is None  # saturated: no wrong samples
     assert hard.n == 2 and hard.discrimination.auc == 0.0  # the unanimous answer is the wrong one
     assert report.overall.n == 4 and report.overall.discrimination.auc == pytest.approx(0.5 / 3)
-    assert report.fm007_candidates == ("hc-a",)
+    assert report.fm007 == ("hc-a",)
     text = format_report(report)
     assert FM007_NOTE in text and CALIBRATION_SCORE_NOTE in text and "AUC=n/a" in text
 
@@ -343,6 +345,17 @@ def test_end_to_end_planned_multisets(tmp_path):
         ), plan.name
     assert mock.check(report, picked) == []
     assert report.overall.discrimination.auc == pytest.approx(11.5 / 15)
+    # FM-007 is sample-level: S4 (four identical wrong amounts) fires it, and it
+    # never enters a per-epoch trial, so content-pass^4 is already 0 there
+    assert report.fm007_count == 1 and report.fm007_by_subset == {SYNTHETIC: 1, DIFFICULTY_BEARING: 0}
+    rel = reliability_report_from_log(log)
+    assert all(rel.pass_k[sid] == 0 for sid in report.fm007)
+    assert "FM-007" not in rel.fm_counts
+    # H4 on the dev split exercises the code only; one correct difficulty-bearing sample
+    verdict = h4_verdict(report)
+    assert (verdict.model, verdict.split, verdict.is_h4_test) == ("mockllm/model", "dev", False)
+    assert report.by_subset[SYNTHETIC].discrimination.auc == pytest.approx(0.75)
+    assert not verdict.supported and "fewer than 2 correct" in verdict.reason
 
 
 # --- Review fixes C1 to C3 -----------------------------------------------------------
@@ -359,7 +372,7 @@ def test_narrative_contradiction_is_not_correct_and_unanimous_wrong_is_fm007():
     report = consistency_report([_record(e, json.dumps(bad)) for e in range(1, 5)], k=4)
     s = report.samples[0]
     assert s.unanimous and not s.modal_correct
-    assert report.fm007_candidates == (TRUTH.case_id,)
+    assert report.fm007 == (TRUTH.case_id,)
 
 
 def test_epochs_differing_only_in_narrative_share_a_class_that_is_wrong():
@@ -388,7 +401,7 @@ def test_epochs_with_different_item_amounts_disagree():
     assert s.agreement == 0.5 and s.tie and not s.modal_correct
     report = consistency_report([_record(e, c) for e, c in enumerate([w50, w60, w50, w60], start=1)], k=4)
     assert report.samples[0].agreement == 0.5 and not report.samples[0].unanimous
-    assert report.fm007_candidates == ()
+    assert report.fm007 == ()
 
 
 @pytest.mark.parametrize("amount", ["1e300", "123456789012345678901234567890", "-1e300"])

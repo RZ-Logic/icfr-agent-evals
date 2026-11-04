@@ -44,7 +44,8 @@ Reuse API (for the hard-case templates):
     case_kind, category and template_id. The case id must start with the split.
   - ItemPlan: one reconciling-item candidate by kind (ITEM_KINDS) with amount
     (None renders blank and makes the item ineligible), role, channel, wallet slot
-    or address, asset, date, flow, memo and comment overrides. An ItemPlan memo is
+    or address, asset, date (date_missing=True renders a blank schedule date and
+    makes the item ineligible), flow, memo and comment overrides. An ItemPlan memo is
     a str.format template (double any literal brace); a comment is kept verbatim.
     Notes and comments may use the markup [[usd:<cents>]] and [[date:<ISO>]],
     which the renderer formats in the case's style. Helpers `decoy_plan` and
@@ -216,6 +217,10 @@ class ItemPlan:
     wallet: a slot ("hot", "warm", "cold", "excluded") or an explicit address.
     date: ISO date of the first side; None means the cutoff date. A date before the
         extract window gives an aged item shown only on the schedule.
+    date_missing: the fixture omits the item's date (incomplete-data rows). The item
+        is a schedule row with a blank date and no extract line, its truth date is
+        None and item_eligibility marks it date_missing. Its reference is drawn in
+        the month after the cutoff, so nothing visible dates it inside the period.
     flow: overrides the kind's flow (journal kinds default to inflow).
     memo: the notes sentence for this item, with markup tokens {ref}, {usd},
         {units}, {wallet}, {time}, {date}, {next_time}, {next_date}, {tx},
@@ -235,6 +240,7 @@ class ItemPlan:
     comment: str | None = None
     reference: str | None = None
     counterparty: str | None = None
+    date_missing: bool = False
 
 
 def explaining_plan(kind: str, amount_usd: float, *, channel: str = "structured", **kw) -> ItemPlan:
@@ -710,9 +716,14 @@ class _Builder:
         asset = plan.asset or self.asset
         w = self.wallet(plan.wallet)
         flow = plan.flow or ks.flow
-        day = date.fromisoformat(plan.date) if plan.date else self.cut_d
+        if plan.date_missing and (plan.channel != "structured" or plan.date is not None):
+            raise ValueError("a missing-date item is a schedule row with no planned date")
+        if plan.date_missing:
+            day = self.next_d  # draws the reference and timestamps only; never shown or kept
+        else:
+            day = date.fromisoformat(plan.date) if plan.date else self.cut_d
         in_window = day >= self.window_start.date() and day <= self.next_d
-        show = plan.in_extract and in_window
+        show = plan.in_extract and in_window and not plan.date_missing
         if plan.channel == "memo_only" and not show:
             raise ValueError("a memo-only item needs an extract line inside the window")
         chain = self.chain  # another asset on the same wallet still moves on this chain
@@ -798,7 +809,7 @@ class _Builder:
             type=ks.type,
             asset=asset,
             wallet=w["address"],
-            date=day.isoformat(),
+            date=None if plan.date_missing else day.isoformat(),
             open_status=ks.open_status,
             recorded_in=ks.recorded_in,
             flow=flow,
@@ -821,7 +832,8 @@ class _Builder:
             comment = plan.comment if plan.comment is not None else self.comment_for(plan, ctx).format(**ctx)
             self.schedule.append({
                 "ref": reference, "type": ks.type, "asset": asset, "wallet_label": w["label"], "wallet": w["address"],
-                "date": day.isoformat(), "recorded_in": ks.recorded_in, "flow": flow, "status": ks.open_status,
+                "date": None if plan.date_missing else day.isoformat(), "recorded_in": ks.recorded_in,
+                "flow": flow, "status": ks.open_status,
                 "amount_cents": cents, "comment": comment,
             })
         if plan.memo is not None:
@@ -1411,7 +1423,7 @@ def _render(fixture: dict) -> tuple[str, list[str]]:
             comment = "" if "schedule.comments" in blank else markup(r["comment"])
             out.append(
                 f"  {r['ref']} | {rng.choice(_TYPE_LABELS[r['type']])} | {r['asset']} | {r['wallet_label']} {r['wallet']} | "
-                f"{_fmt_date(r['date'], dstyle)} | {rng.choice(_BOOKED_IN[r['recorded_in']])} | "
+                f"{'' if r['date'] is None else _fmt_date(r['date'], dstyle)} | {rng.choice(_BOOKED_IN[r['recorded_in']])} | "
                 f"{'in' if r['flow'] == 'inflow' else 'out'} | {r['status']} | {amt} | {comment}".rstrip(" |")
             )
     else:

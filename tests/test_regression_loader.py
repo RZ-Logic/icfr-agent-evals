@@ -28,11 +28,13 @@ from icfr_agent_evals.regression import (
     CODE_ROUTE,
     DIMENSION_SCORERS,
     SWEEP_ROUTE,
+    UNSTATED_REASON,
     _SWEEP_KINDS,
     compare,
     record_from_sample,
     records_from_log,
     records_from_samples,
+    route_class,
 )
 from icfr_agent_evals.reliability import GateError, evaluate_trial
 from icfr_agent_evals.rubric import WIRED_SCORERS
@@ -127,18 +129,20 @@ def test_every_sweep_hit_reason_maps_to_the_sweep_route(kind):
     reason = SweepHit("Phantom Custody Group", kind).reason
     r = record_from_sample(_sample(overrides={"fabrication_anchor": _score(0, reasons=(reason,)),
                                               "faithfulness_anchor": _score(0, reasons=(reason,))}))
-    assert r.review_routes == (SWEEP_ROUTE,)
+    assert r.review_routes == (f"{SWEEP_ROUTE}: {reason}",)  # repeated by faithfulness_anchor, counted once
+    assert route_class(r.review_routes[0]) == SWEEP_ROUTE
     assert r.failure_modes == () and not r.success
 
 
 def test_other_code_check_reasons_map_to_the_code_route():
     r = record_from_sample(_sample(overrides={"correctness_anchor": _score(3, reasons=("amount role unresolved",))}))
-    assert r.review_routes == (CODE_ROUTE,)
+    assert r.review_routes == (f"{CODE_ROUTE}: amount role unresolved",)
+    assert route_class(r.review_routes[0]) == CODE_ROUTE
 
 
 def test_review_flag_without_reasons_or_codes_is_a_code_route():
     s = _sample(overrides={"completeness_anchor": SimpleNamespace(value=3, metadata={"requires_human_review": True})})
-    assert record_from_sample(s).review_routes == (CODE_ROUTE,)
+    assert record_from_sample(s).review_routes == (f"{CODE_ROUTE}: {UNSTATED_REASON}",)
 
 
 def test_fm_attached_review_reason_is_not_a_route():
@@ -150,12 +154,13 @@ def test_fm_attached_review_reason_is_not_a_route():
 
 def test_sweep_hit_beside_a_fired_code_still_counts_as_a_route():
     """Reasons are read one by one: a sweep hit riding with FM-005 is a second,
-    unconfirmed entity, so it still counts on the sweep route (decision, conservative)."""
+    unconfirmed entity, so it still counts on the sweep route (section 10(c), each
+    review reason counts on its own, ratified 2026-11-03)."""
     sweep = SweepHit("Phantom Custody", "organization_suffix").reason
     r = record_from_sample(_sample(overrides={"fabrication_anchor": _score(0, fms=("FM-005",), reasons=(FABRICATION_REVIEW, sweep)),
                                               "correctness_anchor": _score(3, reasons=("band statement unresolved",))}))
     assert r.failure_modes == ("FM-005",)
-    assert r.review_routes == (SWEEP_ROUTE, CODE_ROUTE)
+    assert r.review_routes == (f"{SWEEP_ROUTE}: {sweep}", f"{CODE_ROUTE}: band statement unresolved")
 
 
 def test_real_sweep_and_code_reasons_from_scoring():
@@ -169,7 +174,11 @@ def test_real_sweep_and_code_reasons_from_scoring():
     assert typed.review_reasons and not typed.failure_modes
     s = _sample(overrides={"fabrication_anchor": _score(0, reasons=swept.review_reasons),
                            "reconciling_items_anchor": _score(3, reasons=typed.review_reasons)})
-    assert record_from_sample(s).review_routes == (SWEEP_ROUTE, CODE_ROUTE)
+    routes = record_from_sample(s).review_routes
+    fixture_type = truth.item_by_reference(out["reconciling_items"][0]["reference"]).type
+    assert routes == (*sorted(f"{SWEEP_ROUTE}: {r}" for r in set(swept.review_reasons)),
+                      f"{CODE_ROUTE}: reconciling item type differs from {fixture_type!r}")
+    assert [route_class(k) for k in routes] == [SWEEP_ROUTE] * (len(routes) - 1) + [CODE_ROUTE]
 
 
 def test_records_from_samples_keeps_every_epoch():
@@ -253,7 +262,7 @@ def test_dev_run_records_map_every_epoch(dev_run):
     assert sum(r.success for r in b) == 3
 
     c = cases[dev_run.picked["C"]]
-    swept = [r for r in c if SWEEP_ROUTE in r.review_routes]
+    swept = [r for r in c if any(route_class(k) == SWEEP_ROUTE for k in r.review_routes)]
     assert len(swept) == 2
     assert all(not r.failure_modes and not r.success and r.dims["faithfulness"] == 0.0 for r in swept)
     assert sum(r.success for r in c) == 2
@@ -318,6 +327,24 @@ def test_cli_blocks_a_correctness_collapse(dev_run, cli, capsys):
     assert "RESULT: BLOCKED" in capsys.readouterr().out
 
 
+def test_cli_unwritable_json_path_is_refused_with_exit_3(dev_run, cli, capsys, tmp_path):
+    """An unwritable --json path is bad input: exit 3 and no RESULT line, never a
+    printed PASS followed by Python's exit 1 (which reads as a block)."""
+    out_json = tmp_path / "no" / "such" / "dir" / "out.json"
+    assert cli.main(["--baseline", dev_run.path, "--candidate", dev_run.path, "--json", str(out_json)]) == 3
+    captured = capsys.readouterr()
+    assert "RESULT" not in captured.out and "REFUSED: cannot write --json" in captured.err
+    assert not out_json.exists()
+
+
+def test_cli_uncaught_error_exits_3(cli, monkeypatch, capsys):
+    def boom(argv=None):
+        raise RuntimeError("unexpected")
+    monkeypatch.setattr(cli, "main", boom)
+    assert cli._run([]) == 3
+    assert "REFUSED: RuntimeError" in capsys.readouterr().err
+
+
 def test_cli_signoff_pending_without_a_block(dev_run, cli, capsys, tmp_path):
     cand = _derive(dev_run, "one-fm016", _one_fm016_on_a(dev_run))
     out_json = tmp_path / "report.json"
@@ -341,7 +368,9 @@ def test_cli_pooled_rerun_counts_run_against_the_candidate(dev_run, cli, tmp_pat
     cases = {(c["sample_id"], c["trigger"]): (c["baseline_count"], c["candidate_count"], c["rule"])
              for c in json.loads(out_json.read_text(encoding="utf-8"))["signoff"]}
     assert cases[(dev_run.picked["B"], "FM-005")] == (1, 2, "R1")
-    assert cases[(dev_run.picked["C"], SWEEP_ROUTE)] == (2, 4, "R1")
+    swept = {trigger: v for (sid, trigger), v in cases.items()
+             if sid == dev_run.picked["C"] and route_class(trigger) == SWEEP_ROUTE}
+    assert swept and set(swept.values()) == {(2, 4, "R1")}
 
 
 @pytest.mark.parametrize(

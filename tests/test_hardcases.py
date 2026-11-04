@@ -293,6 +293,22 @@ def test_incomplete_data_truth_rules():
             assert it.amount_usd is None and t.eligibility(it).reasons == ("amount_missing",)
             row = next(r for r in c.fixture["open_items"] if r["ref"] == ref)
             assert row["amount_cents"] is None
+        for ref in t.notes.get("date_missing_refs", []):
+            it = _item(t, ref)
+            assert it.date is None and it.amount_usd is not None
+            assert t.eligibility(it).reasons == ("date_missing",) and it.role == "decoy"
+            row = next(r for r in c.fixture["open_items"] if r["ref"] == ref)
+            assert row["date"] is None and row["amount_cents"] is not None
+            shown = [ln for ln in c.rendered.splitlines() if ref in ln]
+            assert len(shown) == 2  # the schedule row, with a blank date cell, and the notes line
+            assert [x.strip() for x in shown[0].split("|")][4] == ""
+            cut = t.cutoff_date
+            nxt = f"{int(cut[2:4]) + (cut[5:7] == '12'):02d}{int(cut[5:7]) % 12 + 1:02d}"
+            assert ref.split("-")[1] == nxt  # the reference dates it after the cutoff, never inside
+            amounts = [round(i.amount_usd * 100) for i in t.items if i.amount_usd is not None and i is not it]
+            assert all(abs(round(it.amount_usd * 100) - a) > 500 for a in amounts)
+            assert abs(round(it.amount_usd * 100) - round(abs(t.unexplained_usd) * 100)) > 500
+        assert ("date_missing_refs" in t.notes) == (v == "row_date_missing")
         if v == "unconfirmed_amount":
             assert t.evidence_state != "fully_explained"
         if v == "blank_memo_fields":
@@ -304,6 +320,36 @@ def test_incomplete_data_truth_rules():
             assert t.eligibility(it).eligible and not it.reference.startswith("OTC")
             assert it.description == it.description.split(" ")[0]  # no counterparty on the item
     assert {c.truth.notes["template_variant"] for c in of("incomplete_data", "ci")} == set(VARIANTS["incomplete_data"])
+
+
+def test_missing_date_rows_take_the_later_amount_missing_slots():
+    """row_date_missing takes every row_amount_missing slot after a split's first, so
+    ci (three such slots) carries one amount-missing and two missing-date rows and
+    dev (one slot) is unchanged."""
+    assert Counter(c.truth.notes["template_variant"] for c in of("incomplete_data", "ci")) == {
+        "row_amount_missing": 1, "row_date_missing": 2, "blank_memo_fields": 3,
+        "unnamed_counterparty": 2, "unconfirmed_amount": 2,
+    }
+    assert Counter(c.truth.notes["template_variant"] for c in of("incomplete_data", "dev")) == {
+        "row_amount_missing": 1, "unnamed_counterparty": 1,
+    }
+
+
+@pytest.mark.parametrize("split", ["ci", "dev"])
+def test_missing_date_rows_move_no_other_case(split, monkeypatch):
+    """With the derived variant switched off, every slot that is not row_date_missing
+    builds byte for byte the same case: row_date_missing draws from the shared
+    hard-case stream exactly what row_amount_missing draws."""
+    from icfr_agent_evals import hardcases
+
+    on = {c.truth.case_id: c for c in hard(split)}  # built before the patch
+    monkeypatch.setattr(hardcases, "DERIVED_VARIANTS", {"row_date_missing": "(off)"})
+    off = {c.truth.case_id: c for c in build_hard_cases(split, split_seed(split), COMPOSITION[split])}
+    assert set(off) == set(on)
+    moved = sorted(k for k in on if on[k].rendered != off[k].rendered or on[k].truth != off[k].truth)
+    assert moved == sorted(k for k, c in on.items() if c.truth.notes["template_variant"] == "row_date_missing")
+    for k in moved:
+        assert off[k].truth.notes["template_variant"] == "row_amount_missing"
 
 
 # --- AC-1 -------------------------------------------------------------------------------

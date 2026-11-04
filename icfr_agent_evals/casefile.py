@@ -126,6 +126,7 @@ INELIGIBLE_REASONS: tuple[str, ...] = (
     "wrong_asset",
     "out_of_scope_wallet",
     "after_cutoff",      # dated after the period-end cutoff
+    "date_missing",      # no date, so it cannot be shown dated on or before the cutoff
     "disallowed_type",
     "amount_missing",
 )
@@ -245,13 +246,15 @@ class Wallet:
 class ReconcilingItem:
     """One reconciling-item candidate. Pre-registration section 4: each item gives
     reference, type, asset, wallet, date, open status and amount_usd. recorded_in and
-    flow make the effect sign computable; channel says where the worker can see it."""
+    flow make the effect sign computable; channel says where the worker can see it.
+    date and amount_usd may be None (incomplete-data rows); item_eligibility then
+    states the reason, date_missing or amount_missing, and the item explains nothing."""
 
     reference: str
     type: str                 # one of ITEM_TYPES
     asset: str
     wallet: str               # address
-    date: str                 # ISO date YYYY-MM-DD
+    date: str | None          # ISO date YYYY-MM-DD; None when the fixture omits it
     open_status: str          # "open" | "cleared"
     recorded_in: str          # "ledger" | "on_chain" | "both"
     flow: str                 # "inflow" | "outflow"
@@ -285,6 +288,8 @@ def item_eligibility(
     """Section 6 eligibility, from structured fields only: open at the period-end
     cutoff (recorded in the ledger or on chain but not both), in the variance's asset
     and wallet scope, of an allowed type, dated on or before the cutoff, with an amount.
+    An item with no date (None or blank) is ineligible for date_missing: it cannot be
+    shown dated on or before the cutoff, so it never counts as in-period.
     "Cited at most once across the case" is a citation rule, checked by the anchor."""
     reasons: list[str] = []
     if item.open_status != "open":
@@ -295,7 +300,9 @@ def item_eligibility(
         reasons.append("wrong_asset")
     if item.wallet not in set(scope_wallets):
         reasons.append("out_of_scope_wallet")
-    if item.date > cutoff_date:  # ISO dates compare lexically
+    if item.date is None or not str(item.date).strip():
+        reasons.append("date_missing")
+    elif item.date > cutoff_date:  # ISO dates compare lexically
         reasons.append("after_cutoff")
     if item.type not in ALLOWED_ITEM_TYPES:
         reasons.append("disallowed_type")
@@ -504,6 +511,8 @@ def validate_truth(t: CaseTruth) -> None:
         need(item.role in ITEM_ROLES, f"{item.reference}: role")
         need((item.open_status == "open") == (item.recorded_in != "both"),
              f"{item.reference}: open_status and recorded_in disagree")
+        need(item.date is None or bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(item.date))),
+             f"{item.reference}: date {item.date!r} is neither an ISO date nor None")
         need(item.reference in t.valid_entities, f"{item.reference}: reference not in valid_entities")
         for alias in item.aliases:
             need(alias in t.valid_entities, f"{item.reference}: alias {alias!r} not in valid_entities")

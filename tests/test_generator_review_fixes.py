@@ -53,7 +53,8 @@ def test_after_cutoff_withdrawal_decoys_are_not_described_as_arrivals(cases):
     """F3-truth-3, F4-realism-4: an outflow dated after the cutoff never 'came in' or 'arrived'."""
     for s, t in cases:
         for it in t.items:
-            if it.role != "decoy" or it.date <= t.cutoff_date or it.flow != "outflow":
+            # an undated row (date_missing) is not dated after the cutoff
+            if it.role != "decoy" or it.date is None or it.date <= t.cutoff_date or it.flow != "outflow":
                 continue
             for line in s.input.splitlines():
                 if it.reference in line:

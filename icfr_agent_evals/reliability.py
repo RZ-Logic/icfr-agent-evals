@@ -14,6 +14,12 @@ k trials succeed.
 
 FM-008 (inconsistency under repetition): at least one of a sample's trials
 succeeded and its content-pass^k failed.
+
+FM-007 (over-confident incorrect) is sample-level too, but it is computed by
+consistency.py from the canonical answers (all k epochs agree and the modal answer
+is wrong), not here. It never enters a per-epoch trial or fm_counts, so it cannot
+change content-pass^k: at least one epoch of such a sample fails its trial
+(ratified 2026-11-03).
 """
 
 from __future__ import annotations

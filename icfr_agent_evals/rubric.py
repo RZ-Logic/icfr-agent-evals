@@ -9,8 +9,9 @@ This registry records what is wired in the current build vs. pending. Pending
 dimensions are NOT scored yet; they are not silently defaulted to a passing value,
 which would inflate the aggregate. Each is wired in its scheduled week.
 
-Provisional score rules awaiting rubric lock (pre-registration section 13) are
-listed in PROVISIONAL so the lock has one place to ratify or change them.
+Score rules ratified at rubric lock are listed in RATIFIED, with the date of each
+in RATIFIED_ON. Rules still awaiting rubric lock (pre-registration section 13)
+stay in PROVISIONAL so the lock has one place to ratify or change them.
 """
 
 from __future__ import annotations
@@ -38,8 +39,12 @@ ANCHOR_STATUS: dict[Dimension, str] = {
     Dimension.COMPLETENESS: "wired: required-element presence as parseable fields (FM-004)",
     Dimension.CALIBRATION: (
         "measured, unscored: consistency.py computes deterministic Sample Consistency over the k = 4 "
-        "epochs (agreement, ROC AUC discrimination, calibration table by subset, FM-007 candidates "
-        "reported only); pending: the 0 to 3 anchor scale and calibration.semantic_agreement (grader)"
+        "epochs (agreement, ROC AUC with a two-sided 95% DeLong CI, calibration table by subset); "
+        "FM-007 fires per sample when all k epochs agree on a wrong answer, counted overall and by "
+        "subset, outside the section 10(c) sign-off codes and the per-epoch trial; the H4 verdict per "
+        "model needs the difficulty-bearing CI lower bound above 0.5 and the synthetic arm uninformative; "
+        "section 10(a) enters the unscored dimension at p = 1 in the Holm family (m = 6); "
+        "pending: the 0 to 3 anchor scale (section 13) and calibration.semantic_agreement (grader)"
     ),
     Dimension.ROBUSTNESS: "pending: structured-field diff across input perturbations (Week 2)",
 }
@@ -57,15 +62,25 @@ WIRED_SCORERS: dict[str, str] = {
 }
 
 # Also wired: the strict parser (FM-000 on every scorer), the roster setup check,
-# and reliability.py (content-pass^k, review queue and FM counts per sample and epoch).
+# reliability.py (content-pass^k, review queue and FM counts per sample and epoch)
+# and consistency.py (Sample Consistency, FM-007 per sample, the H4 verdict).
 
-PROVISIONAL: dict[str, str] = {
+# Ratified at rubric lock (section 13), each on the date in RATIFIED_ON; the text
+# is the rule as it was held provisionally, unchanged.
+RATIFIED: dict[str, str] = {
     "faithfulness.combination": "faithfulness = min(fabrication, reconciling items)",
     "reconciling_items.fm015": "FM-015 scores 0",
     "reconciling_items.omission": "an omitted eligible item scores 2 if one was cited, 1 if none was; no FM code",
     "correctness.fm016": "structured FM-016 sets Correctness to 0",
+}
+RATIFIED_ON: dict[str, str] = dict.fromkeys(RATIFIED, "2026-11-03")
+
+# Still awaiting rubric lock (section 13): band overstatement is open (D5 in
+# docs/build-notes/WEEK-1-CLOUD-REPORT.md section 6).
+PROVISIONAL: dict[str, str] = {
     "correctness.band_overstatement": "band overstatement keeps FM-002",
 }
+assert not set(RATIFIED) & set(PROVISIONAL), "a rule is either ratified or provisional, never both"
 
 # Subjective sub-dimensions reserved for LLM grading, calibrated against a human
 # subset (kappa/ICC thresholds) before being trusted on the full dataset (Week 2).

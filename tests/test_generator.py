@@ -277,8 +277,11 @@ def test_addresses_and_hashes_use_real_chain_formats():
 def test_truth_fields_stay_clean():
     iso = re.compile(r"\d{4}-\d{2}-\d{2}")
     for c in all_cases():
+        undated = set(c.truth.notes.get("date_missing_refs", ()))
         for it in c.truth.items:
-            assert iso.fullmatch(it.date)
+            # a missing date is truth's None, never a placeholder, and only on the
+            # incomplete-data rows that record it
+            assert iso.fullmatch(it.date) if it.reference not in undated else it.date is None
             assert it.amount_usd is None or it.amount_usd == round(it.amount_usd, 2)
             assert it.asset == it.asset.upper()
 
@@ -390,6 +393,47 @@ def test_build_case_with_memo_only_item_blank_fields_and_missing_amount():
     assert t.has_memo_only_link and t.evidence_state == "fully_explained"
     assert "amount_missing" in t.notes["decoy_reasons"][next(i.reference for i in t.items if i.amount_usd is None)]
     assert "USD per ETH" not in c.rendered and "RR-ETH" not in c.rendered
+
+
+def _undated_row(c, ref):
+    return next(r for r in c.fixture["open_items"] if r["ref"] == ref)
+
+
+@pytest.mark.parametrize("asset", ["BTC", "ETH", "SOL", "USDC", "USDT", "XRP", "ADA"])
+def test_build_case_with_a_missing_date_row(asset):
+    """Owner decision 6: a date_missing plan is a schedule row with a blank date, no
+    extract line, truth date None and the single reason date_missing. Its reference
+    is drawn in the month after the cutoff, so nothing visible dates it in period."""
+    items = (
+        explaining_plan("deposit_chain_first", 4_000.00),
+        ItemPlan("withdrawal_booked_unsent", 9_000.00, role="decoy", date_missing=True, in_extract=False,
+                 comment="date tbc"),
+    )
+    c = build_case(_spec(asset=asset, variance_usd=6_000.00, items=items, category="incomplete_data"))
+    t = c.truth
+    undated = next(i for i in t.items if i.role == "decoy")
+    assert undated.date is None and undated.amount_usd == 9_000.00
+    assert t.eligibility(undated).reasons == ("date_missing",)
+    assert t.notes["decoy_reasons"][undated.reference] == ["date_missing"]
+    assert t.explained_usd == 4_000.00 and t.unexplained_usd == 2_000.00
+    assert undated.reference.split("-")[1] == "2512"  # period 2025-11, so the month after
+    assert _undated_row(c, undated.reference)["date"] is None
+    lines = [ln for ln in c.rendered.splitlines() if undated.reference in ln]
+    assert len(lines) == 1  # the schedule row only: no ledger or chain line
+    cells = [x.strip() for x in lines[0].split("|")]
+    assert cells[4] == "" and cells[-1] == "date tbc"
+    assert not undated.aliases
+    all_lines = c.fixture["ledger_extract"]["lines"] + c.fixture["onchain_extract"]["lines"]
+    assert all(ln["ref"] != undated.reference for ln in all_lines)
+
+
+def test_a_missing_date_needs_a_schedule_row_with_no_planned_date():
+    for plan in (
+        ItemPlan("withdrawal_booked_unsent", 9_000.00, role="decoy", date_missing=True, channel="memo_only"),
+        ItemPlan("withdrawal_booked_unsent", 9_000.00, role="decoy", date_missing=True, date="2025-11-30"),
+    ):
+        with pytest.raises(ValueError, match="missing-date"):
+            build_case(_spec(variance_usd=-9_000.00, items=(plan,), category="incomplete_data"))
 
 
 def test_spec_text_with_an_entity_needs_extra_entities():

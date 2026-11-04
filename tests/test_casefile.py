@@ -49,6 +49,7 @@ def test_effect_zero_when_both_or_missing():
         ({"asset": "ETH"}, "wrong_asset"),
         ({"wallet": "bc1q09z23pa2tyjxzqhltaa5dfx0wkcdmxf69rlph9"}, "out_of_scope_wallet"),
         ({"date": "2026-01-02"}, "after_cutoff"),
+        ({"date": None}, "date_missing"),
         ({"type": "manual_adjustment"}, "disallowed_type"),
         ({"amount_usd": None}, "amount_missing"),
     ],
@@ -58,6 +59,24 @@ def test_eligibility_reasons(overrides, reason):
     it = dataclasses.replace(base, **overrides)
     e = item_eligibility(it, asset="BTC", scope_wallets=(scope_wallet("BTC"),), cutoff_date="2025-12-31")
     assert not e.eligible and reason in e.reasons
+
+
+@pytest.mark.parametrize("asset", ALL_ASSETS)
+@pytest.mark.parametrize("missing", [None, "", "  "])
+def test_missing_date_is_its_own_reason_and_never_in_period(asset, missing):
+    """Owner decision 6 (2026-11-03): an item may carry no date. It is ineligible for
+    date_missing alone, never read as in-period or as after_cutoff, and explains
+    nothing even when every other field would make it eligible."""
+    it = item("WD-2512-00001", 1_000.00, asset=asset, date=missing)
+    for cutoff in ("2025-10-31", "2025-11-30", "2025-12-31"):
+        e = item_eligibility(it, asset=asset, scope_wallets=(scope_wallet(asset),), cutoff_date=cutoff)
+        assert not e.eligible and e.reasons == ("date_missing",)
+
+
+def test_missing_date_and_amount_report_both_reasons():
+    it = item("WD-2512-00001", None, date=None)
+    e = item_eligibility(it, asset="BTC", scope_wallets=(scope_wallet("BTC"),), cutoff_date="2025-12-31")
+    assert e.reasons == ("date_missing", "amount_missing")
 
 
 def test_eligible_item_dated_before_period_is_still_eligible():
@@ -82,6 +101,59 @@ def test_factory_truth_valid_for_every_asset(asset):
 def test_truth_round_trips_through_dict():
     t = make_truth("SOL")
     assert CaseTruth.from_dict(t.to_dict()) == t
+
+
+def _undated_truth(asset="BTC"):
+    """The default case plus an undated row whose amount would close the shortfall."""
+    cutoff = period_cutoff_date("2025-12")
+    items = (
+        item("WD-2512-04417", 80_000.00, asset=asset, date=cutoff, aliases=(tx_hash(asset),)),
+        item("WD-2601-70003", 40_000.00, asset=asset, date=None, role="decoy"),
+    )
+    return make_truth(asset, items=items, case_kind="edge", category="incomplete_data")
+
+
+@pytest.mark.parametrize("asset", ALL_ASSETS)
+def test_undated_item_sits_in_unexplained(asset):
+    t = _undated_truth(asset)
+    assert [i.reference for i in t.eligible_items()] == ["WD-2512-04417"]
+    assert t.explained_usd == -80_000.00 and t.unexplained_usd == -40_000.00
+    assert t.evidence_state == "partly_unexplained"
+    assert explained_from_citations(["WD-2512-04417", "WD-2601-70003"], t) == (-80_000.00, -40_000.00)
+
+
+def test_undated_item_round_trips_through_json_and_sample_metadata():
+    import json
+
+    from icfr_agent_evals.casefile import CaseFile, to_sample, truth_of
+
+    t = _undated_truth()
+    back = CaseTruth.from_dict(json.loads(json.dumps(t.to_dict())))
+    assert back == t and back.items[1].date is None
+    sample = to_sample(CaseFile(truth=t, fixture={}, rendered="x"))
+    assert truth_of(json.loads(json.dumps(sample.metadata))).items[1].date is None
+
+
+def test_visible_structured_keeps_a_missing_date_missing():
+    v = visible_structured(_undated_truth())
+    row = next(i for i in v.open_items if i.reference == "WD-2601-70003")
+    assert row.date is None
+    e = item_eligibility(row, asset=v.asset, scope_wallets=v.scope_wallets, cutoff_date=v.cutoff_date)
+    assert e.reasons == ("date_missing",)
+
+
+@pytest.mark.parametrize("bad", ["2025/12/31", "Dec 31", "20251231", "2025-12-31T00:00:00Z"])
+def test_validate_truth_rejects_a_date_that_is_neither_iso_nor_none(bad):
+    """On the cleared decoy, so only the date check can fail."""
+    t = make_truth()
+    broken = dataclasses.replace(t, items=(t.items[0], dataclasses.replace(t.items[1], date=bad)))
+    with pytest.raises(TruthError, match="neither an ISO date nor None"):
+        validate_truth(broken)
+
+
+def test_validate_truth_rejects_an_undated_explaining_item():
+    with pytest.raises(TruthError):
+        make_truth(items=(item("WD-2512-04417", 80_000.00, date=None),))
 
 
 def test_validate_truth_rejects_wrong_band():

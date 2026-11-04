@@ -643,6 +643,29 @@ def test_quarter_forms_route_to_review(asset, form):
 
 
 @pytest.mark.parametrize("asset", ALL_ASSETS)
+@pytest.mark.parametrize("form", [
+    "FY2025", "H1 2025", "fiscal year 2024", "1H 2025", "2H25", "fiscal 2025", "fiscal 2026",
+    "the first half of 2025", "the second half of 2025", "first-half 2025", "the 1st half of the year",
+])
+def test_fiscal_and_half_year_forms_route_to_review(asset, form):
+    """Section 6: a fiscal or half-year form routes to review, including one that
+    states the case year ("the first half of 2025" leaves out December)."""
+    result = run(shortfall_truth(asset, "2025-12"), f"The shortfall for {form} was reviewed.")
+    assert outcome(result) == ((), True)
+    assert result.review_reasons[0].startswith("fiscal_or_half_year_period")
+
+
+@pytest.mark.parametrize("asset", ALL_ASSETS)
+@pytest.mark.parametrize("sentence", [
+    "The first half of the shortfall was reviewed.",
+    "In the second half of December the shortfall was reviewed.",
+    "The fiscal impact of the shortfall was reviewed.",
+])
+def test_half_and_fiscal_words_without_a_year_are_not_periods(asset, sentence):
+    assert outcome(run(shortfall_truth(asset, "2025-12"), sentence)) == ((), False)
+
+
+@pytest.mark.parametrize("asset", ALL_ASSETS)
 def test_non_latin_letters_route_to_review(asset):
     result = run(shortfall_truth(asset), "The shortfall for \u0412\u0422\u0421 was reviewed.")  # Cyrillic look-alike of BTC
     assert outcome(result) == ((), True)

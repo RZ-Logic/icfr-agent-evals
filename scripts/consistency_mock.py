@@ -13,6 +13,10 @@ wallet, as in smoke_mock.py, and counts calls per case. Every mock output carrie
 usage, so Inspect never downloads a tokenizer. The dev split only; the evaluation
 split is never built.
 
+It prints the FM-007 count, overall and per subset, and the H4 verdict. On the
+dev split the verdict exercises the code only; H4 is evaluated per model on the
+evaluation split.
+
 Run: python scripts/consistency_mock.py [log_dir]
 """
 
@@ -28,7 +32,15 @@ from inspect_ai import eval as inspect_eval
 from inspect_ai.model import ModelOutput, ModelUsage, get_model
 
 from icfr_agent_evals.casefile import BANDS, CaseTruth, truth_of
-from icfr_agent_evals.consistency import ConsistencyReport, assert_gate, format_report, report_from_log
+from icfr_agent_evals.consistency import (
+    SUBSETS,
+    ConsistencyReport,
+    assert_gate,
+    format_h4,
+    format_report,
+    h4_verdict,
+    report_from_log,
+)
 from icfr_agent_evals.dataset import build_dataset
 from icfr_agent_evals.task import variance_commentary
 
@@ -154,8 +166,13 @@ def check(report: ConsistencyReport, picked: dict[str, Plan]) -> list[str]:
                 f"{plan.name} ({sid}): agreement {s.agreement}, modal correct {s.modal_correct}, subset {s.subset}"
             )
     expected_fm007 = sorted(sid for sid, p in picked.items() if p.agreement == 1.0 and not p.modal_correct)
-    if sorted(report.fm007_candidates) != expected_fm007:
-        problems.append(f"FM-007 candidates {list(report.fm007_candidates)} != {expected_fm007}")
+    if sorted(report.fm007) != expected_fm007:
+        problems.append(f"FM-007 samples {list(report.fm007)} != {expected_fm007}")
+    expected_by_subset = {
+        name: sum(1 for sid in expected_fm007 if picked[sid].subset == name) for name in SUBSETS
+    }
+    if report.fm007_by_subset != expected_by_subset:
+        problems.append(f"FM-007 by subset {report.fm007_by_subset} != {expected_by_subset}")
     return problems
 
 
@@ -167,6 +184,11 @@ def main() -> int:
         print(f"  {sid}: {plan.outputs} ({plan.name})")
     print()
     print(format_report(report))
+    verdict = h4_verdict(report)
+    print()
+    print(f"FM-007 count: {report.fm007_count} ({', '.join(f'{k} {v}' for k, v in report.fm007_by_subset.items())})")
+    print(f"H4 verdict: {'SUPPORTED' if verdict.supported else 'NOT SUPPORTED'}")
+    print(format_h4(verdict))
     problems = check(report, picked)
     for p in problems:
         print("MISMATCH", p)

@@ -633,7 +633,7 @@ def check_fabrication(parsed: dict, truth: CaseTruth) -> AnchorResult:
 # With every citation valid, the explained split is computed by code from the cited
 # items and compared with the truth. Omitting an eligible item fails the content
 # trial through the score (2 if at least one eligible item was cited, 1 if none
-# was), with no FM code. Score levels are provisional pending rubric lock (section 13).
+# was), with no FM code. Score levels ratified at rubric lock 2026-11-03 (section 13).
 
 RECONCILING_OMISSION_PARTIAL = 2
 RECONCILING_OMISSION_NONE_CITED = 1
@@ -767,8 +767,8 @@ def check_reconciling_items(parsed: dict, truth: CaseTruth) -> AnchorResult:
 
 
 def check_faithfulness(parsed: dict, truth: CaseTruth) -> AnchorResult:
-    """Faithfulness = min(fabrication, reconciling items). The min rule is
-    provisional: section 13 leaves the combination to rubric lock."""
+    """Faithfulness = min(fabrication, reconciling items). The min rule was
+    ratified at rubric lock 2026-11-03 (section 13)."""
     fab = check_fabrication(parsed, truth)
     rec = check_reconciling_items(parsed, truth)
     return combine_faithfulness(fab, rec)
@@ -928,7 +928,7 @@ def check_identity_fields(parsed: dict, truth: CaseTruth) -> tuple[str, ...]:
 def check_correctness(parsed: dict, truth: CaseTruth) -> AnchorResult:
     """Magnitude within $1 of |variance|, direction and band (1 point each). Any
     value outside the enum after normalization is a wrong value, not FM-000. A
-    structured FM-016 sets Correctness to 0 (provisional, section 13). Narrative
+    structured FM-016 sets Correctness to 0 (ratified 2026-11-03, section 13). Narrative
     consistency (section 6) runs last: any failure mode it finds sets Correctness
     to 0; its review reasons route the epoch to review and keep the structured score."""
     fms: list[str] = []

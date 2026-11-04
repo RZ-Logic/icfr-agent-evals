@@ -5,43 +5,61 @@ reduced scores (section 6):
   (a) paired rule: a one-sided paired t-test on per-sample epoch-mean differences
       for each of the five rubric dimensions, and an exact one-sided McNemar test
       on per-sample content-pass^4, Holm-corrected as one family of six at
-      FAMILY_ALPHA. A dimension no record scores still counts in the family.
+      FAMILY_ALPHA. A dimension no record scores (Calibration, which has no 0 to 3
+      anchor yet, and Robustness) enters at p = 1 and still counts in the family.
   (b) fabrication rule: FM-005 and FM-015 each get a one-sided exact McNemar test
       on per-case indicators (the code fires on any epoch) at FABRICATION_ALPHA,
       outside the Holm family.
   (c) regression sign-off check: a case triggers when a listed FM code, or a
-      code-check review route that fires no FM code, fires on more epochs in the
+      code-check review route, fires on more epochs in the
       candidate than in the baseline (R1), or on two or more extra epochs (R2,
-      with FM-005, FM-015 and the narrative-sweep route kept on R1). Sign-off
-      cases never block; they wait for a recorded human sign-off.
+      with FM-005, FM-015 and every narrative-sweep route kept on R1). Review
+      routes are counted per reason (ratified 2026-11-03): each review reason
+      (route_key) counts on its own, even on an epoch that also fired an FM code
+      or carried another reason. FM-007 is
+      sample-level (consistency.py) and is not a sign-off code. Sign-off cases
+      never block; they wait for a recorded human sign-off.
   (d) re-runs pool: every candidate run's epochs count together. The candidate's
       epoch means use all pooled epochs, it passes content-pass^4 only if every
       pooled epoch succeeds, its fabrication indicator is any pooled epoch, and its
       sign-off counts are raw pooled counts against the baseline's count of k.
       Each asymmetry runs against the candidate.
+  Every candidate run must hold the baseline's full sample id set and the same
+  dataset content (dataset_version and both dataset SHA-256s, plus the other
+  MATCHED_CONTENT_FIELDS), and a truncated (--limit or --sample-id) run is
+  refused, so the comparison never runs on an overlap (ratified 2026-11-03).
 
 Mapping from an Inspect (sample, epoch) record (records_from_samples):
   - success and failure_modes come from reliability.evaluate_trial, unchanged;
   - dimensions come from rubric.WIRED_SCORERS: correctness <- correctness_anchor,
     faithfulness <- faithfulness_anchor (min of fabrication and reconciling items,
-    rubric.PROVISIONAL), completeness <- completeness_anchor. Calibration and
+    rubric.RATIFIED), completeness <- completeness_anchor. Calibration and
     robustness are not wired yet, so they are absent from every record. An errored
     epoch, a missing score or a non-numeric value scores 0 on the wired dimension
     (strict, section 10(a): a format break scores 0 on every anchor);
-  - review routes: each review reason a scorer raises is read on its own. A reason
-    attached to an FM code is not a route (scoring.FABRICATION_REVIEW, which rides
-    with FM-005 and FM-015, and a format break, which rides with FM-000). A
-    narrative-sweep hit reason (scoring.SweepHit.reason, raised by
-    fabrication_anchor and repeated by faithfulness_anchor) maps to SWEEP_ROUTE.
-    Every other code-check reason (an unresolved narrative amount, direction or
-    band, an ineligible item named without a stated role, a blank citation, an
-    extractor error) maps to CODE_ROUTE. A sample error is a failed trial, not a
-    review route.
+  - review routes (section 10(c), ratified 2026-11-03): each review reason a
+    scorer raises is its own route, keyed by route_key and counted on its own in
+    the sign-off check. A reason attached to an FM code is not a route
+    (scoring.FABRICATION_REVIEW, which rides with FM-005 and FM-015, and a format
+    break, which rides with FM-000). Keys are deduplicated within an epoch, since
+    faithfulness_anchor repeats the reasons of fabrication_anchor and
+    reconciling_items_anchor. A narrative-sweep hit (scoring.SweepHit.reason) keys
+    as "narrative_sweep: <reason>", which holds the hit kind and the token, so
+    each suspect entity is its own route and stays on R1. Every other code-check
+    reason keys as "code_review: <reason>" with its epoch-varying text dropped, so
+    the same reason on two epochs is one route: a narrative extractor reason
+    ("kind: matched text") keys by its kind, a reconciling-item type mismatch by
+    the fixture type it differs from, an extractor exception by its exception
+    type, and any other reason (an ineligible item named without a stated role, a
+    blank citation) by its full text. A review flag with no reason and no FM code
+    keys as "code_review: review flagged with no stated reason". A sample error
+    is a failed trial, not a review route.
 """
 
 from __future__ import annotations
 
 import math
+import re
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -59,9 +77,12 @@ FABRICATION_CODES: tuple[str, ...] = ("FM-005", "FM-015")
 SIGNOFF_CODES: tuple[str, ...] = (
     "FM-000", "FM-001", "FM-002", "FM-003", "FM-004", "FM-005", "FM-006", "FM-015", "FM-016",
 )
-SWEEP_ROUTE = "narrative_sweep"   # holds unconfirmed fabrications, stays on R1 under R2
-CODE_ROUTE = "code_review"        # any other code-check review route that fires no FM code
-SIGNOFF_TRIGGERS: tuple[str, ...] = (*SIGNOFF_CODES, SWEEP_ROUTE, CODE_ROUTE)
+SWEEP_ROUTE = "narrative_sweep"   # route class: holds unconfirmed fabrications, stays on R1 under R2
+CODE_ROUTE = "code_review"        # route class: any other code-check review reason
+ROUTE_CLASSES: tuple[str, ...] = (SWEEP_ROUTE, CODE_ROUTE)
+# Trigger families: the FM codes, then the two route classes. A route trigger is
+# one route key ("<class>: <reason key>"), each counted on its own (route_key).
+SIGNOFF_TRIGGERS: tuple[str, ...] = (*SIGNOFF_CODES, *ROUTE_CLASSES)
 R1_ONLY: frozenset[str] = frozenset({"FM-005", "FM-015", SWEEP_ROUTE})
 LADDERS: tuple[str, ...] = ("R1", "R2")
 SCORE_RANGE = (0.0, 3.0)
@@ -83,6 +104,10 @@ SWEEP_REASON_PREFIXES: tuple[str, ...] = tuple(
     SweepHit(_SENTINEL, kind).reason.split(repr(_SENTINEL))[0] for kind in _SWEEP_KINDS
 )
 FORMAT_BREAK_PREFIX = "format break:"
+UNSTATED_REASON = "review flagged with no stated reason"
+_NARRATIVE_KIND_RE = re.compile(r"^([a-z][a-z0-9_]*)(?::\s|$)")  # narrative.py writes "kind: matched text"
+_TYPE_MISMATCH_RE = re.compile(r"^reconciling_items\[\d+\] .* type .* differs from (.+)$", re.DOTALL)
+_EXTRACTOR_RAISED_RE = re.compile(r"^(narrative extractor raised [A-Za-z_][A-Za-z0-9_.]*)")
 
 
 @dataclass(frozen=True)
@@ -92,7 +117,7 @@ class EpochRecord:
     dims: Mapping[str, float]          # dimension -> 0..3 on this epoch; an unwired dimension is absent
     success: bool                      # content trial success, as reliability.evaluate_trial decides
     failure_modes: tuple[str, ...]     # FM codes fired on this epoch, deduplicated
-    review_routes: tuple[str, ...]     # SWEEP_ROUTE and/or CODE_ROUTE
+    review_routes: tuple[str, ...]     # route keys (route_key), deduplicated, sweep keys first
 
 
 @dataclass(frozen=True)
@@ -109,7 +134,7 @@ class PairedTest:
 @dataclass(frozen=True)
 class SignoffCase:
     sample_id: str
-    trigger: str                 # an FM code from SIGNOFF_CODES, or SWEEP_ROUTE / CODE_ROUTE
+    trigger: str                 # an FM code from SIGNOFF_CODES, or one route key (route_key)
     baseline_count: int          # baseline epochs on which it fired (of k)
     candidate_count: int         # pooled candidate epochs on which it fired
     rule: str                    # "R1" or "R2"
@@ -234,6 +259,39 @@ def holm(pvalues: Mapping[str, float], alpha: float = FAMILY_ALPHA) -> dict[str,
 
 # --- Records from Inspect samples and logs -----------------------------------------------
 
+def route_key(reason: str) -> str | None:
+    """The route key one review reason counts under in section 10(c), or None for a
+    reason that rides with an FM code. The key drops the text that varies from
+    epoch to epoch, so the same reason on two epochs is one route."""
+    reason = str(reason)
+    if reason == FABRICATION_REVIEW or reason.startswith(FORMAT_BREAK_PREFIX):
+        return None
+    if reason.startswith(SWEEP_REASON_PREFIXES):
+        return f"{SWEEP_ROUTE}: {reason}"  # hit kind and token: each suspect entity is its own route
+    m = _NARRATIVE_KIND_RE.match(reason)
+    if m:
+        return f"{CODE_ROUTE}: {m.group(1)}"
+    m = _TYPE_MISMATCH_RE.match(reason)
+    if m:
+        return f"{CODE_ROUTE}: reconciling item type differs from {m.group(1)}"
+    m = _EXTRACTOR_RAISED_RE.match(reason)
+    if m:
+        return f"{CODE_ROUTE}: {m.group(1)}"
+    return f"{CODE_ROUTE}: {reason}"
+
+
+def route_class(key: str) -> str:
+    """SWEEP_ROUTE or CODE_ROUTE for a route key; a bare class name is its own key."""
+    for cls in ROUTE_CLASSES:
+        if key == cls or key.startswith(cls + ": "):
+            return cls
+    raise GateError(f"review route {key!r} is not a {' or '.join(ROUTE_CLASSES)} route key")
+
+
+def _route_order(key: str) -> tuple[int, str]:
+    return ROUTE_CLASSES.index(route_class(key)), key
+
+
 def _routes_of(scores: Mapping[str, Any]) -> tuple[str, ...]:
     routes: set[str] = set()
     for score in scores.values():
@@ -242,12 +300,12 @@ def _routes_of(scores: Mapping[str, Any]) -> tuple[str, ...]:
             continue
         reasons = [str(r) for r in meta.get("review_reasons") or []]
         if not reasons and not meta.get("failure_modes"):
-            routes.add(CODE_ROUTE)  # routed with no stated reason and no code: still a code route
+            routes.add(f"{CODE_ROUTE}: {UNSTATED_REASON}")  # routed with no stated reason and no code
         for reason in reasons:
-            if reason == FABRICATION_REVIEW or reason.startswith(FORMAT_BREAK_PREFIX):
-                continue
-            routes.add(SWEEP_ROUTE if reason.startswith(SWEEP_REASON_PREFIXES) else CODE_ROUTE)
-    return tuple(r for r in (SWEEP_ROUTE, CODE_ROUTE) if r in routes)
+            key = route_key(reason)
+            if key is not None:
+                routes.add(key)
+    return tuple(sorted(routes, key=_route_order))
 
 
 def record_from_sample(sample: Any) -> EpochRecord:
@@ -329,6 +387,8 @@ def refuse_partial_run(log: Any) -> None:
 
 # Header fields that fix the case content behind each sample id. Paired runs must
 # agree on every one, each recorded, or pairing by id compares different cases.
+# dataset_sha256 hashes the samples the task selects (a pilot run hashes its 20 cases) and
+# split_dataset_sha256 hashes the whole split (ratified 2026-11-03).
 MATCHED_CONTENT_FIELDS: tuple[str, ...] = (
     "dataset_version", "dataset_sha256", "split_dataset_sha256", "schema_version", "split", "split_seed", "subset",
 )
@@ -494,20 +554,22 @@ def compare(
         fabrication[code] = PairedTest(code, p, None, FABRICATION_ALPHA, p <= FABRICATION_ALPHA, len(ids),
                                        {"worse": float(w), "better": float(bt)})
 
-    # (c) regression sign-off check
+    # (c) regression sign-off check: each FM code, and each route key, counts on its own
     def fired(r: EpochRecord, trigger: str) -> bool:
         return trigger in r.failure_modes or trigger in r.review_routes
 
     signoff: list[SignoffCase] = []
     for sid in ids:
-        for trigger in SIGNOFF_TRIGGERS:
+        keys = {key for r in (*base[sid], *pooled[sid]) for key in r.review_routes}
+        for trigger in (*SIGNOFF_CODES, *sorted(keys, key=_route_order)):
             bc = sum(fired(r, trigger) for r in base[sid])
             cc = sum(fired(r, trigger) for r in pooled[sid])
-            rule = "R1" if ladder == "R1" or trigger in R1_ONLY else "R2"
+            sweep = trigger in keys and route_class(trigger) == SWEEP_ROUTE
+            rule = "R1" if ladder == "R1" or trigger in R1_ONLY or sweep else "R2"
             if (cc > bc) if rule == "R1" else (cc - bc >= 2):
                 signoff.append(SignoffCase(sid, trigger, bc, cc, rule))
     if ladder == "R2":
-        notes.append("ladder R2: a single-epoch rise triggers only on FM-005, FM-015 and the narrative-sweep route")
+        notes.append("ladder R2: a single-epoch rise triggers only on FM-005, FM-015 and the narrative-sweep routes")
 
     blocked = any(t.rejected for t in paired.values()) or any(t.rejected for t in fabrication.values())
     return GateReport(paired=paired, fabrication=fabrication, signoff=tuple(signoff), blocked=blocked, notes=tuple(notes))

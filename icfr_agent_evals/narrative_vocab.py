@@ -385,7 +385,13 @@ QUARTER_PATTERNS: list[str] = [
     r"Q[1-4]", r"quarter[- ](?:end|ended|ending)",
 ]
 # Fiscal-year and half-year forms route to review: the case period is one month.
-FISCAL_PATTERNS: list[str] = [r"(?:FY|CY) ?'?(?:20)?[0-9]{2}", r"H[12] ?(?:20[0-9]{2})?", r"(?:fiscal|financial) year(?: 20[0-9]{2})?"]
+# A spelled-out half needs a year after it, so "the first half of the variance" and
+# "the second half of December" stay out.
+FISCAL_PATTERNS: list[str] = [
+    r"(?:FY|CY) ?'?(?:20)?[0-9]{2}", r"H[12] ?(?:20[0-9]{2})?", r"[12]H ?'?(?:20)?[0-9]{2}",
+    r"(?:fiscal|financial) year(?: 20[0-9]{2})?", r"(?:fiscal|financial) '?(?:20)?[0-9]{2}",
+    r"(?:first|second|1st|2nd)[- ]half(?: of)?(?: the)?(?: fiscal| financial| calendar)? (?:'?(?:20)?[0-9]{2}|year)",
+]
 # Month names read as a period statement when they stand alone (no day or year):
 # full names except "May", which is also a verb, and capitalized abbreviations.
 BARE_MONTH_NAMES: list[str] = [
