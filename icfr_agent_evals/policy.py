@@ -11,6 +11,8 @@ a methodology-demonstration vehicle, not a deployable policy.
 
 from __future__ import annotations
 
+from typing import Iterable
+
 # --- Asset tiers (Kraken Dec 31, 2025 PoR scope) ---------------------------------
 ASSET_TIERS: dict[str, str] = {
     "USDC": "T1", "USDT": "T1",              # T1 stablecoins (tight; deviation more suspicious)
@@ -50,6 +52,29 @@ def materiality_band(variance_usd: float) -> str:
     if mag <= M3_FLOOR:
         return "M2"
     return "M3"
+
+
+# --- FM-002 direction (ratified 2026-11-04, D5) -----------------------------------
+# A misstated band fires FM-002 in either direction and scores the same; each firing
+# records its direction, so FM-002 counts are reported by direction beside the total.
+BAND_ORDER: tuple[str, ...] = ("M1", "M2", "M3")  # M1 < M2 < M3
+
+
+def band_error(claimed: Iterable[str], true_band: str) -> str:
+    """Direction of one FM-002 firing: "understated" when every claimed band sits
+    below the true band, "overstated" when every one sits above it, "mixed" when
+    the claimed bands straddle it. The true band must not be among the claimed."""
+    claimed = list(claimed)
+    rank = {b: i for i, b in enumerate(BAND_ORDER)}
+    truth = rank[true_band]
+    ranks = {rank[b] for b in claimed}
+    if not ranks or truth in ranks:
+        raise ValueError(f"no misstatement: claimed {sorted(claimed)} against {true_band}")
+    if max(ranks) < truth:
+        return "understated"
+    if min(ranks) > truth:
+        return "overstated"
+    return "mixed"
 
 
 # --- Phase 2 placeholder ----------------------------------------------------------

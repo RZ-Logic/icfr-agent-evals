@@ -55,9 +55,17 @@ from .casefile import (
     has_format_characters,
     nfkc_spaced,
 )
+from .narrative_vocab import BAND_LABEL, BAND_NUMBER_LABEL
+from .policy import BAND_ORDER, band_error
 
 FORMAT_BREAK_FM = "FM-000"
 SCORE_MAX = 3
+# FM-002 direction of a structured band outside the enum that names no other band
+BAND_ERROR_UNORDERED = "unordered"
+# A structured band outside the enum in a label form the narrative reads ("M-3",
+# "band m3", "band 3"); it orders the direction only, the score is unchanged.
+_STRUCTURED_BAND_RE = re.compile(rf"(?:(?:materiality )?band )?(?:{BAND_LABEL})|{BAND_NUMBER_LABEL}", re.I)
+FM002_DIRECTION_KEY = "fm002_direction"  # correctness_anchor Score metadata key
 
 
 @dataclass(frozen=True)
@@ -941,10 +949,14 @@ def check_correctness(parsed: dict, truth: CaseTruth) -> AnchorResult:
         points += 1
     else:
         fms.append("FM-003")
-    if normalize_enum(parsed["materiality_band"]) == truth.materiality_band.casefold():
+    stated_band = normalize_enum(parsed["materiality_band"])
+    band_err: str | None = None
+    if stated_band == truth.materiality_band.casefold():
         points += 1
     else:
-        fms.append("FM-002")  # band overstatement keeps FM-002 until rubric lock (section 6)
+        # either direction keeps FM-002 at the same score (ratified 2026-11-04)
+        fms.append("FM-002")
+        band_err = structured_band_error(stated_band, truth.materiality_band)
     structured_points = points
 
     identity = check_identity_fields(parsed, truth)
@@ -965,12 +977,42 @@ def check_correctness(parsed: dict, truth: CaseTruth) -> AnchorResult:
         reasons.extend(nar.review_reasons)
         extractions = list(nar.extractions)
 
+    fired = ([band_err] if band_err else []) + [
+        e["band_error"] for e in extractions if e.get("kind") == "band" and e.get("verdict") == "FM-002"
+    ]
     return AnchorResult(
         points,
         tuple(dict.fromkeys(fms)),
         tuple(reasons),
-        {"structured_points": structured_points, "narrative_extractions": extractions},
+        {
+            "structured_points": structured_points,
+            "band_error": band_err,
+            FM002_DIRECTION_KEY: fm002_direction(fired),
+            "narrative_extractions": extractions,
+        },
     )
+
+
+def structured_band_error(stated_band: str, true_band: str) -> str:
+    """Direction of a structured FM-002: the enum band, or the one band a label form
+    names ("M-3", "band m3"), against the true band; "unordered" for a value that
+    names no band ("high", "") or names the true band in a non-enum form ("M-2")."""
+    upper = stated_band.upper()
+    if upper not in BAND_ORDER:
+        m = _STRUCTURED_BAND_RE.fullmatch(stated_band)
+        upper = f"M{m.group(0)[-1]}" if m else ""
+    if upper not in BAND_ORDER or upper == true_band:
+        return BAND_ERROR_UNORDERED
+    return band_error([upper], true_band)
+
+
+def fm002_direction(directions: Iterable[str]) -> str | None:
+    """One epoch's FM-002 direction: the single direction of its firings, "mixed"
+    when they differ, None when FM-002 did not fire (ratified 2026-11-04)."""
+    found = set(directions)
+    if not found:
+        return None
+    return found.pop() if len(found) == 1 else "mixed"
 
 
 # --- Completeness (FM-004) -----------------------------------------------------------

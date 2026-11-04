@@ -13,7 +13,8 @@ fabrication verdict and never skipped.
 Every Score carries metadata {failure_modes, requires_human_review,
 review_reasons, dimension, details} and an integer value in 0..3, never NaN and
 never unscored, because reliability.py computes content-pass^k from every
-(sample, epoch) score (section 6).
+(sample, epoch) score (section 6). correctness_anchor also carries
+fm002_direction, the epoch's FM-002 direction (ratified 2026-11-04).
 
 Value semantics: each anchor returns an ordinal 0..3, so the registered metrics are
 mean() and stderr() (not accuracy(), which assumes a binary correct/incorrect).
@@ -26,6 +27,7 @@ from inspect_ai.solver import TaskState
 
 from .casefile import truth_of
 from .scoring import (
+    FM002_DIRECTION_KEY,
     FORMAT_BREAK_FM,
     AnchorResult,
     ParseResult,
@@ -39,7 +41,7 @@ from .scoring import (
 )
 
 
-def _score(result: AnchorResult, *, dimension: str, answer: str, label: str) -> Score:
+def _score(result: AnchorResult, *, dimension: str, answer: str, label: str, extra: dict | None = None) -> Score:
     fms = list(result.failure_modes)
     reasons = list(result.review_reasons)
     explanation = f"{label} {result.points}/3; failure_modes={fms or 'none'}"
@@ -55,6 +57,7 @@ def _score(result: AnchorResult, *, dimension: str, answer: str, label: str) -> 
             "review_reasons": reasons,
             "dimension": dimension,
             "details": result.details,
+            **(extra or {}),
         },
     )
 
@@ -86,7 +89,12 @@ def correctness_anchor():
         if not parse.ok:
             return _format_break_score(parse, dimension="correctness")
         result = check_correctness(parse.parsed, truth)
-        return _score(result, dimension="correctness", answer=str(parse.parsed["variance_amount_usd"]), label="correctness")
+        # FM-002 direction on this epoch: understated, overstated, mixed (or unordered
+        # for a structured value outside the enum); None when FM-002 does not fire
+        return _score(
+            result, dimension="correctness", answer=str(parse.parsed["variance_amount_usd"]), label="correctness",
+            extra={FM002_DIRECTION_KEY: result.details[FM002_DIRECTION_KEY]},
+        )
 
     return score
 

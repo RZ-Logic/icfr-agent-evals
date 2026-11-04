@@ -313,7 +313,7 @@ def test_report_from_log_guards():
 
 
 def test_calibration_stays_unscored():
-    # no 0 to 3 calibration anchor exists yet, so no scorer reports the dimension
+    # Calibration is reported, not scored, in Phase 1 (no 0 to 3 anchor), so no scorer reports it
     assert Dimension.CALIBRATION.value not in WIRED_SCORERS.values()
     assert "consistency.py" in ANCHOR_STATUS[Dimension.CALIBRATION]
 

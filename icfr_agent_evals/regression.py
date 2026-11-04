@@ -5,8 +5,8 @@ reduced scores (section 6):
   (a) paired rule: a one-sided paired t-test on per-sample epoch-mean differences
       for each of the five rubric dimensions, and an exact one-sided McNemar test
       on per-sample content-pass^4, Holm-corrected as one family of six at
-      FAMILY_ALPHA. A dimension no record scores (Calibration, which has no 0 to 3
-      anchor yet, and Robustness) enters at p = 1 and still counts in the family.
+      FAMILY_ALPHA. A dimension no record scores (Calibration, reported and not
+      scored in Phase 1, and Robustness) enters at p = 1 and still counts in the family.
   (b) fabrication rule: FM-005 and FM-015 each get a one-sided exact McNemar test
       on per-case indicators (the code fires on any epoch) at FABRICATION_ALPHA,
       outside the Holm family.
@@ -33,8 +33,8 @@ Mapping from an Inspect (sample, epoch) record (records_from_samples):
   - success and failure_modes come from reliability.evaluate_trial, unchanged;
   - dimensions come from rubric.WIRED_SCORERS: correctness <- correctness_anchor,
     faithfulness <- faithfulness_anchor (min of fabrication and reconciling items,
-    rubric.RATIFIED), completeness <- completeness_anchor. Calibration and
-    robustness are not wired yet, so they are absent from every record. An errored
+    rubric.RATIFIED), completeness <- completeness_anchor. Calibration (reported,
+    not scored in Phase 1) and robustness (not wired yet) are absent from every record. An errored
     epoch, a missing score or a non-numeric value scores 0 on the wired dimension
     (strict, section 10(a): a format break scores 0 on every anchor);
   - review routes (section 10(c), ratified 2026-11-03): each review reason a
@@ -60,12 +60,12 @@ from __future__ import annotations
 
 import math
 import re
-from collections import defaultdict
-from dataclasses import dataclass
+from collections import Counter, defaultdict
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
-from .reliability import PREREGISTERED_K, GateError, _numeric, evaluate_trial
+from .reliability import FM002, FM002_UNRECORDED, PREREGISTERED_K, GateError, _numeric, evaluate_trial
 from .rubric import WIRED_SCORERS
 from .scoring import FABRICATION_REVIEW, SweepHit
 
@@ -118,6 +118,7 @@ class EpochRecord:
     success: bool                      # content trial success, as reliability.evaluate_trial decides
     failure_modes: tuple[str, ...]     # FM codes fired on this epoch, deduplicated
     review_routes: tuple[str, ...]     # route keys (route_key), deduplicated, sweep keys first
+    fm002_direction: str | None = None  # reliability.Trial.fm002_direction, set when FM-002 fired
 
 
 @dataclass(frozen=True)
@@ -138,6 +139,9 @@ class SignoffCase:
     baseline_count: int          # baseline epochs on which it fired (of k)
     candidate_count: int         # pooled candidate epochs on which it fired
     rule: str                    # "R1" or "R2"
+    # FM-002 only: epochs by direction beside the counts (ratified 2026-11-04); reported, not gated
+    baseline_by_direction: Mapping[str, int] = field(default_factory=dict, compare=False)
+    candidate_by_direction: Mapping[str, int] = field(default_factory=dict, compare=False)
 
 
 @dataclass(frozen=True)
@@ -326,6 +330,7 @@ def record_from_sample(sample: Any) -> EpochRecord:
         success=trial.success,
         failure_modes=trial.failure_modes,
         review_routes=_routes_of(scores),
+        fm002_direction=trial.fm002_direction,
     )
 
 
@@ -558,6 +563,10 @@ def compare(
     def fired(r: EpochRecord, trigger: str) -> bool:
         return trigger in r.failure_modes or trigger in r.review_routes
 
+    def by_direction(records: Iterable[EpochRecord]) -> dict[str, int]:
+        found = Counter(r.fm002_direction or FM002_UNRECORDED for r in records if FM002 in r.failure_modes)
+        return dict(sorted(found.items()))
+
     signoff: list[SignoffCase] = []
     for sid in ids:
         keys = {key for r in (*base[sid], *pooled[sid]) for key in r.review_routes}
@@ -567,7 +576,11 @@ def compare(
             sweep = trigger in keys and route_class(trigger) == SWEEP_ROUTE
             rule = "R1" if ladder == "R1" or trigger in R1_ONLY or sweep else "R2"
             if (cc > bc) if rule == "R1" else (cc - bc >= 2):
-                signoff.append(SignoffCase(sid, trigger, bc, cc, rule))
+                if trigger == FM002:
+                    signoff.append(SignoffCase(sid, trigger, bc, cc, rule,
+                                               by_direction(base[sid]), by_direction(pooled[sid])))
+                else:
+                    signoff.append(SignoffCase(sid, trigger, bc, cc, rule))
     if ladder == "R2":
         notes.append("ladder R2: a single-epoch rise triggers only on FM-005, FM-015 and the narrative-sweep routes")
 

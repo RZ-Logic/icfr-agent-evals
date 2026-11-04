@@ -87,6 +87,10 @@ def _fmt_p(p: float | None) -> str:
     return "-" if p is None else f"{p:.4g}"
 
 
+def _fmt_directions(counts: dict[str, int]) -> str:
+    return ", ".join(f"{d} {n}" for d, n in counts.items()) or "none"
+
+
 def render(report: GateReport, ladder: str, instances: Sequence[FabricationInstance]) -> str:
     lines = ["Section 10(a) paired rule (Holm, m = 6)"]
     for name in (*DIMENSIONS, PASS4):
@@ -104,7 +108,11 @@ def render(report: GateReport, ladder: str, instances: Sequence[FabricationInsta
         lines.append(f"  run {f.run}  {f.sample_id}  epoch {f.epoch}  {f.code}")
     lines.append(f"Section 10(c) regression sign-off check (ladder {ladder}): {len(report.signoff)} case(s)")
     for c in report.signoff:
-        lines.append(f"  {c.sample_id}  {c.trigger}  baseline {c.baseline_count} -> candidate {c.candidate_count}  ({c.rule})")
+        row = f"  {c.sample_id}  {c.trigger}  baseline {c.baseline_count} -> candidate {c.candidate_count}  ({c.rule})"
+        if c.trigger == "FM-002":  # by direction beside the total (ratified 2026-11-04)
+            row += (f"  by direction: baseline ({_fmt_directions(c.baseline_by_direction)})"
+                    f" -> candidate ({_fmt_directions(c.candidate_by_direction)})")
+        lines.append(row)
     if report.notes:
         lines.append("Notes")
         lines.extend(f"  {n}" for n in report.notes)

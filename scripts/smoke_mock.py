@@ -28,7 +28,7 @@ from inspect_ai.model import ModelOutput, ModelUsage, get_model
 
 from icfr_agent_evals.casefile import truth_of
 from icfr_agent_evals.dataset import build_dataset
-from icfr_agent_evals.reliability import report_from_log
+from icfr_agent_evals.reliability import format_fm_counts, report_from_log
 from icfr_agent_evals.task import variance_commentary
 
 ANCHORS = (
@@ -145,6 +145,7 @@ def main() -> int:
     passed = {sid for sid, v in report.pass_k.items() if v == 1}
     print(f"\nreview queue: {sorted(queued)}")
     print(f"content-pass^1: {sorted(passed)}")
+    print(format_fm_counts(report))
     if picked["E"].id not in queued or picked["B"].id not in queued:
         ok = False
         print("   MISMATCH: the format break and the fabrication must reach the review queue")

@@ -377,18 +377,22 @@ def test_report_built_without_a_log_is_never_the_h4_test():
 # --- Rubric record ----------------------------------------------------------------------
 
 RATIFIED_KEYS = {"faithfulness.combination", "reconciling_items.fm015", "reconciling_items.omission", "correctness.fm016"}
+D5_KEY = "correctness.band_overstatement"
 
 
 def test_rubric_ratified_and_provisional_records():
-    assert set(rubric.RATIFIED) == RATIFIED_KEYS
-    assert rubric.RATIFIED_ON == dict.fromkeys(RATIFIED_KEYS, "2026-11-03")
-    assert set(rubric.PROVISIONAL) == {"correctness.band_overstatement"}  # D5 stays open
+    assert set(rubric.RATIFIED) == RATIFIED_KEYS | {D5_KEY}
+    assert rubric.RATIFIED_ON == {**dict.fromkeys(RATIFIED_KEYS, "2026-11-03"), D5_KEY: "2026-11-04"}
+    assert rubric.PROVISIONAL == {}  # D5 ratified 2026-11-04
     assert not set(rubric.RATIFIED) & set(rubric.PROVISIONAL)
     assert rubric.RATIFIED["reconciling_items.omission"].startswith("an omitted eligible item scores 2")
 
 
 def test_rubric_calibration_line_states_the_ratified_rules():
     line = rubric.ANCHOR_STATUS[rubric.Dimension.CALIBRATION]
-    for phrase in ("DeLong", "FM-007", "H4", "p = 1", "pending: the 0 to 3 anchor scale"):
+    for phrase in ("reported, not scored in Phase 1", "DeLong", "FM-007", "H4", "p = 1", "m = 6",
+                   "new tagged pre-registration"):
         assert phrase in line, phrase
-    assert "candidate" not in line and "reported only" not in line
+    assert "candidate" not in line and "reported only" not in line and "pending" not in line
+    assert "calibration.semantic_agreement" not in rubric.LLM_GRADED_SUBDIMENSIONS
+    assert not any(s.startswith("calibration.") for s in rubric.LLM_GRADED_SUBDIMENSIONS)

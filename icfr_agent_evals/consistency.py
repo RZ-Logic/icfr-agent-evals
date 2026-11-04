@@ -4,9 +4,10 @@ Pre-registration section 6 (Calibration): Sample Consistency, not verbalized
 confidence; the consistency measurement is deterministic, and discrimination and
 calibration are tracked as separate properties. Section 2 H4 predicts the signal
 is uninformative on the synthetic subset and informative on the difficulty-bearing
-subsets, and section 8 reports calibration curves on both. This module is the
-deterministic measurement only. calibration.semantic_agreement (the grader's LLM
-agreement judgment) is a separate LLM-graded sub-dimension and is not built here.
+subsets, and section 8 reports calibration curves on both. Calibration is reported,
+not scored, in Phase 1 (ratified 2026-11-04): this module is its whole measurement,
+calibration.semantic_agreement is not graded, and an anchor enters only through a
+new tagged pre-registration.
 
 Like reliability.py, everything is computed after the run from every (sample,
 epoch) record in log.samples, never from reduced scores, and a sample without
@@ -83,8 +84,8 @@ so content-pass^k is unchanged: at least one epoch of such a sample fails its
 content trial. Epochs sharing a canonical answer can differ in correctness (amounts
 on both sides of the $1 tolerance), so FM-007 can fire beside FM-008.
 
-The Calibration dimension keeps no 0 to 3 score: no calibration anchor is
-pre-registered yet (section 13 pending). In the section 10(a) paired tests the
+The Calibration dimension keeps no 0 to 3 score: it is reported, not scored, in
+Phase 1 (ratified 2026-11-04), with no anchor. In the section 10(a) paired tests the
 unscored dimension enters at p = 1 and stays in the Holm family (m = 6).
 """
 
@@ -125,8 +126,9 @@ FM007_NOTE = (
     "sample-level, not a section 10(c) sign-off code, content-pass^k unchanged)"
 )
 CALIBRATION_SCORE_NOTE = (
-    "Calibration dimension unscored: no 0 to 3 anchor is pre-registered yet (section 13 pending); "
-    "section 10(a) enters it at p = 1, kept in the Holm family (m = 6)"
+    "Calibration reported, not scored in Phase 1 (ratified 2026-11-04): no 0 to 3 anchor; "
+    "section 10(a) enters it at p = 1, kept in the Holm family (m = 6); "
+    "an anchor enters only through a new tagged pre-registration"
 )
 EVALUATION_SPLIT = "eval"
 # Roster id -> the name H1 to H3 use (pre-registration sections 2 and 5).

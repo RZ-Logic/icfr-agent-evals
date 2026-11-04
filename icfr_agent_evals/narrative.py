@@ -59,7 +59,7 @@ from .casefile import (
     nfkc_spaced,
     period_cutoff_date,
 )
-from .policy import M1_CEILING, M3_FLOOR
+from .policy import BAND_ORDER, M1_CEILING, M3_FLOOR, band_error
 
 assert set(V.IN_SCOPE_TICKERS) == set(ASSETS), "narrative vocabulary drifted from the contract asset list"
 assert set(V.CHAIN_NAMES) == set(ASSET_CHAIN.values()), "chain vocabulary drifted from ASSET_CHAIN"
@@ -1300,6 +1300,13 @@ def _check(text: str, parsed: dict, truth: CaseTruth) -> NarrativeResult:
         else:
             b["verdict"] = "ok" if truth.materiality_band in b["bands"] else "FM-002"
         if b["verdict"] == "FM-002":
+            # direction of the misstatement (ratified 2026-11-04): a band word claims
+            # every band its table does not contradict
+            if b.get("verdicts"):
+                claimed = [m for m in BAND_ORDER if b["verdicts"][m] != "contradict"]
+            else:
+                claimed = b["bands"]
+            b["band_error"] = band_error(claimed, truth.materiality_band)
             fire("FM-002")
         elif b["verdict"] == "review" and not b["negated"]:
             review(f"{b['reason']}: {b['text']}")

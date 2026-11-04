@@ -20,13 +20,19 @@ consistency.py from the canonical answers (all k epochs agree and the modal answ
 is wrong), not here. It never enters a per-epoch trial or fm_counts, so it cannot
 change content-pass^k: at least one epoch of such a sample fails its trial
 (ratified 2026-11-03).
+
+FM-002 counts are reported by direction beside the total (ratified 2026-11-04):
+each (sample, epoch) firing FM-002 takes the single direction its scorers record
+(understated, overstated, mixed, or unordered for a structured value outside the
+enum), "mixed" when they differ, and "unrecorded" when no scorer recorded one, so
+the counts by direction sum to fm_counts["FM-002"].
 """
 
 from __future__ import annotations
 
 import math
 from collections import Counter, defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Iterable
 
 TRIAL_ANCHORS: tuple[str, ...] = (
@@ -38,6 +44,9 @@ TRIAL_ANCHORS: tuple[str, ...] = (
 FULL_MARKS = 3
 PREREGISTERED_K = 4  # section 5: epochs = 4, the k of content-pass^4
 SAMPLE_ERROR_SCORER = "sample_error"
+FM002 = "FM-002"
+FM002_DIRECTION_KEY = "fm002_direction"  # scoring.FM002_DIRECTION_KEY, kept free of the scorer imports
+FM002_UNRECORDED = "unrecorded"
 
 
 class GateError(AssertionError):
@@ -60,6 +69,7 @@ class Trial:
     failure_modes: tuple[str, ...]
     review: tuple[ReviewRow, ...]
     failed_because: tuple[str, ...]
+    fm002_direction: str | None = None  # set exactly when FM-002 is in failure_modes
 
 
 @dataclass(frozen=True)
@@ -71,6 +81,7 @@ class ReliabilityReport:
     fm_counts: dict[str, int]         # code -> number of (sample, epoch) pairs firing it
     fm008: tuple[str, ...]            # sample ids
     epoch_anomalies: dict[str, tuple[int, ...]]  # sample id -> epochs seen, when not exactly 1..k
+    fm002_by_direction: dict[str, int] = field(default_factory=dict)  # direction -> (sample, epoch) pairs
 
     @property
     def scored_samples(self) -> int:
@@ -110,10 +121,13 @@ def evaluate_trial(sample: Any) -> Trial:
         elif value != FULL_MARKS:
             failed.append(f"{name} scored {value:g}")
 
+    directions: set[str] = set()
     for name, score in scores.items():
         meta = getattr(score, "metadata", None) or {}
         codes = [str(c) for c in meta.get("failure_modes") or []]
         fms.extend(codes)
+        if FM002 in codes and meta.get(FM002_DIRECTION_KEY):
+            directions.add(str(meta[FM002_DIRECTION_KEY]))
         if meta.get("requires_human_review"):
             review.append(ReviewRow(sid, epoch, name, tuple(str(r) for r in meta.get("review_reasons") or [])))
     if fms:
@@ -121,7 +135,10 @@ def evaluate_trial(sample: Any) -> Trial:
     if any(r.scorer != SAMPLE_ERROR_SCORER for r in review):
         failed.append("routed to requires_human_review")
 
-    return Trial(sid, epoch, not failed, tuple(dict.fromkeys(fms)), tuple(review), tuple(failed))
+    direction = None
+    if FM002 in fms:
+        direction = (directions.pop() if len(directions) == 1 else "mixed") if directions else FM002_UNRECORDED
+    return Trial(sid, epoch, not failed, tuple(dict.fromkeys(fms)), tuple(review), tuple(failed), direction)
 
 
 def reliability_report(samples: Iterable[Any], k: int) -> ReliabilityReport:
@@ -145,6 +162,8 @@ def reliability_report(samples: Iterable[Any], k: int) -> ReliabilityReport:
             fm008.append(sid)
 
     fm_counts = Counter(code for t in trials for code in t.failure_modes)
+    by_direction = Counter(t.fm002_direction for t in trials if t.fm002_direction is not None)
+    assert sum(by_direction.values()) == fm_counts.get(FM002, 0), "FM-002 by direction must sum to its total"
     queue = tuple(row for t in sorted(trials, key=lambda t: (t.sample_id, t.epoch)) for row in t.review)
     return ReliabilityReport(
         k=k,
@@ -154,7 +173,22 @@ def reliability_report(samples: Iterable[Any], k: int) -> ReliabilityReport:
         fm_counts=dict(sorted(fm_counts.items())),
         fm008=tuple(fm008),
         epoch_anomalies=anomalies,
+        fm002_by_direction=dict(sorted(by_direction.items())),
     )
+
+
+def format_fm_counts(report: ReliabilityReport) -> str:
+    """FM counts per (sample, epoch), FM-002 by direction beside its total."""
+    if not report.fm_counts:
+        return "FM counts: none"
+    parts = []
+    for code, n in report.fm_counts.items():
+        if code == FM002:
+            split = ", ".join(f"{d} {c}" for d, c in report.fm002_by_direction.items())
+            parts.append(f"{code} {n} ({split})")
+        else:
+            parts.append(f"{code} {n}")
+    return "FM counts: " + "; ".join(parts)
 
 
 def report_from_log(log: Any, k: int | None = None) -> ReliabilityReport:

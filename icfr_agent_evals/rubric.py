@@ -1,17 +1,20 @@
 """The five-dimension content rubric: structure and wiring status.
 
 The rubric structure is fixed: Correctness, Faithfulness, Calibration,
-Completeness, Robustness, each 0-3. Each dimension is composed of a deterministic
+Completeness, Robustness. Each scored dimension is 0-3, composed of a deterministic
 anchor and (where applicable) an LLM-graded sub-dimension, weighted toward the
-deterministic check on consequential failures.
+deterministic check on consequential failures. Calibration is reported, not
+scored, in Phase 1 (ratified 2026-11-04): no 0 to 3 anchor, and an anchor enters
+only through a new tagged pre-registration.
 
-This registry records what is wired in the current build vs. pending. Pending
-dimensions are NOT scored yet; they are not silently defaulted to a passing value,
-which would inflate the aggregate. Each is wired in its scheduled week.
+This registry records what is wired in the current build vs. pending. Unscored
+dimensions (Calibration, and Robustness while pending) are not silently defaulted
+to a passing value, which would inflate the aggregate. Robustness is wired in its
+scheduled week.
 
 Score rules ratified at rubric lock are listed in RATIFIED, with the date of each
-in RATIFIED_ON. Rules still awaiting rubric lock (pre-registration section 13)
-stay in PROVISIONAL so the lock has one place to ratify or change them.
+in RATIFIED_ON. A rule awaiting rubric lock (pre-registration section 13) stays in
+PROVISIONAL so the lock has one place to ratify or change it; none is open now.
 """
 
 from __future__ import annotations
@@ -38,13 +41,14 @@ ANCHOR_STATUS: dict[Dimension, str] = {
     ),
     Dimension.COMPLETENESS: "wired: required-element presence as parseable fields (FM-004)",
     Dimension.CALIBRATION: (
-        "measured, unscored: consistency.py computes deterministic Sample Consistency over the k = 4 "
-        "epochs (agreement, ROC AUC with a two-sided 95% DeLong CI, calibration table by subset); "
-        "FM-007 fires per sample when all k epochs agree on a wrong answer, counted overall and by "
-        "subset, outside the section 10(c) sign-off codes and the per-epoch trial; the H4 verdict per "
-        "model needs the difficulty-bearing CI lower bound above 0.5 and the synthetic arm uninformative; "
-        "section 10(a) enters the unscored dimension at p = 1 in the Holm family (m = 6); "
-        "pending: the 0 to 3 anchor scale (section 13) and calibration.semantic_agreement (grader)"
+        "reported, not scored in Phase 1 (ratified 2026-11-04): consistency.py computes deterministic "
+        "Sample Consistency per model and subset over the k = 4 epochs (agreement 0.25 to 1.0, ROC AUC "
+        "with a two-sided 95% DeLong CI, calibration table by subset); FM-007 fires per sample when all "
+        "k epochs agree on a wrong answer, counted overall and by subset, outside the section 10(c) "
+        "sign-off codes and the per-epoch trial; the H4 verdict per model needs the difficulty-bearing "
+        "CI lower bound above 0.5 and the synthetic arm uninformative; section 10(a) enters the unscored "
+        "dimension at p = 1 in the Holm family (m = 6); no 0 to 3 anchor and no LLM-graded "
+        "sub-dimension in Phase 1; an anchor enters only through a new tagged pre-registration"
     ),
     Dimension.ROBUSTNESS: "pending: structured-field diff across input perturbations (Week 2)",
 }
@@ -66,26 +70,28 @@ WIRED_SCORERS: dict[str, str] = {
 # and consistency.py (Sample Consistency, FM-007 per sample, the H4 verdict).
 
 # Ratified at rubric lock (section 13), each on the date in RATIFIED_ON; the text
-# is the rule as it was held provisionally, unchanged.
+# is the rule as it was held provisionally, unchanged, except that band overstatement
+# (D5) also records each FM-002's direction for reporting, with no score change.
 RATIFIED: dict[str, str] = {
     "faithfulness.combination": "faithfulness = min(fabrication, reconciling items)",
     "reconciling_items.fm015": "FM-015 scores 0",
     "reconciling_items.omission": "an omitted eligible item scores 2 if one was cited, 1 if none was; no FM code",
     "correctness.fm016": "structured FM-016 sets Correctness to 0",
+    "correctness.band_overstatement": "band overstatement keeps FM-002; each FM-002 records its direction",
 }
-RATIFIED_ON: dict[str, str] = dict.fromkeys(RATIFIED, "2026-11-03")
+RATIFIED_ON: dict[str, str] = {
+    **dict.fromkeys(RATIFIED, "2026-11-03"),
+    "correctness.band_overstatement": "2026-11-04",
+}
 
-# Still awaiting rubric lock (section 13): band overstatement is open (D5 in
-# docs/build-notes/WEEK-1-CLOUD-REPORT.md section 6).
-PROVISIONAL: dict[str, str] = {
-    "correctness.band_overstatement": "band overstatement keeps FM-002",
-}
+# Awaiting rubric lock (section 13): empty since D5 was ratified on 2026-11-04.
+PROVISIONAL: dict[str, str] = {}
 assert not set(RATIFIED) & set(PROVISIONAL), "a rule is either ratified or provisional, never both"
 
 # Subjective sub-dimensions reserved for LLM grading, calibrated against a human
 # subset (kappa/ICC thresholds) before being trusted on the full dataset (Week 2).
+# Calibration has none in Phase 1 (reported, not scored; ratified 2026-11-04).
 LLM_GRADED_SUBDIMENSIONS: list[str] = [
     "faithfulness.narrative_grounding",
     "completeness.narrative_coverage",
-    "calibration.semantic_agreement",
 ]
