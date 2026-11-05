@@ -150,7 +150,7 @@ Eight deterministic stages, two stochastic stages (one of them not yet wired) an
 | Evaluation | 20260607 | 146 synthetic cases from generator G, plus 30 edge and 24 adversarial cases written by hand after the tag | Built by code only; no model call and no per-sample score before the tag (ratified 2026-11-04). Two earlier model-free scorings of the template baseline are stated in §4. |
 | Dev | 21260607 | 30 cases, pilot subset of 20 | Frozen in `data/dev/`; used only for elicitation, the pilot and the judge-development set |
 | CI regression | 22260607 | 200 generated cases: 146 standard, 30 edge-type, 24 adversarial-type | Built by code; every gated PR runs here, never on the evaluation split |
-| Calibration | 23260607 | 25 cases for grader-versus-human alignment | Not built |
+| Calibration | 23260607 | 40 cases for grader-versus-human alignment, stratified so every score level 0 to 3 appears at least 4 times per LLM-graded sub-dimension, and each binary check the rubric defines, if any, has at least 10 cases of each class | Not built |
 
 ---
 
@@ -168,7 +168,7 @@ Eight deterministic stages, two stochastic stages (one of them not yet wired) an
 | Review queue | Every code-check route, per reason | Reported; rising counts trigger sign-off |
 | Sample Consistency | Agreement across the 4 epochs (0.25 to 1.0), ROC AUC against modal-answer correctness, DeLong 95% CI, FM-007 | Reported, not scored; tests H4 |
 | Template margin | Each anchor read against what code alone earns | Reference row beside every model |
-| Judge-trust gates | Cohen's κ ≥ 0.6, ICC(A,1) ≥ 0.40, Krippendorff's α ≥ 0.80, a pointwise bias audit | Gate on any LLM-graded result (not wired) |
+| Judge-trust gates | ICC(A,1) on every LLM-graded 0 to 3 score, passing only when the lower limit of its two-sided 95% CI is at least 0.60 (point estimate beside it); unweighted Cohen's κ only on binary checks the rubric defines, if any, each tied to one sub-dimension whose failure it counts as, under the same lower-limit rule with a 10,000-resample percentile bootstrap; Krippendorff's α ≥ 0.80 on grader test-retest; a pointwise bias audit (order and label shifts within 0.10 points, leniency within 0.25 points); if a gate fails at the first grader's acceptance look, an author intra-rater re-grade before any grader change | Gate on any LLM-graded result (not wired) |
 
 ### Mock-run proofs I reproduced (dev split, no API key)
 
