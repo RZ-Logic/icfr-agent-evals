@@ -77,6 +77,16 @@ def test_values_cover_section13_fields(two_runs):
     assert values["dataset"]["dataset_version"] and values["dataset"]["schema_version"]
     prompt = values["worker_prompt"]
     assert prompt["worker_prompt_sha256"] == prompt["recomputed_sha256"]
+    env = values["environment"]
+    assert env["python_build"] and env["openssl"]
+
+
+def test_environment_records_the_interpreter_build_and_openssl():
+    import ssl
+
+    env = tv._versions()
+    assert env["python_build"] == sys.version
+    assert env["openssl"] == ssl.OPENSSL_VERSION
 
 
 def test_output_holds_no_case_content(two_runs):

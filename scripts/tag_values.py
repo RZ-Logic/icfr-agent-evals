@@ -48,6 +48,7 @@ import hashlib
 import json
 import pathlib
 import platform
+import ssl
 import subprocess
 import sys
 from collections import Counter
@@ -76,7 +77,9 @@ PREREGISTERED = {
 }
 
 PINS = {  # section 13 pin rows; a difference is a warning, not a mismatch
-    "python": "3.14.7",
+    # Pre-registered interpreter. The 3.12.16 cross-check leg and the uv 0.13.6 minimum
+    # are stated in requirements.txt; this script checks only the interpreter it runs on.
+    "python": "3.14.10",
     "inspect-ai": "0.3.278",
     "inspect-scout": "0.5.5",
     "anthropic": "1.12.1",
@@ -194,7 +197,9 @@ def git_facts(paths: list[str], root: pathlib.Path = ROOT) -> dict:
 # --- Values ---------------------------------------------------------------------------------
 
 def _versions() -> dict:
-    env = {"python": platform.python_version()}
+    # The full build string and the linked OpenSSL show a different interpreter build at the tag,
+    # even when the Python version number is the same.
+    env = {"python": platform.python_version(), "python_build": sys.version, "openssl": ssl.OPENSSL_VERSION}
     for dist in ("inspect-ai", "inspect-scout", "anthropic", "openai", "pydantic"):
         try:
             env[dist] = metadata.version(dist)

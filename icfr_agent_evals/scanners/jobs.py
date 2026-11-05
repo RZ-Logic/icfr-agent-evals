@@ -20,9 +20,28 @@ for post-tag runs only. A log whose split is missing or unknown is refused too,
 so a log from outside this harness never passes by default. The job scans exactly
 the files that were checked, never the directory they were listed from.
 
-Limit of the guard: in inspect-scout 0.5.5, a transcripts argument given to
+Limits of the guards: in inspect-scout 0.5.5, a transcripts argument given to
 scan() (or -T on the CLI) replaces the job's transcripts after the job is built,
-so it bypasses this check. Pass logs to the job only, never transcripts to scan().
+so it bypasses the split guard. Pass logs to the job only, never transcripts to scan().
+Run the scanners only through these scan jobs: running a scanner file directly
+(scout scan <scanner>.py, inspect eval --scanner, INSPECT_EVAL_SCANNER) builds no
+scan job and skips both the split guard and the serving guard. Never pass
+--metadata or scan(metadata=...): either replaces the job metadata, the endpoint
+record included.
+
+Serving guard: once a job on the scanner pin is built, the scanner model it
+resolved goes through roster.model_serving (via _model.scanner_serving). The job
+is refused unless that model's client endpoint is exactly the OpenAI first-party
+API, with no explicit base URL, no model_args and no scan model base URL
+(SCOUT_SCAN_MODEL_BASE_URL or INSPECT_EVAL_SCAN_MODEL_BASE_URL). The checked
+endpoint is recorded in the job metadata as scanner_endpoint (None on mockllm).
+The check reads the environment when the job is built; the llm scanners resolve
+the same pinned model by name from that environment when they run. Scout's scan()
+loads the project .env only after the job is built, and its worker processes
+inherit what it loaded. The scan jobs therefore load the project .env the way
+Scout does before the check, so the check sees the environment the scan and its
+workers use (python-dotenv, find_dotenv(usecwd=True); PYTHON_DOTENV_DISABLED
+switches it off, as it does for Scout).
 
 CLI: scout scan icfr_agent_evals/scanners/jobs.py@all_logs_scan -S logs=<path>
 """
@@ -33,14 +52,15 @@ from os import PathLike
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
+from dotenv import find_dotenv, load_dotenv
 from inspect_ai.log import list_eval_logs, read_eval_log
 from inspect_scout import ScanJob, scanjob, transcripts_from
 
 # Absolute imports: the scout CLI may load this file by path.
 from icfr_agent_evals.casefile import SPLITS
 from icfr_agent_evals.roster import SCOUT_SCANNER, WORKER
-from icfr_agent_evals.scanners._model import is_offline, scanner_model
-from icfr_agent_evals.scanners._upstream import UPSTREAM_COMMIT
+from icfr_agent_evals.scanners._model import ScannerModelError, is_offline, scanner_model, scanner_serving
+from icfr_agent_evals.scanners._upstream import BACKPORT, UPSTREAM_COMMIT
 from icfr_agent_evals.scanners.command_not_found import command_not_found
 from icfr_agent_evals.scanners.eval_awareness import eval_awareness
 from icfr_agent_evals.scanners.refusal_classifier import refusal_classifier
@@ -121,21 +141,48 @@ def checked_logs(
     return files, sorted(splits)
 
 
+def load_scout_environment() -> None:
+    """Load the project .env as inspect_scout 0.5.5 init_environment does. Scout's own
+    loader runs once per process behind a flag, so it is not called here: this call
+    runs on every job build. load_dotenv never overrides a variable already set."""
+    load_dotenv(find_dotenv(usecwd=True))
+
+
 def _job(files: list[str], splits: list[str], scanners: dict, model: str, name: str,
          allow_evaluation_split: bool, scans: str | None) -> ScanJob:
-    return ScanJob(
+    metadata: dict[str, Any] = {
+        "scanner_model": model,
+        "splits": splits,
+        "allow_evaluation_split": allow_evaluation_split,
+        "scout_examples_commit": UPSTREAM_COMMIT,
+        # the awareness rubric is not the pure 0.5.5 text: PR #679 is backported
+        "scout_awareness_backport": BACKPORT.merge_commit,
+        "scanner_endpoint": None,
+    }
+    load_scout_environment()
+    job = ScanJob(
         transcripts=transcripts_from(files),
         scanners=scanners,
         model=model,
         scans=scans,
         name=name,
-        metadata={
-            "scanner_model": model,
-            "splits": splits,
-            "allow_evaluation_split": allow_evaluation_split,
-            "scout_examples_commit": UPSTREAM_COMMIT,
-        },
+        metadata=metadata,
     )
+    # ScanJob keeps the metadata dict it was given, so the record lands in the job.
+    metadata["scanner_endpoint"] = scanner_job_serving(model, job)
+    return job
+
+
+def scanner_job_serving(model: str, job: Any) -> dict[str, str] | None:
+    """The serving guard on a built job: None for a mockllm scanner, else the checked
+    endpoint. A job whose model cannot be read fails closed."""
+    if is_offline(model):
+        return None
+    try:
+        resolved, base_url = job.model, job.model_base_url
+    except AttributeError as e:
+        raise ScannerModelError(f"serving guard: cannot read the scan job's model ({e}); refused") from e
+    return scanner_serving(model, resolved, base_url)
 
 
 @scanjob

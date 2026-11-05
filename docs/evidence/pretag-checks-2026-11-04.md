@@ -4,6 +4,8 @@ Section 13 rows of `PRE-REGISTRATION-PHASE-1.md` that were checked on 2026-11-04
 
 ## Framework and dependency pins
 
+Superseded for Python and uv: see `docs/evidence/pretag-checks-2026-11-05.md` (Python and uv). The Python rows and paragraph below stay as the 2026-11-04 record.
+
 | Claim | Result | Source |
 |---|---|---|
 | inspect-ai 0.3.278 is on PyPI | Uploaded 2026-10-09 16:55 UTC, not yanked | https://pypi.org/project/inspect-ai/0.3.278/ |
@@ -31,7 +33,11 @@ The model status table on https://platform.claude.com/docs/en/about-claude/model
 
 All four match, so `RETIREMENT_FLOORS_RECORDED` is now 2026-11-04. The models overview page agrees for the three models it lists.
 
+Superseded: see `docs/evidence/pretag-checks-2026-11-05.md` (Notice policies).
+
 Notice policies, as each vendor's deprecation page states them and as `roster.NOTICE_POLICIES` now records them: Anthropic gives at least 60 days of notice before retirement for publicly released models, sent to customers with active deployments; OpenAI gives at least 6 months of notice before retirement for a generally available model, unless safety or compliance concerns require a faster timeline (https://developers.openai.com/api/docs/deprecations). Neither `openai/gpt-6-luna` nor `openai/gpt-6.1-sol` has an announced deprecation.
+
+Superseded for serving: see `docs/evidence/pretag-checks-2026-11-05.md` (Serving guard). Name pins alone do not fix the endpoint.
 
 Serving platform: `roster.SERVING_PLATFORMS` names the Claude API and the OpenAI API, both first-party, and Task metadata carries it under `roster` and `retirement_floors` (tested in `tests/test_roster.py` and `tests/test_task.py`). The pins carry no partner-platform service prefix, and the roster check rejects any model name that differs from its pin.
 
@@ -51,6 +57,8 @@ Through `inspect eval`, `tests/test_task.py` (`test_bad_role_fails_the_run`, `te
 
 ## Vendored Scout scanners
 
+Superseded for the awareness rubric: see `docs/evidence/pretag-checks-2026-11-05.md` (Scout backport). The cue-word drop described below is retired.
+
 `eval_awareness.py`, `refusal_classifier.py` and `command_not_found.py` are vendored from `meridianlabs-ai/inspect_scout` `examples/docs` at commit 2db653d5fbd1352201b31a74557f612ee78a058c, the 0.5.5 release tag (MIT, Copyright (c) 2025 Meridian Labs). The pristine copies and their git blob SHAs are in `docs/evidence/scout-upstream/`, the working copies in `icfr_agent_evals/scanners/`, and the diff against upstream in `docs/evidence/scout-scanners.diff`. The diff makes three changes: the awareness rubric drops the cue words "test" and "audit"; `eval_awareness` and `refusal_classifier` name `openai/gpt-6-luna` (`roster.SCOUT_SCANNER`) explicitly; each file gets a provenance header. `command_not_found` is otherwise unchanged and uses no model. The scan jobs refuse an evaluation-split log unless `allow_evaluation_split=True` is passed, and the awareness job accepts only worker logs. `tests/test_scanners.py` checks the blob SHAs and regenerates the diff byte for byte.
 
 ## Generator version G and splits
@@ -65,6 +73,8 @@ Through `inspect eval`, `tests/test_task.py` (`test_bad_role_fails_the_run`, `te
 - worker prompt v0.0.3-draft, SHA-256 a3430f8f84eb6c353b6e7e86d1bc83dcdd0a8d10a637205c4d943781e07607b7 (not locked)
 
 Both generator labels carry a pre-release suffix. Renaming either changes every split's dataset_sha256, so the final label is set after the pilot, when the generator is frozen, and the script is re-run on the tagged commit.
+
+Superseded: see `docs/evidence/pretag-checks-2026-11-05.md` (Dataset SemVer); section 4 had no minor-version rule on this date.
 
 Planned dataset SemVer for the post-tag build, proposed: 0.1.0. The current label 0.1.0-dev.1 is a pre-release that sorts below it, and a case added after the first post-tag evaluation-split run takes a new minor version (section 4).
 
