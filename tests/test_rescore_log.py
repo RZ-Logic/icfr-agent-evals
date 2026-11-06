@@ -84,6 +84,32 @@ def test_output_keeps_the_header_and_the_readers_accept_it(pilot_log, tmp_path):
     assert read_eval_log(pilot_log).samples[0].scores.keys() == new.samples[0].scores.keys()
 
 
+def test_changed_scoring_code_changes_the_written_scores(pilot_log, tmp_path, monkeypatch, capsys):
+    """Fix-round 2 verifier finding (2026-11-06): resolve_sample_attachments returns a copy, and the
+    first version scored the copy, so --output returned the input unchanged and --check always
+    reported 0. A scorer that disagrees with the log must show up as differences and in the file."""
+    from inspect_ai.scorer import Score
+    from icfr_agent_evals import scorers as scorer_module
+
+    def disagreeing_anchor():
+        async def score(state, target):
+            return Score(value=0, answer="", explanation="forced", metadata={"failure_modes": ["FM-999"]})
+        return score
+
+    monkeypatch.setattr(scorer_module, "correctness_anchor", disagreeing_anchor)
+    mod = _load()
+    assert mod.main([pilot_log, "--check"]) == 1
+    out = capsys.readouterr().out
+    # value, failure_modes, review_reasons and requires_human_review differ on 80 sample-epochs
+    assert "differences from the log's scores: 320" in out
+    rescored = tmp_path / "rescored.eval"
+    assert mod.main([pilot_log, "--output", str(rescored)]) == 0
+    new = read_eval_log(str(rescored))
+    assert all(s.scores["correctness_anchor"].value == 0 for s in new.samples)
+    assert all(s.scores["correctness_anchor"].metadata["failure_modes"] == ["FM-999"] for s in new.samples)
+    assert all(s.scores["correctness_anchor"].value == 3 for s in read_eval_log(pilot_log).samples)
+
+
 def test_check_without_output_is_allowed_and_output_is_required_otherwise(pilot_log):
     mod = _load()
     with pytest.raises(SystemExit):

@@ -38,8 +38,9 @@ def rescore(log):
     fns = {name: getattr(scorer_module, name)() for name in SCORERS}
     changed = 0
     for sample in log.samples:
-        sample = resolve_sample_attachments(sample)
-        state = SimpleNamespace(metadata=sample.metadata, output=sample.output)
+        # resolve_sample_attachments returns a copy: score on the copy, write to the log's sample
+        resolved = resolve_sample_attachments(sample)
+        state = SimpleNamespace(metadata=resolved.metadata, output=resolved.output)
         new = {}
         for name, fn in fns.items():
             new[name] = asyncio.run(fn(state, None))
