@@ -531,6 +531,36 @@ _AGGREGATE_CUE_RE = re.compile(
 )
 _BALANCE_ROLES = ("ledger", "onchain")
 _COMPETING_ROLES = ("ledger", "onchain", "explained", "unexplained", "variance")
+# Fix round 2 (2026-11-06), lane L1. Pattern A: a verb that states the effect of one
+# or several items on the variance or a balance ("which adds $X to the surplus",
+# "lowers reserves against the ledger by $X", "offsets it by $X"). The amount it
+# governs is an item effect, not the variance, a balance or the explained total.
+_EFFECT_VERB_RE = re.compile(
+    r"add(?:s|ed|ing)?|rais(?:e|es|ed|ing)|increas(?:e|es|ed|ing)|lower(?:s|ed|ing)|reduc(?:e|es|ed|ing)"
+    r"|decreas(?:e|es|ed|ing)|widen(?:s|ed|ing)?|narrow(?:s|ed|ing)?|offset(?:s|ting)?|deepen(?:s|ed|ing)?"
+    r"|contribut(?:e|es|ed|ing)",
+    _I,
+)
+_EFFECT_VERB_SPAN = 8  # tokens at most from the effect verb to its amount
+_EFFECT_LEADS = frozenset({"by", "("})  # "raises the surplus by $X", "offsets part of that ($X)"
+_EFFECT_STOPS = frozenset({",", ";", "up"})  # "adds up to $X" states a total; a comma ends the reach
+_PAREN_REF_SPAN = 12  # tokens at most from a reference to a bracketed amount that describes it
+# Pattern B: "Together they total $X, leaving $0.00 unexplained": an aggregate word
+# right before an amount whose subject is the items (no balance, variance or
+# unexplained cue and no reference in the subject) states the explained total.
+_AGGREGATE_WORD_RE = re.compile(
+    r"total(?:s|ed|led|ing|ling)?|net(?:s|ted|ting)?|sum(?:s|med|ming)?|combined|together|aggregate[sd]?", _I
+)
+_NET_WORD_RE = re.compile(r"net(?:s|ted|ting)?", _I)
+# a subject of its own must name the items ("together they", "these items", "both")
+_ITEM_SUBJECT_WORDS = frozenset({
+    "item", "items", "they", "these", "those", "them", "together", "both", "all", "combined",
+    "withdrawals", "deposits", "transfers", "fees", "entries", "movements", "adjustments",
+})
+_SUBJECT_STOPS = frozenset({",", ";", ":", "(", ")"})
+_SUBJECT_BLOCKING_ROLES = frozenset({"variance", "ledger", "onchain", "unexplained", "threshold"})
+# "..., leaving a total of $X": a remainder word in the subject makes the total the remainder
+_REMAINDER_WORDS = frozenset({"leaving", "leaves", "leave", "left", "remaining", "remains", "remain", "remained"})
 
 
 def _resolve_role(clause: _Clause, i: int, ctx: "_Context") -> dict:
@@ -602,6 +632,49 @@ def _resolve_role(clause: _Clause, i: int, ctx: "_Context") -> dict:
     ):
         return {"role": "unresolved", "resolution": "parallel_amounts"}
 
+    # "Together they total $X", "the three items net to $X" (fix round 2, pattern B):
+    # an aggregate word right before the amount, over linking words only, states the
+    # explained total when its subject (back to the nearest comma, bracket, colon or
+    # amount) names no reference, no variance, balance, unexplained or threshold cue
+    # and no remainder word, and names the items (_ITEM_SUBJECT_WORDS: "customer
+    # balances total $X" is left to the cue rules). An aggregate with no subject of
+    # its own is an apposition
+    # ("WD-1 and WD-2, totaling $X"): it is an item sum, left to the item rules,
+    # whenever a reference precedes it in the clause. A role
+    # cue right after the amount (other than "of the surplus", a part of the
+    # variance) leaves the amount to the cue rules.
+    k = i - 1
+    while k >= max(0, i - 3) and _is_link(toks[k]) and not (
+        toks[k].kind == "word" and _AGGREGATE_WORD_RE.fullmatch(toks[k].text)
+    ):
+        k -= 1
+    if k >= max(0, i - 3) and toks[k].kind == "word" and _AGGREGATE_WORD_RE.fullmatch(toks[k].text):
+        agg = k
+        subject_ok = True
+        subject_words = 0
+        names_items = False
+        for k in range(agg - 1, -1, -1):
+            t = toks[k]
+            if t.kind == "amount" or (t.kind == "punct" and t.text in _SUBJECT_STOPS):
+                break
+            subject_words += 1
+            names_items = names_items or t.low in _ITEM_SUBJECT_WORDS
+            if t.kind == "ref" or (t.kind == "cue" and t.role in _SUBJECT_BLOCKING_ROLES) or t.low in _REMAINDER_WORDS:
+                subject_ok = False
+                break
+        if subject_words == 0 and any(t.kind == "ref" for t in toks[:agg]):
+            subject_ok = False
+        if subject_words > 0 and not names_items:
+            subject_ok = False
+        j = i + 1
+        while j < len(toks) and _is_link(toks[j]):
+            j += 1
+        if j < len(toks) and toks[j].kind == "cue" and toks[j].role not in ("neutral", "explained"):
+            partitive_after = toks[j].role == "variance" and any(toks[m].low == "of" for m in range(i + 1, j))
+            subject_ok = subject_ok and partitive_after
+        if subject_ok:
+            return {"role": "explained", "resolution": "aggregate_total", "cue": toks[agg].text}
+
     # "$X of the shortfall" is a part of the variance, not the variance: that cue
     # neither binds the amount nor separates it from the next cue
     partitive: set[int] = set()
@@ -630,10 +703,15 @@ def _resolve_role(clause: _Clause, i: int, ctx: "_Context") -> dict:
             if k >= 1 and toks[k].low == "of" and toks[k - 1].kind == "cue" and toks[k - 1].role in ("explained", "unexplained"):
                 complement.add(j)
     w = V.WINDOWS["cue_search_tokens"]
+    # a cue or reference after the next amount belongs to that amount ("they total $X,
+    # leaving $0.00 unexplained": the cue binds $0.00, not $X; fix round 2, pattern B)
+    next_amount = next((j for j in range(i + 1, len(toks)) if toks[j].kind == "amount"), len(toks))
     cands = []
     for j in range(max(0, i - w), min(len(toks), i + w + 1)):
         t = toks[j]
         if j == i or j == skip or j in complement or not (t.kind == "ref" or (t.kind == "cue" and t.role != "neutral")):
+            continue
+        if j > next_amount:
             continue
         role = "item" if t.kind == "ref" else t.role
         cands.append((clause.distance(i, j, skip), "before" if j < i else "after", role, t, j))
@@ -721,12 +799,21 @@ def _aside_subject(toks: list[_Tok], i: int, c: int, role: str) -> tuple[str, _T
     and a punctuation aside closes between the cue and the amount. The subject is the
     nearest role cue or reference before the aside, with no amount between. None when
     there is no aside, no subject, or the subject has the cue's own role."""
+    def mark(k: int, texts) -> bool:
+        # a hyphen joined to the tokens on both sides ("in-flight", "cold-2") is part
+        # of a word, never an aside dash (fix round 2, pattern C)
+        t = toks[k]
+        if t.kind != "punct" or t.text not in texts:
+            return False
+        return not (t.text == "-" and 0 < k < len(toks) - 1
+                    and toks[k - 1].end == t.start and toks[k + 1].start == t.end)
+
     opener = None
     for k in range(c - 1, -1, -1):
         t = toks[k]
         if t.kind == "amount" or t.kind == "ref" or (t.kind == "cue" and t.role != "neutral"):
             return None
-        if (t.kind == "punct" and t.text in _ASIDE_CLOSERS) or (t.kind == "word" and t.low in _CONTRAST_WORDS):
+        if mark(k, _ASIDE_CLOSERS) or (t.kind == "word" and t.low in _CONTRAST_WORDS):
             opener = k
             break
     if opener is None:
@@ -734,7 +821,7 @@ def _aside_subject(toks: list[_Tok], i: int, c: int, role: str) -> tuple[str, _T
     o = toks[opener]
     between = toks[c + 1:i]
     if o.kind == "punct":
-        if not any(t.kind == "punct" and t.text == _ASIDE_CLOSERS[o.text] for t in between):
+        if not any(mark(k, (_ASIDE_CLOSERS[o.text],)) for k in range(c + 1, i)):
             return None
     elif not any(t.low in _PARENTHETICAL_VERBS for t in between):
         return None
@@ -849,6 +936,12 @@ def _check_amount(toks: list[_Tok], i: int, binding: dict, ctx: _Context) -> dic
     if rec["verdict"] == "FM-001":
         rebound = _competing_role_fit(toks, i, binding, ctx)
         if rebound is not None:
+            if rebound["verdict"] == "ok":
+                # an item-effect reading that agrees (fix round 2): the role's own
+                # mismatch reason and review flag no longer apply
+                rec.pop("reason", None)
+                rec.pop("review", None)
+                rec["rebound_from"] = role
             rec.update(rebound)
     if rec["verdict"] == "FM-001" and _hedged_agreement(toks, i, role, rec, ctx):
         rec.pop("review", None)
@@ -865,8 +958,27 @@ def _competing_role_fit(toks: list[_Tok], i: int, binding: dict, ctx: _Context) 
     against ledger liabilities of $Y" binds $X to the ledger cue after it. The
     amount routes to review when it equals the quantity of another role cue in the
     clause, or, for a balance binding, the variance ("ahead of ledger liabilities by
-    $V"). Distance-0 bindings keep FM-001, so a swapped balance is still caught."""
+    $V"). Distance-0 bindings keep FM-001, so a swapped balance is still caught.
+
+    Fix round 2 (pattern A): an amount governed by an item-effect verb ("which adds
+    $X to the surplus", "lowers reserves against the ledger by $X", "offsets it by
+    $X") is first checked as the effect of the items named in its clause; see
+    _item_effect_fit. An aggregate total ("together they total $X") that is not the
+    explained total but equals the sum of some cited items routes to review."""
     role = binding.get("role")
+    if role in _COMPETING_ROLES and binding.get("resolution") not in ("label", "threshold_pair"):
+        effect = _item_effect_fit(toks, i, ctx)
+        if effect is not None:
+            return effect
+    if role == "explained" and binding.get("resolution") == "aggregate_total":
+        if _NET_WORD_RE.fullmatch(str(binding.get("cue", ""))):
+            return None  # "the items net to $X" states a signed net, never a gross part-sum
+        cited = [abs(it.amount_usd) for it in ctx.cited.values()][:12]
+        value = abs(toks[i].data["value"])
+        for mask in range(1, 1 << len(cited)):
+            if _near(value, sum(a for b, a in enumerate(cited) if mask >> b & 1)):
+                return {"verdict": "review", "reason": "aggregate_equals_item_subset_sum"}
+        return None
     if (role not in ("ledger", "onchain", "explained", "unexplained") or binding.get("distance", 0) < 1
             or not str(binding.get("resolution", "")).startswith("nearest_cue")):
         return None
@@ -883,6 +995,87 @@ def _competing_role_fit(toks: list[_Tok], i: int, binding: dict, ctx: _Context) 
         return {"verdict": "review", "reason": "role_amount_fits_competing_cue", "fits": fits}
     if role in _BALANCE_ROLES and _near(value, ctx.truth.variance_usd):
         return {"verdict": "review", "reason": "balance_amount_equals_variance", "fits": ["variance"]}
+    return None
+
+
+def _item_effect_fit(toks: list[_Tok], i: int, ctx: _Context) -> dict | None:
+    """The amount at toks[i] read as the effect of named items (fix round 2, pattern A).
+
+    It applies when an effect verb (_EFFECT_VERB_RE) within _EFFECT_VERB_SPAN tokens
+    before the amount governs it, with no amount, reference, comma or "up" between,
+    and "by", "(" or the verb itself right before the amount. The subject is the
+    nearest reference before the verb, or the only reference in the clause:
+    - the subject is cited, eligible and its amount equals the figure: ok;
+    - two or more references, all cited and eligible, sum to the figure: ok when the
+      clause also states each item's own amount or has an aggregate word, review
+      otherwise (the sum may be standing in for one item's amount; OpenAI R1);
+    - no reference in the clause and the figure equals one cited eligible item's
+      amount: review (the item is described, not named).
+    Without an effect verb, a bracketed amount after a reference it describes
+    ("DP-1 not yet credited in the ledger (+$X)") that equals that cited item's amount
+    routes to review. Anything else returns None and the FM-001 stands, so a wrong
+    figure, or a right figure for a different or uncited item, still fails."""
+    amt = toks[i]
+    value = amt.data["value"]
+    refs = [k for k, t in enumerate(toks) if t.kind == "ref"]
+
+    def cited_item(k: int):
+        it = ctx.truth.item_by_reference(toks[k].text)
+        return it if it is not None and it.reference in ctx.cited else None
+
+    verb = None
+    for k in range(i - 1, max(-1, i - 1 - _EFFECT_VERB_SPAN), -1):
+        t = toks[k]
+        if t.kind in ("amount", "ref") or t.low in _EFFECT_STOPS:
+            break
+        if t.kind in ("word", "cue") and _EFFECT_VERB_RE.fullmatch(t.text):
+            if k == i - 1 or toks[i - 1].low in _EFFECT_LEADS:
+                verb = k
+            break
+    if verb is not None:
+        before = [k for k in refs if k < verb]
+        subject = before[-1] if before else (refs[0] if len(refs) == 1 else None)
+        if subject is not None:
+            it = cited_item(subject)
+            if it is not None and _near(value, it.amount_usd):
+                effect = item_effect_usd(it)
+                if (amt.data["negative"] and effect > 0) or (amt.data["positive"] and effect < 0):
+                    return {"verdict": "review", "reason": "amount_sign_disagrees", "reference": it.reference}
+                return {"verdict": "ok", "role": "item", "resolution": "item_effect", "reference": it.reference,
+                        "expected": abs(it.amount_usd)}
+        items = []
+        for k in refs:
+            it = cited_item(k)
+            if it is None:
+                items = []
+                break
+            if all(it.reference != n.reference for n in items):
+                items.append(it)
+        if len(items) > 1:
+            total = round(sum(abs(n.amount_usd) for n in items), 2)
+            if _near(value, total):
+                stated = [t.data["value"] for t in toks if t.kind == "amount"]
+                each = all(any(_near(v, n.amount_usd) for v in stated) for n in items)
+                clause_text = ctx.text[toks[0].start:toks[-1].end]
+                if each or _AGGREGATE_CUE_RE.search(clause_text):
+                    return {"verdict": "ok", "role": "item", "resolution": "item_effect_sum", "expected": total,
+                            "references": [n.reference for n in items]}
+                return {"verdict": "review", "reason": "item_amount_equals_clause_sum", "expected": total}
+        if not refs:
+            fits = [ref for ref, it in ctx.cited.items() if _near(value, it.amount_usd)]
+            if fits:
+                return {"verdict": "review", "reason": "item_effect_unnamed_item", "fits": fits}
+        return None
+    if amt.data.get("parenthesized"):
+        for k in range(i - 1, max(-1, i - 1 - _PAREN_REF_SPAN), -1):
+            t = toks[k]
+            if t.kind == "amount":
+                return None
+            if t.kind == "ref":
+                it = cited_item(k)
+                if it is not None and _near(value, it.amount_usd):
+                    return {"verdict": "review", "reason": "parenthetical_item_amount", "reference": it.reference}
+                return None
     return None
 
 
