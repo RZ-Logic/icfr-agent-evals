@@ -259,8 +259,10 @@ _BARE_RE = re.compile(
     rf"(?![0-9]|,[0-9]|\.[0-9]|/){_UNIT_AFTER}"
 )
 
+# A sign right before a suffixed figure is kept ("+120k", "-62.9k"; review finding
+# OpenAI R3). A dash after a letter or digit is an identifier or a range, never a sign.
 _SUFFIXED_RE = re.compile(
-    rf"(?<![A-Za-z0-9.,$/\-])(?P<num>[0-9]{{1,3}}(?:,[0-9]{{3}})+(?:\.[0-9]+)?|[0-9]+(?:\.[0-9]+)?)"
+    rf"(?:(?<![^\s(])(?P<neg>[-−+] ?)(?=[0-9])|(?<![A-Za-z0-9.,$/\-−]))(?P<num>[0-9]{{1,3}}(?:,[0-9]{{3}})+(?:\.[0-9]+)?|[0-9]+(?:\.[0-9]+)?)"
     rf"(?:(?P<suf>{_alt(V.SUFFIXED_ATTACHED)})|[ ](?P<sufw>(?i:{_alt(V.SUFFIXED_WORDS)})))(?![A-Za-z0-9])"
     rf"(?! ?(?i:{_alt(V.UNIT_WORDS)})(?![A-Za-z0-9]))"
     rf"(?! ?(?:{_alt(V.IN_SCOPE_TICKERS + V.OTHER_TICKERS)})(?![A-Za-z0-9]))"
@@ -295,6 +297,18 @@ def _amount_value(m: re.Match) -> float:
     if suf:
         value *= V.MAGNITUDE_SUFFIXES[suf.lower()]
     return round(value, 2)
+
+
+def _half_unit(m: re.Match) -> float | None:
+    """Half a unit of the last stated digit of a figure with a magnitude suffix
+    ("62.9k" -> 50.0, "1.1 million" -> 50,000.0): the precision it states. None for
+    a figure written out in full."""
+    suf = m.groupdict().get("suf") or m.groupdict().get("sufw")
+    if not suf:
+        return None
+    num = m.group("num").replace(",", "")
+    decimals = len(num.split(".", 1)[1]) if "." in num else 0
+    return 0.5 * V.MAGNITUDE_SUFFIXES[suf.lower()] / 10 ** decimals
 
 
 def _find_specials(text: str, truth: CaseTruth) -> list[_Tok]:
@@ -346,10 +360,15 @@ def _find_specials(text: str, truth: CaseTruth) -> list[_Tok]:
             sign = (neg or m.groupdict().get("neg2") or "").strip()
             paren = s > 0 and text[s - 1] == "(" and text[e:e + 1] == ")"
             add(s, e, "amount", value=_amount_value(m), negative=sign in ("-", "\u2212"), positive=sign == "+",
-                parenthesized=paren, bare=False)
+                parenthesized=paren, bare=False, half_unit=_half_unit(m))
     for m in _SUFFIXED_RE.finditer(text):
-        add(m.start(), m.end(), "amount", value=_amount_value(m), negative=False, positive=False,
-            parenthesized=False, bare=False, suffixed=True)
+        s, e = m.span()
+        neg = m.group("neg") or ""
+        if neg and _AMOUNT_BEFORE_RE.search(text[:s]):
+            s, neg = s + len(neg), ""  # "25k - 250k": a range separator, not a sign
+        sign = neg.strip()
+        add(s, e, "amount", value=_amount_value(m), negative=sign in ("-", "−"), positive=sign == "+",
+            parenthesized=False, bare=False, suffixed=True, half_unit=_half_unit(m))
     for m in _BARE_RE.finditer(text):
         add(m.start(), m.end(), "amount", value=_amount_value(m), negative=False, positive=False,
             parenthesized=False, bare=True)
@@ -499,6 +518,20 @@ _ARTICLES = frozenset({"the", "a", "an"})
 _PARTITIVE = frozenset({"of", "the", "this", "that", "these", "those", "total", "its"})
 _BAND_CMP_FULL = re.compile(rf"(?:{_BAND_CMP_ALT})", _I)
 
+# Fix-round helper constants, kept here so narrative_vocab.py (and vocab_sha256) does
+# not move. Hedge words within two tokens before a figure (finding F3-04, D9):
+_HEDGE_WORDS = frozenset({"approximately", "approx", "about", "roughly", "around", "nearly", "almost", "~", "≈"})
+_HEDGE_TOKENS_BEFORE = 2
+_HEDGE_SHARE = 0.05  # a hedged figure written out in full agrees within 5 percent of its target
+# A stated sum of several items needs an explicit aggregate word (review finding OpenAI R1).
+_AGGREGATE_CUE_RE = re.compile(
+    r"(?<![A-Za-z0-9])(?:total(?:s|ed|led|ing|ling)?|together|combined|altogether|sum(?:s|med|ming)?|aggregate[sd]?)"
+    r"(?![A-Za-z0-9])",
+    _I,
+)
+_BALANCE_ROLES = ("ledger", "onchain")
+_COMPETING_ROLES = ("ledger", "onchain", "explained", "unexplained", "variance")
+
 
 def _resolve_role(clause: _Clause, i: int, ctx: "_Context") -> dict:
     """Bind the amount at toks[i] to a role from cue words in its clause.
@@ -557,6 +590,11 @@ def _resolve_role(clause: _Clause, i: int, ctx: "_Context") -> dict:
     m = _COMPARISON_AFTER_RE.match(ctx.masked, amt.end) or _COMPARISON_BARE_RE.match(ctx.masked, amt.end)
     if m:
         return {"role": "variance", "resolution": "comparison_amount", "cue": ctx.text[m.start():m.end()].strip()}
+
+    ref = _parenthetical_reference(toks, i)
+    if ref is not None:
+        return {"role": "item", "resolution": "parenthetical_of_reference", "cue": ref.text,
+                "ref_token": ref, "distance": 0}
 
     joiners = ("and", ",", "or")
     if (i + 2 < len(toks) and toks[i + 1].low in joiners and toks[i + 2].kind == "amount") or (
@@ -635,6 +673,20 @@ def _resolve_role(clause: _Clause, i: int, ctx: "_Context") -> dict:
     if role == "item":
         out["ref_token"] = cue
     return out
+
+
+def _parenthetical_reference(toks: list[_Tok], i: int) -> _Tok | None:
+    """The reference a parenthetical amount describes: "WD-1 (pending transfer, $X)"
+    states the item's amount (finding F3-02). The "(" must follow the reference
+    directly, with no amount, ")" or role cue between it and the amount; otherwise
+    None and the usual rules apply."""
+    for k in range(i - 1, -1, -1):
+        t = toks[k]
+        if t.kind == "amount" or t.text == ")" or (t.kind == "cue" and t.role != "neutral"):
+            return None
+        if t.text == "(":
+            return toks[k - 1] if k >= 1 and toks[k - 1].kind == "ref" else None
+    return None
 
 
 def _parenthetical_subject(toks: list[_Tok], i: int, c: int, role: str) -> bool:
@@ -794,10 +846,72 @@ def _check_amount(toks: list[_Tok], i: int, binding: dict, ctx: _Context) -> dic
         (amt.data["negative"] and signed > 0) or (amt.data["positive"] and signed < 0)
     ):
         rec.update(verdict="review", reason="amount_sign_disagrees")
+    if rec["verdict"] == "FM-001":
+        rebound = _competing_role_fit(toks, i, binding, ctx)
+        if rebound is not None:
+            rec.update(rebound)
+    if rec["verdict"] == "FM-001" and _hedged_agreement(toks, i, role, rec, ctx):
+        rec.pop("review", None)
+        rec.update(verdict="review", reason="hedged_amount")
     if amt.data["bare"] and rec["verdict"] == "FM-001":
         # a number with no currency marker may be a unit count, so it is not fired on
         rec.update(verdict="review", reason="bare_number_" + rec["reason"])
     return rec
+
+
+def _competing_role_fit(toks: list[_Tok], i: int, binding: dict, ctx: _Context) -> dict | None:
+    """Review instead of FM-001 when a nearest-cue binding at distance 1 or more may
+    have taken the wrong cue (finding F3-01): "reserves with <custodian> were $X
+    against ledger liabilities of $Y" binds $X to the ledger cue after it. The
+    amount routes to review when it equals the quantity of another role cue in the
+    clause, or, for a balance binding, the variance ("ahead of ledger liabilities by
+    $V"). Distance-0 bindings keep FM-001, so a swapped balance is still caught."""
+    role = binding.get("role")
+    if (role not in ("ledger", "onchain", "explained", "unexplained") or binding.get("distance", 0) < 1
+            or not str(binding.get("resolution", "")).startswith("nearest_cue")):
+        return None
+    value = toks[i].data["value"]
+    q = ctx.quantities()
+    w = V.WINDOWS["cue_search_tokens"]
+    lo = max(0, i - w)
+    competing = sorted({
+        t.role for j, t in enumerate(toks[lo:i + w + 1], start=lo)
+        if j != i and t.kind == "cue" and t.role in _COMPETING_ROLES and t.role != role
+    })
+    fits = [r for r in competing if _near(value, q[r])]
+    if fits:
+        return {"verdict": "review", "reason": "role_amount_fits_competing_cue", "fits": fits}
+    if role in _BALANCE_ROLES and _near(value, ctx.truth.variance_usd):
+        return {"verdict": "review", "reason": "balance_amount_equals_variance", "fits": ["variance"]}
+    return None
+
+
+def _hedged_agreement(toks: list[_Tok], i: int, role: str, rec: dict, ctx: _Context) -> bool:
+    """True when a hedged or suffix-rounded figure agrees with its target within the
+    precision it states (finding F3-04, owner default D9): half a unit of the last
+    stated digit for a suffixed figure ("62.9k"), 5 percent for a hedge word on a
+    figure written out in full. Such a figure routes to review, never passes; one
+    that disagrees beyond that precision keeps FM-001."""
+    half = toks[i].data.get("half_unit")
+    hedged = any(t.low in _HEDGE_WORDS for t in toks[max(0, i - _HEDGE_TOKENS_BEFORE):i])
+    if half is None and not hedged:
+        return False
+    if role == "item":
+        if rec.get("reason") != "item_amount_mismatch":
+            return False  # an uncited, unknown or ineligible reference is the error itself
+        targets = [rec["expected"]]
+    elif role == "threshold":
+        targets = list(rec["expected"])
+    elif role == "unresolved":
+        targets = list(ctx.quantities().values())
+    else:
+        targets = [rec["expected"]]
+    value = abs(toks[i].data["value"])
+    for target in targets:
+        tol = half if half is not None else _HEDGE_SHARE * abs(target)
+        if abs(value - abs(target)) <= max(tol, USD_TOLERANCE) + 1e-9:
+            return True
+    return False
 
 
 def _threshold_name(toks: list[_Tok], i: int, ctx: _Context) -> str:
@@ -851,8 +965,20 @@ def _check_item_amount(toks: list[_Tok], i: int, ref_tok: _Tok, ctx: _Context) -
     if len(named) > 1 and all(n.reference in ctx.cited for n in named):
         total = round(sum(n.amount_usd for n in named), 2)
         if _near(value, total):
+            # without an aggregate word ("totaling", "together") the sum may be a
+            # wrong amount for one item that happens to equal the clause sum (OpenAI R1)
+            clause_text = ctx.text[toks[0].start:toks[-1].end]
+            if not _AGGREGATE_CUE_RE.search(clause_text):
+                rec.update(verdict="review", reason="item_amount_equals_clause_sum", expected=total)
+                return rec, None
             rec.update(verdict="ok", resolution="sum_of_clause_items", expected=total)
             return rec, round(sum(item_effect_usd(n) for n in named), 2)
+    # "...; DP-2 $10.0k, together $19,125.36": a list split at semicolons leaves the
+    # stated total in the last item's clause; equal to the explained total, it routes
+    # to review rather than firing FM-001 (fix-round extension of F3-01)
+    if _near(value, ctx.explained) and _AGGREGATE_CUE_RE.search(ctx.text[toks[0].start:toks[-1].end]):
+        rec.update(verdict="review", reason="item_amount_equals_explained_total", expected=abs(ctx.explained))
+        return rec, None
     rec.update(verdict="FM-001", reason="item_amount_mismatch")
     return rec, None
 

@@ -513,9 +513,12 @@ def test_negative_variance_sign_on_surplus_routes_to_review(asset):
 
 @pytest.mark.parametrize("asset", ALL_ASSETS)
 def test_rounded_amount_outside_tolerance_fires_fm001(asset):
-    """Magnitude suffixes are parsed exactly and held to the $1 tolerance."""
+    """Magnitude suffixes are parsed exactly. Under owner default D9 (finding F3-04)
+    a suffixed figure within its stated precision routes to review, never passes;
+    one outside it keeps FM-001. Before the fix round the first line asserted FM-001."""
     truth = make_truth(asset, onchain=9_879_500.00)  # variance -120,500
-    assert outcome(run(truth, "The shortfall is $0.12 million.")) == (("FM-001",), False)
+    assert outcome(run(truth, "The shortfall is $0.12 million.")) == ((), True)
+    assert outcome(run(truth, "The shortfall is $0.13 million.")) == (("FM-001",), False)
     assert outcome(run(truth, "The shortfall is $120,500.")) == ((), False)
 
 
