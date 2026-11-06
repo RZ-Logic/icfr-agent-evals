@@ -9,7 +9,10 @@ references the Sonnet epoch cited. No model is called.
 
 A: an item effect ("which adds $X to the surplus", "lowers reserves against the
    ledger by $X", "offsets it by $X") is checked against the items named in its
-   clause, not against the variance, a balance or the explained total.
+   clause, not against the variance, a balance or the explained total. Narrowing
+   patch (2026-11-06): a figure that matches the item's amount or the items' unsigned
+   sum routes to review (item_effect_unverified, item_effect_sum_unverified), never
+   ok, because the match checks neither direction, side nor netting.
 B: "Together they total $X, leaving $0.00 unexplained": a cue after the next amount
    belongs to that amount, and an aggregate word whose subject is the items binds
    the explained total.
@@ -83,58 +86,58 @@ A_FIXED = [
     ("dev-hc-013-ETH-M2",
      "Hot 1 withdrawals WD-2510-571069 ($11,295.51) and WD-2510-818869 ($17,454.45) were booked in the "
      "ledger before cutoff but reached the chain only on 11/01, which adds $28,749.96 to the surplus.",
-     "$28,749.96", "ok", "item_effect_sum"),
+     "$28,749.96", "review", "item_effect_sum_unverified"),
     # real, dev-hc-013-ETH-M2 epoch 2: "which raises the surplus by $X"
     ("dev-hc-013-ETH-M2",
      "Two Hot 1 customer withdrawals were booked in the ledger before cutoff but reached the chain only "
      "after it (WD-2510-571069 at $11,295.51 and WD-2510-818869 at $17,454.45), which raises the surplus "
      "by $28,749.96.",
-     "$28,749.96", "ok", "item_effect_sum"),
+     "$28,749.96", "review", "item_effect_sum_unverified"),
     # paraphrase
     ("dev-hc-013-ETH-M2",
      "Withdrawals WD-2510-571069 ($11,295.51) and WD-2510-818869 ($17,454.45), ledger-booked before "
      "cutoff and on chain after it, jointly increase the surplus by $28,749.96.",
-     "$28,749.96", "ok", "item_effect_sum"),
+     "$28,749.96", "review", "item_effect_sum_unverified"),
     # real, dev-std-007-ETH-M3 epoch 3: the items follow a colon
     ("dev-std-007-ETH-M3",
      "Open hot-1 items at cutoff increase the surplus by USD 2,415,015.48: chain-only deposits "
      "DP-2510-146805 (USD 793,139.26) and DP-2510-734749 (USD 675,392.16), and ledger-only withdrawal "
      "WD-2510-333749 (USD 946,484.06).",
-     "USD 2,415,015.48", "ok", "item_effect_sum"),
+     "USD 2,415,015.48", "review", "item_effect_sum_unverified"),
     # real, dev-std-005-ETH-M2 epoch 1: one named item, bound to the reserves cue
     ("dev-std-005-ETH-M2",
      "DP-2511-648193 (Hot 2) was credited in the ledger at 23:52 on 11/30 but reached the chain at 00:10 "
      "on 12/1, which lowers reserves against the ledger by USD 256,238.97.",
-     "USD 256,238.97", "ok", "item_effect"),
+     "USD 256,238.97", "review", "item_effect_unverified"),
     ("dev-std-005-ETH-M2",
      "DP-2511-893641 (Hot 1) was on chain at 23:47 on 11/30 but posted to the ledger at 00:00 on 12/1, "
      "which raises reserves against the ledger by USD 52,300.36.",
-     "USD 52,300.36", "ok", "item_effect"),
+     "USD 52,300.36", "review", "item_effect_unverified"),
     # real, dev-std-005-ETH-M2 epoch 4: "which offsets that by", bound to the explained cue
     ("dev-std-005-ETH-M2",
      "DP-2511-893641 (Hot 1) was on chain at 23:47 on 11/30 but posted in the ledger at 00:00 on 12/1, "
      "which offsets that by USD 52,300.36.",
-     "USD 52,300.36", "ok", "item_effect"),
+     "USD 52,300.36", "review", "item_effect_unverified"),
     # paraphrase
     ("dev-std-005-ETH-M2",
      "DP-2511-648193, ledger-credited on 11/30 and settled on chain on 12/1, reduces on-chain reserves "
      "relative to the ledger by USD 256,238.97.",
-     "USD 256,238.97", "ok", "item_effect"),
+     "USD 256,238.97", "review", "item_effect_unverified"),
     # real, dev-std-012-SOL-M3 epoch 4: "offsets it by $X"
     ("dev-std-012-SOL-M3",
      "DP-2512-052149 is a ledger-only deposit that offsets it by $91,877.40, so the net explained amount "
      "is $342,165.48.",
-     "$91,877.40", "ok", "item_effect"),
+     "$91,877.40", "review", "item_effect_unverified"),
     # real, dev-std-012-SOL-M3 epoch 1: two references, the subject is the one before the verb
     ("dev-std-012-SOL-M3",
      "Two eligible hot-1 items were open at cutoff: DP-2512-493757 was on chain only and adds $434,042.88 "
      "to the surplus, while DP-2512-052149 was ledger only (credited 23:48 on Dec 31, on chain after "
      "cutoff) and offsets it by $91,877.40.",
-     "$91,877.40", "ok", "item_effect"),
+     "$91,877.40", "review", "item_effect_unverified"),
     # paraphrase
     ("dev-std-012-SOL-M3",
      "The ledger-only deposit DP-2512-052149 offsets that by $91,877.40.",
-     "$91,877.40", "ok", "item_effect"),
+     "$91,877.40", "review", "item_effect_unverified"),
     # real, dev-hc-001-BTC-M2 epoch 3: the item is described, not named, so it routes to review
     ("dev-hc-001-BTC-M2",
      "A deposit on chain but booked after cutoff offsets part of that ($7,163.92).",
@@ -242,6 +245,85 @@ def test_plain_variance_statement_is_not_read_as_an_item_effect():
                  "$28,749.96.")
     x = amount(result, "$28,749.96")
     assert (x["role"], x["verdict"]) == ("variance", "FM-001"), x
+
+
+# --- Narrowing patch (2026-11-06): the red team's rows A1 to A8 ----------------------------
+# Quoted from pilot-logs-2026-11-06/fixround/R1.md with their case ids. Each is a wrong
+# item-effect statement (inverted direction, wrong side, an aside taken as the subject,
+# or the gross sum of opposite-signed items) that 0baabfa scored clean through
+# _item_effect_fit. No FM-001 is required of these rows, but the amount's verdict must
+# be review, never ok, and the epoch must route.
+A_R1_WRONG = [
+    ("A1-effect-direction", "dev-hc-013-ETH-M2",
+     "WD-2510-571069 was booked in the ledger before cutoff but reached the chain only on 11/01, which "
+     "lowers reserves against the ledger by $11,295.51.",
+     "$11,295.51"),
+    ("A2-aside-subject", "dev-std-005-ETH-M2",
+     "DP-2511-648193, together with DP-2511-893641, lowers reserves against the ledger by USD 52,300.36.",
+     "USD 52,300.36"),
+    ("A3-like-aside", "dev-hc-013-ETH-M2",
+     "WD-2510-571069, like TRF-2510-05457, raises reserves against the ledger by $3,749.96.",
+     "$3,749.96"),
+    ("A4-gross-widen", "dev-hc-001-BTC-M2",
+     "WD-2510-774925, OI-251031-209, DP-2510-070769 and DP-2510-503229 together widen the shortfall by "
+     "$48,396.14.",
+     "$48,396.14"),
+    ("A5-gross-each-stated", "dev-hc-001-BTC-M2",
+     "Together, WD-2510-774925 ($26,621.97) and DP-2510-503229 ($7,163.92) widen the shortfall by "
+     "$33,785.89.",
+     "$33,785.89"),
+    ("A6-gross-offset", "dev-std-012-SOL-M3",
+     "DP-2512-493757 and DP-2512-052149 together offset $525,920.28 of the surplus.",
+     "$525,920.28"),
+    ("A7-variance-as-effect", "dev-hc-013-ETH-M2",
+     "WD-2510-571069 and WD-2510-818869 were booked before cutoff and settled on chain after it, and "
+     "together they raise reserves above the ledger by $28,749.96.",
+     "$28,749.96"),
+    ("A8-wrong-side", "dev-std-005-ETH-M2",
+     "DP-2511-893641 was on chain at 23:47 on 11/30 but posted to the ledger on 12/1, which lowers ledger "
+     "liabilities by USD 52,300.36.",
+     "USD 52,300.36"),
+]
+
+
+@pytest.mark.parametrize(("row_id", "case_id", "sentence", "amt"), A_R1_WRONG, ids=[r[0] for r in A_R1_WRONG])
+def test_r1_wrong_item_effect_never_scores_ok(row_id, case_id, sentence, amt):
+    result = run(case_id, sentence)
+    x = amount(result, amt)
+    assert x["verdict"] != "ok", x
+    assert x["verdict"] == "review", x
+    assert x["reason"] in ("item_effect_unverified", "item_effect_sum_unverified"), x
+    assert any(amt in r for r in result.review_reasons), (result.review_reasons, x)
+
+
+def test_item_effect_review_reaches_the_scorer_review_reasons():
+    # the new reasons travel the same path as role_amount_fits_competing_cue: the
+    # narrative check's review_reasons become the correctness anchor's review route
+    from icfr_agent_evals.scoring import check_correctness
+
+    case_id = "dev-std-005-ETH-M2"
+    sentence = ("DP-2511-648193 (Hot 2) was credited in the ledger at 23:52 on 11/30 but reached the chain at "
+                "00:10 on 12/1, which lowers reserves against the ledger by USD 256,238.97.")
+    result = check_correctness(answer(case_id, sentence), TRUTH[case_id])
+    assert result.failure_modes == (), result.review_reasons
+    assert "item_effect_unverified: USD 256,238.97" in result.review_reasons, result.review_reasons
+
+
+# R1's correct overfit probes that involve an item effect (P7, P9) and the aggregate
+# probe P6: they may route, but no FM-001 may fire.
+A_R1_CORRECT = [
+    ("P6-sum-to", "dev-hc-011-ADA-M1", "The three items sum to 19,977.55 USD; nothing is unexplained."),
+    ("P7-passive-effect", "dev-std-005-ETH-M2",
+     "Reserves are lowered against the ledger by USD 256,238.97 through DP-2511-648193."),
+    ("P9-passive-widened", "dev-hc-013-ETH-M2",
+     "The surplus is widened by $28,749.96 through WD-2510-571069 and WD-2510-818869 together."),
+]
+
+
+@pytest.mark.parametrize(("row_id", "case_id", "sentence"), A_R1_CORRECT, ids=[r[0] for r in A_R1_CORRECT])
+def test_r1_correct_probe_fires_no_fm001(row_id, case_id, sentence):
+    result = run(case_id, sentence)
+    assert "FM-001" not in result.failure_modes, result.extractions
 
 
 # --- Pattern B: "together they total $X, leaving $0.00 unexplained" ----------------------
