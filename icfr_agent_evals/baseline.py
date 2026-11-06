@@ -23,7 +23,9 @@ it must fire no failure mode and route nothing to review. The offline difficulty
 check in tests/test_template_baseline.py holds it to that.
 
 Run it with:
-    inspect eval icfr_agent_evals/baseline.py@variance_commentary_template_baseline
+    inspect eval icfr_agent_evals/baseline.py@variance_commentary_template_baseline -T split=dev
+
+Split 'eval' is refused before the pre-registration tag, as in the main task.
 
 The task binds Inspect's "none" provider, which raises if anything asks it to
 generate, so a stray model call errors the sample instead of sampling a model.
@@ -47,9 +49,10 @@ from icfr_agent_evals.casefile import (
     truth_of,
     visible_structured,
 )
+from icfr_agent_evals.dataset import check_subset
 from icfr_agent_evals.policy import materiality_band
 from icfr_agent_evals.roster import RosterError
-from icfr_agent_evals.task import TASK_REDUCER, variance_commentary
+from icfr_agent_evals.task import TASK_REDUCER, check_evaluation_split, variance_commentary
 
 BASELINE_VERSION = "template-v1"  # a template wording change is a code change
 BASELINE_MODEL = "none/none"
@@ -160,7 +163,11 @@ def baseline_check():
 
 @task
 def variance_commentary_template_baseline(
-    split: str = "eval", seed: int = EVAL_SEED, epochs: int = 4, subset: str | None = None
+    split: str = "eval",
+    seed: int = EVAL_SEED,
+    epochs: int = 4,
+    subset: str | None = None,
+    allow_evaluation_split: bool = False,
 ) -> Task:
     """The template baseline over a split, scored exactly as the main task scores a
     model: the same dataset, scorers, Epochs and metadata, taken from
@@ -171,9 +178,14 @@ def variance_commentary_template_baseline(
     --model says, nothing can be sampled. Epochs stay at the main task's value so
     the reference row has the same trial structure; every epoch is identical.
     subset passes through unchanged ('pilot' on split 'dev' gives the section 13
-    pilot's baseline row over the same 20 cases).
+    pilot's baseline row over the same 20 cases). allow_evaluation_split follows
+    the main task's rule: split 'eval' is refused unless it is True.
     """
-    main = variance_commentary(split=split, seed=seed, epochs=epochs, subset=subset)
+    check_subset(split, subset)
+    check_evaluation_split(split, allow_evaluation_split)
+    main = variance_commentary(
+        split=split, seed=seed, epochs=epochs, subset=subset, allow_evaluation_split=allow_evaluation_split
+    )
     return Task(
         dataset=main.dataset,
         setup=baseline_check(),

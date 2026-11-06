@@ -15,6 +15,11 @@ Run configuration (pre-registration section 5):
     pinned inspect-ai writes no reducer into the log header;
   - the generator seed is a task argument, so the log header carries it in
     task_args; the --seed option is not used;
+  - the evaluation split is locked until the pre-registration tag (rule C3):
+    split 'eval' raises unless allow_evaluation_split is true, so an omitted or
+    mistyped -T split never reaches an evaluation case (Inspect drops an unknown
+    -T key silently, and split defaults to 'eval'); the argument lands in
+    task_args;
   - subset is a task argument too ("pilot": the 20 flagged dev cases of the
     section 13 pilot row), so task_args records it; dataset_sha256 hashes the
     samples the task selects (the split, or the subset), and split_dataset_sha256
@@ -55,6 +60,22 @@ from icfr_agent_evals.scorers import (
 from icfr_agent_evals.solver import SYSTEM_PROMPT, WORKER_PROMPT_SHA256, WORKER_PROMPT_VERSION
 
 TASK_REDUCER = "mean"  # gated metrics never use pass_k or pass_at (section 6)
+EVALUATION_SPLIT = "eval"
+
+
+def check_evaluation_split(split: str, allow_evaluation_split: bool = False) -> None:
+    """Refuse the evaluation split unless the unlock is exactly True (rule C3).
+
+    Called before any split is built, so a refused call never generates, hashes or
+    scores an evaluation case. Only the literal True unlocks: Inspect parses -T
+    values as YAML, so true, yes and on unlock, while 1 or a quoted string stays
+    locked."""
+    if split == EVALUATION_SPLIT and allow_evaluation_split is not True:
+        raise ValueError(
+            "refusing split 'eval' before the pre-registration tag (rule C3); pass "
+            "allow_evaluation_split=True (-T allow_evaluation_split=true) only for the "
+            "tagged run, and -T split=dev for pilot, smoke and elicitation runs"
+        )
 
 
 @task
@@ -64,6 +85,7 @@ def variance_commentary(
     epochs: int = 4,
     grader_step: int = 1,
     subset: str | None = None,
+    allow_evaluation_split: bool = False,
 ) -> Task:
     """Variance-commentary content eval over the seeded synthetic set.
 
@@ -80,8 +102,12 @@ def variance_commentary(
         subset: None (the whole split) or 'pilot' (the 20 dev cases flagged for
             the section 13 pilot; split must be 'dev'). Checked before the split
             is built.
+        allow_evaluation_split: False (default) refuses split 'eval' before the
+            pre-registration tag; True is for the tagged run only. Checked after
+            the subset check and before the split is built.
     """
     check_subset(split, subset)
+    check_evaluation_split(split, allow_evaluation_split)
     full = build_dataset(split=split, seed=seed)
     dataset = full
     if subset is not None:

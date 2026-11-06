@@ -317,3 +317,43 @@ def test_the_narrative_names_no_entity_but_the_cited_references(split_cases):
         for entity in case.truth.valid_entities:
             if entity not in out["entities_cited"]:
                 assert not re.search(rf"(?<![\w-]){re.escape(entity)}(?![\w-])", text), (case.truth.case_id, entity)
+
+
+# --- Evaluation-split lock (rule C3; findings F1-01, F5-01) ------------------------------
+
+BASELINE_LOCK_TEXT = "refusing split 'eval' before the pre-registration tag"
+
+
+@pytest.fixture
+def no_split_build(monkeypatch):
+    """Any split build fails the test: the lock must fire before it."""
+    from icfr_agent_evals import dataset as dataset_module
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("a split was built before the evaluation-split lock")
+
+    monkeypatch.setattr(dataset_module, "build_dataset", refuse)
+    monkeypatch.setattr(dataset_module, "build_cases", refuse)
+    monkeypatch.setattr(task_module, "build_dataset", refuse)
+
+
+@pytest.mark.parametrize("task_args", [{}, {"split": "eval"}, {"split": "eval", "allow_evaluation_split": 1}])
+def test_baseline_file_spec_on_the_eval_split_refuses_at_task_load(no_split_build, tmp_path, task_args):
+    """The baseline's CLI path (its file task spec plus task_args) follows the main
+    task's lock: no argument and split eval both raise before any sample exists."""
+    with pytest.raises(Exception) as err:
+        inspect_eval(
+            "icfr_agent_evals/baseline.py@variance_commentary_template_baseline", task_args=task_args,
+            log_dir=str(tmp_path / "logs"), display="none",
+        )
+    assert BASELINE_LOCK_TEXT in str(err.value) and "allow_evaluation_split" in str(err.value)
+    assert not (tmp_path / "logs").exists() or not list((tmp_path / "logs").rglob("*.eval"))
+
+
+def test_baseline_records_the_lock_in_task_args(small_dataset, tmp_path):
+    log = inspect_eval(
+        baseline.variance_commentary_template_baseline(split="dev", epochs=1), log_dir=str(tmp_path), display="none",
+    )[0]
+    assert log.status == "success", log.error
+    assert log.eval.task_args["allow_evaluation_split"] is False
+    assert log.eval.task_args["split"] == "dev"
