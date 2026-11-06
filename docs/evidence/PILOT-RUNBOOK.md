@@ -38,15 +38,15 @@ Each decision is set before the step that needs it and written into the pilot re
 | ID | Decision | Default in force | Before step | Author's choice |
 |---|---|---|---|---|
 | D1 | Reading of record for difficulty check (b): (i) literal; (ii) excluding format breaks, errored or missing epochs and narrative-sweep provisional zeros; (iii) settled anchor scores and non-format FM codes only | `pilot_report.py` prints all three; the reading of record is chosen before the Haiku leg | 6 | |
-| D2 | What "caught" means for the deliberate regression, and its form: (i) the real Sonnet baseline against the mock-degraded candidate from `rehearse_regression.py`, $0; (ii) a second real Sonnet run on a weakened prompt | Caught: `compare_runs.py` exits 1 on (pilot baseline, regressed candidate) with the rejecting test named (text in step 8). Form: not defaulted; (ii) needs a weakened-prompt code path that is not built | 8 | |
+| D2 | What "caught" means for the deliberate regression, and its form: (i) the real Sonnet baseline against the mock-degraded candidate from `rehearse_regression.py`, $0; (ii) a second real Sonnet run on a weakened prompt | Caught: `compare_runs.py` exits 1 on (pilot baseline, regressed candidate) with the rejecting test named (text in step 8). Form: not defaulted; (ii) needs a weakened-prompt code path that is not built | 8 |Form (i), keyless: compare_runs.py exit 1 on (pilot Sonnet log, rehearse_regression.py degraded candidate) with the rejecting test named. Decided 2026-11-06. |
 | D3 | Evaluation-split unlock | The task argument `allow_evaluation_split`, default `False` | 0 | |
 | D4 | Timing of the extractor review-route fixes | Land before the pilot | 0 | |
 | D5 | Log and record paths | Logs in `<PILOT_LOGS>` outside the repository during the legs, then copied to `runs/pilot-<date>/` (re-allowed by `.gitignore`); record at `docs/evidence/pilot-<date>.md`, review CSV at `docs/evidence/pilot-<date>-review.csv`, judge-development set under `data/dev/judge-dev/` | 3 | |
-| D6 | `max_tokens` | No pin in code; the cost table shows the 48,000 default and a 16,000 pin | 5 | |
-| D7 | `--batch` or interactive | Interactive; `check_run_config` allows batch (step 5 has the option) | 5 | |
+| D6 | `max_tokens` | No pin in code; the cost table shows the 48,000 default and a 16,000 pin | 5 |No pin; the 48,000 default is recorded; pilot_report.py's generation-stop and output-token lines decide whether it stands for the full run. Decided 2026-11-06. |
+| D7 | `--batch` or interactive | Interactive; `check_run_config` allows batch (step 5 has the option) | 5 |Interactive. Decided 2026-11-06. |
 | D8 | Generator labels | Keep `-dev.1` through the tag | 0 | |
 | D9 | A hedged or suffix-rounded figure ("approximately USD 34.3k", "USD 1.1 million") that agrees with its target within its stated precision | Routes to review: never a pass, never FM-001 (needs a §6 sentence) | 0 | |
-| D10 | Elicitation before or after the pilot | None; a pilot on the draft prompt leaves (b), the false-fail rate and the judge-development outputs on the draft prompt hash | 5 | |
+| D10 | Elicitation before or after the pilot | None; a pilot on the draft prompt leaves (b), the false-fail rate and the judge-development outputs on the draft prompt hash | 5 |Pilot first on v0.0.3-draft; elicitation after the pilot; the judge-development set is regenerated under the locked prompt if its hash differs (sequence step 8). Decided 2026-11-06. |
 | D11 | Scope of "every transcript read" | None; step 11 states the proposed scope | 11 | |
 | D12 | Judge-development set: pilot outputs, or regenerated under the locked prompt | None; the proposed rule is in the sequence, step 8 | sequence 8 | |
 | D13 | 0 to 3 anchors for the two LLM-graded sub-dimensions written before the judge-development grading | None; proposed as sequence step 7 | sequence 7 | |
