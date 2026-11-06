@@ -206,7 +206,7 @@ def validate_serving(
     auth_token_set: bool = False,
     model: str | None = None,
     custom_headers: Sequence[str] = (),
-    extra_headers: Sequence[str] = (),
+    extra_headers: Sequence[str] | None = None,
 ) -> str:
     """Raise RosterError unless a real model is served by its vendor's first-party API.
 
@@ -224,10 +224,14 @@ def validate_serving(
         any one fails.
     extra_headers: the sources of GenerateConfig request headers in force for this
         model (extra_headers_in_force plus the model's own config); any one fails.
+        None (the default) reads extra_headers_in_force(), so a direct call also
+        refuses INSPECT_EVAL_EXTRA_HEADERS; an explicit empty list checks none.
 
     Returns the endpoint with one trailing slash stripped.
     """
     who = f"{model!r}" if model else f"the {provider!r} model"
+    if extra_headers is None:
+        extra_headers = extra_headers_in_force()
     allowed = FIRST_PARTY_BASE_URLS.get(provider)
     if allowed is None:
         raise RosterError(f"serving guard: no first-party endpoint is pinned for provider {provider!r} ({who})")

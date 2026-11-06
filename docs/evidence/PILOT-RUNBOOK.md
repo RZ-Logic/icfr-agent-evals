@@ -24,10 +24,10 @@ Commands are single lines that run in Git Bash or PowerShell from the repository
 - No `--epochs`, `--limit`, `--sample-id`, `--reasoning-effort`, `--temperature`, `--top-p`, `--top-k`, `--seed`, or `--max-tokens` (unless D6 pins a value, and then exactly that value). [F1-02]
 - No `--model-role` beyond the two pins: `grader=openai/gpt-6-luna` and `calibrator=anthropic/claude-opus-5-5`.
 - Never `--no-fail-on-error` and never a fractional `--fail-on-error`. A fractional threshold leaves errored epochs inside a status-success log as failed trials, which pass^4 and reading (i) of difficulty check (b) both count. [F1-03]
-- Always `-T split=dev -T subset=pilot`. The task and the template baseline refuse `split=eval` before the tag unless `-T allow_evaluation_split=true` is passed, and that argument is never passed before the tag. Inspect drops an unknown `-T` key at exit 0, so a typo such as `-T splt=dev` falls back to the default split and is refused by that guard, not silently run, and a mistyped subset runs the whole dev split, which `pilot_report.py` refuses as not the pilot subset. [F1-01, F5-01]
+- Always `-T split=dev -T subset=pilot`. The task and the template baseline refuse `split=eval` unless `-T allow_evaluation_split=true` is passed, and only the tagged evaluation run passes it. The refusal is raised while Inspect loads the task, before any case is built: a command that reaches `split=eval` without the unlock exits non-zero with the `ValueError` on stderr and writes no log. Inspect parses `-T` values as YAML, so only `true`, `yes` or `on` unlock; `1`, a YAML-quoted string or a mistyped key stays locked. Inspect drops an unknown `-T` key, so a typo such as `-T splt=dev` falls back to the default split and is refused at load the same way, and a mistyped subset runs the whole dev split, which `pilot_report.py` refuses as not the pilot subset. [F1-01, F5-01]
 - Both paid legs carry `--max-connections 4 --max-retries 6 --timeout 1800 --retry-on-error 2`. Inspect's defaults retry a 429 without end; these bound the retries, the request time, the sample retries and the in-flight loss when `fail_on_error` cancels a run. [F1-03, F4-05]
 - Every real run passes an explicit `--log-dir` under `<PILOT_LOGS>`, never the default `./logs`. [F1-05]
-- No pooled re-run in the regression comparison: one baseline log, one candidate log. [F2-04]
+- No pooled re-run in the regression comparison: one baseline log, one candidate log. If candidates are ever pooled (`--candidate` repeated), they must be re-runs of one configuration, and a correct run and a degraded run of the same model, task, revision and prompt are never passed together as candidates. `compare_runs.py` refuses (exit 3) pooled candidates that differ in model, task, revision, dirty flag or `worker_prompt_sha256`, and a candidate whose task or `worker_prompt_sha256` differs from the baseline's, but it cannot tell a correct run from a degraded one when the headers are identical. [F2-04, F2-08]
 - A log whose status is not `success` is never a pilot log. `roster.check_run_config` and the readers refuse it; recover it with `eval-retry` (step 5) or rerun the leg.
 - Keep the generator labels `G-0.1.0-dev.1` and `H-0.1.0-dev.1` through the tag. `scripts/tag_values.py` warns on both, and those two warnings are expected. Dropping the labels moves the dev split's `dataset_sha256` (f56d06b5 to 4312345a), which strands the pilot logs and the judge-development set on a hash the tagged commit no longer produces. [F5-09, D8]
 
@@ -74,7 +74,7 @@ Each decision is set before the step that needs it and written into the pilot re
 python scripts/preflight.py --model anthropic/claude-sonnet-5-5 --pilot-commit <SHA> --log-dir <PILOT_LOGS>
 ```
 
-Exit 0 required. It checks that HEAD equals `<SHA>` and the tree is clean, Python 3.14.10, the override variables unset and both keys set (yes or no, never a value), the model and both roles pass the roster and serving checks with their endpoints printed, and that `<PILOT_LOGS>` exists outside the repository. It never calls a model. Run it again with `--model anthropic/claude-haiku-5-5` before step 6.
+Create `<PILOT_LOGS>` first. Every line must read PASS and the exit code must be 0; it is 1 when any check fails and 2 on a usage error. It checks that HEAD equals `<SHA>` and the tree is clean, Python 3.14.10, the override variables unset (`INSPECT_EVAL_EXTRA_HEADERS` among them) and both keys set (yes or no, never a value), that no `.env` file Inspect would load sets an override, that the model and both roles construct and pass the roster and serving checks with their endpoints printed, and that `<PILOT_LOGS>` exists outside the repository. A folder inside the checkout, `runs/pilot-<date>/` included, fails the log-dir check, for the dirty-tree reason above. `--model` takes only the worker or one of the three baselines; a judge model such as `openai/gpt-6-luna` is a usage error. It constructs the models and never calls one. In a keyless shell it prints FAIL on keys and construct and exits 1. Run it before every keyed leg: again with `--model anthropic/claude-haiku-5-5` before step 6, before the form (ii) leg of step 8, and before the live smoke (sequence step 11).
 
 **4. Mock dress rehearsal (keyless, `<SHA>`).**
 
@@ -82,7 +82,7 @@ Exit 0 required. It checks that HEAD equals `<SHA>` and the tree is clean, Pytho
 python -m inspect_ai eval icfr_agent_evals/task.py@variance_commentary -T split=dev -T subset=pilot -T epochs=4 --model mockllm/model --model-role grader=mockllm/model --model-role calibrator=mockllm/model --max-connections 4 --max-retries 6 --timeout 1800 --retry-on-error 2 --log-dir <SCRATCH>/mock --display none
 ```
 
-Measured at d4e86ec with these exact flags: exit 0 in about 7 s, empty stderr, status success, task_args {split dev, seed 20260607, epochs 4, grader_step 1, subset pilot}, limit and sample_id None, fail_on_error True, retry_on_error 2, plan.config {max_retries 6, timeout 1800, max_connections 4, reasoning_effort high} and effort high on all 80 model events, 80 sample-epochs with 0 errors; `reliability.report_from_log` with `assert_gate(20, 4)` passes, `regression.records_from_log` returns 80, and `compare_runs.py` with this log as baseline against the rehearsal's degraded candidate prints `BLOCKED (automatic)` and exits 1. A mock run skips the roster pins and the serving guard (every model is offline), so those rest on the unit tests and step 3.
+Measured on the merged fix round with these exact flags: exit 0 in about 6 s, empty stderr, status success, task_args {split dev, seed 20260607, epochs 4, grader_step 1, subset pilot, allow_evaluation_split false}, limit and sample_id None, fail_on_error True, retry_on_error 2, plan.config {max_retries 6, timeout 1800, max_connections 4, reasoning_effort high} and effort high on all 80 model events, 80 sample-epochs with 0 errors; `roster.check_run_config` with `expected_samples=20` passes (80 scored sample-epochs, 80 evaluated-model events, effort high), `reliability.report_from_log` with `assert_gate(20, 4)` passes, `regression.records_from_log` returns 80, and `compare_runs.py` with this log as baseline against the rehearsal's degraded candidate prints `BLOCKED (automatic)` and exits 1. A mock run skips the roster pins and the serving guard (every model is offline), so those rest on the unit tests and step 3.
 
 **5. Sonnet leg (keyed; after D5, D6, D7, D10).**
 
@@ -110,7 +110,7 @@ python -m inspect_ai eval-retry <PILOT_LOGS>/sonnet/<log>.eval --max-connections
 python -m inspect_ai eval icfr_agent_evals/baseline.py@variance_commentary_template_baseline -T split=dev -T subset=pilot --log-dir <PILOT_LOGS>/template --display none
 ```
 
-On mock stand-ins: 80 rows, content-pass^4 15/20, difficulty check (a) passing (4 of 4 memo-only standard cases failing through the reconciling-items omission score only, 4 of 4 other standard cases clean). Epochs stay at 4 and every epoch is identical by construction.
+Bind no `--model-role` and no `--model` here: the template baseline calls no model, and a run with judge roles bound ends in status error from the roster check. Measured on the merged fix round: exit 0, empty stderr, status success, task_args {split dev, seed 20260607, epochs 4, subset pilot, allow_evaluation_split false}, 80 rows. On mock stand-ins: content-pass^4 15/20, difficulty check (a) passing (4 of 4 memo-only standard cases failing through the reconciling-items omission score only, 4 of 4 other standard cases clean). Epochs stay at 4 and every epoch is identical by construction.
 
 **8. Deliberate regression (after D2).**
 
@@ -121,7 +121,9 @@ python scripts/rehearse_regression.py <PILOT_LOGS>/rehearsal
 python scripts/compare_runs.py --baseline <PILOT_LOGS>/sonnet/<log>.eval --candidate <PILOT_LOGS>/rehearsal/regression/<log>.eval
 ```
 
-Form (ii), keyed: a second Sonnet leg on a weakened-prompt code path (not built at d4e86ec) into `<PILOT_LOGS>/weakened`, then the same `compare_runs.py` call with that log as candidate.
+Form (ii), keyed: step 3's pre-flight, then a second Sonnet leg on a weakened-prompt code path (not built at d4e86ec) into `<PILOT_LOGS>/weakened`, then the same `compare_runs.py` call with that log as candidate.
+
+`rehearse_regression.py` takes its log folder as an optional positional argument (default `icfr-agent-evals-logs/rehearsal` under the system temp folder); `-h` prints usage and creates nothing. Measured on the merged fix round: the rehearsal prints `REHEARSAL RESULT: PASS`, and `compare_runs.py` with step 4's mock log as baseline and the rehearsal's regression log as candidate prints one header line per run, then `RESULT: BLOCKED (automatic)`, and exits 1.
 
 **Caught (D2 default).** [F2-02, F2-03, F2-04]
 - Caught means `compare_runs.py` exits 1 on the pair (pilot Sonnet baseline, regressed candidate), with the rejecting test named in its output. Exit 0 is not caught, and exit 2 is not caught.
@@ -133,10 +135,10 @@ Form (ii), keyed: a second Sonnet leg on a weakened-prompt code path (not built 
 **9. Pilot report (keyless).**
 
 ```
-python scripts/pilot_report.py --sonnet <PILOT_LOGS>/sonnet/<log>.eval --haiku <PILOT_LOGS>/haiku/<log>.eval --template <PILOT_LOGS>/template/<log>.eval --reading-b all --regression-baseline <PILOT_LOGS>/sonnet/<log>.eval --regression-candidate <PILOT_LOGS>/rehearsal/regression/<log>.eval --json <PILOT_LOGS>/pilot-report.json --review-csv docs/evidence/pilot-<date>-review.csv
+python scripts/pilot_report.py --sonnet <PILOT_LOGS>/sonnet/<log>.eval --haiku <PILOT_LOGS>/haiku/<log>.eval --template <PILOT_LOGS>/template/<log>.eval --reading-b <record> --regression-baseline <PILOT_LOGS>/sonnet/<log>.eval --regression-candidate <PILOT_LOGS>/rehearsal/regression/<log>.eval --json runs/pilot-<date>/report.json --review-csv docs/evidence/pilot-<date>-review.csv
 ```
 
-Exit 0 on success, 3 on refusal (a missing file, a log that is not the dev pilot subset, mismatched dataset hashes, a log whose status is not success). Paste its output verbatim into the pilot record. The review CSV gets one row per distinct (run, sample, epoch, route key) with `verdict`, `reviewer` and `date` blank for step 11. The template log carries no Sample Consistency summary: it is deterministic, with agreement 1 by construction.
+`<record>` is the reading of record set by D1: `i`, `ii` or `iii` (`all` marks none); all three readings always print. Exit 0 on success, 3 on refusal (a missing file, a log that is not the dev pilot subset, mismatched dataset hashes, a log whose status is not success, swapped roles or half a regression pair). Like `compare_runs.py`, `-h` and an argument error exit 3 and run no report. A smoke log (sequence step 11) is never passed to it. Paste its output verbatim into the pilot record. The review CSV gets one row per distinct (run, sample, epoch, route key) with `verdict`, `reviewer` and `date` blank for step 11. The template log carries no Sample Consistency summary: it is deterministic, with agreement 1 by construction.
 
 **10. Scout scan of the Sonnet pilot log (keyed, OpenAI key).** [F5-07] Records the GPT-6 Luna scanner usage for row 228. Run the scan jobs on the Sonnet log only, with results outside the repository; this command was not run by the review:
 
@@ -189,7 +191,7 @@ The worst case is a one-attempt figure, not a bound: `--retry-on-error 2` can bi
 | 8 | Judge-development set (D12): if the locked prompt's `worker_prompt_sha256` equals the pilot logs', use 20 pilot outputs; otherwise regenerate the 20 under the locked prompt at one epoch (about 20 Sonnet calls) before grading. Grades are committed before any grader iteration | judge-development set | `data/dev/judge-dev/` | author grades |
 | 9 | Full suite on 3.14.10 and 3.12.16 | runtime | evidence file | keyless |
 | 10 | Pre-tag spec-against-docs review; the CONTEXT.md SHA-256 re-checked after any edit | counts match | evidence file | keyless |
-| 11 | Live smoke on the final code: `python scripts/smoke_live.py --sample-id <dev case id> --log-dir <PILOT_LOGS>/smoke` (D15) | roster, smoke | `docs/evidence/smoke-<date>.json` | author, both keys |
+| 11 | Live smoke on the commit to be tagged: `python scripts/preflight.py --model anthropic/claude-sonnet-5-5 --pilot-commit <commit to be tagged> --log-dir <PILOT_LOGS>/smoke` with every line PASS, then `python scripts/smoke_live.py --sample-id <dev case id> --log-dir <PILOT_LOGS>/smoke` (D15). Before each model it prints the request-header sources in force, which must read `none`; per model it prints the resolved model string, the checked endpoint, the usage and the log path, and it exits 0 only when every model answered. Smoke logs set `sample_id` and epochs 1, so `roster.check_run_config` refuses them: never pass one to `pilot_report.py` or `compare_runs.py` | roster, smoke | the printed lines in `docs/evidence/smoke-<date>.md` | author, both keys |
 | 12 | §13 fill from `scripts/tag_values.py` and the smoke, row 227's clause included (D14) | all | pre-registration | keyless, author ratifies |
 | 13 | Public remote | public remote | remote URL | author |
 | 14 | Tag `prereg-phase1-v1.0` | tag | tag | author |

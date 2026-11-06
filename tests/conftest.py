@@ -21,6 +21,7 @@ PROVIDER_ENV = (
     "SCOUT_SCAN_MODEL_BASE_URL",
     "ANTHROPIC_CUSTOM_HEADERS",  # can replace the request credential
     "OPENAI_CUSTOM_HEADERS",
+    "INSPECT_EVAL_EXTRA_HEADERS",  # request headers sent after the credential
 )
 
 os.environ["PYTHON_DOTENV_DISABLED"] = "1"

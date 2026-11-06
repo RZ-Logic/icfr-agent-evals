@@ -503,6 +503,17 @@ def test_validate_serving_refuses_any_extra_header_source(provider, url):
     assert validate_serving(provider, url, extra_headers=[]) == url
 
 
+@pytest.mark.parametrize("provider, url", [("anthropic", ANTHROPIC), ("openai", OPENAI)])
+def test_validate_serving_reads_the_extra_headers_variable_by_default(provider, url, monkeypatch):
+    """A direct call with no extra_headers argument reads extra_headers_in_force()."""
+    assert validate_serving(provider, url) == url
+    monkeypatch.setenv(EXTRA_ENV, '{"X-Review-Marker": "i3"}')
+    with pytest.raises(RosterError, match=EXTRA_ENV) as exc:
+        validate_serving(provider, url)
+    assert "X-Review-Marker" not in str(exc.value)
+    assert validate_serving(provider, url, extra_headers=[]) == url  # an explicit empty list checks none
+
+
 @pytest.mark.parametrize("name", [WORKER, GRADER, CALIBRATOR])
 def test_extra_headers_variable_fails(name, monkeypatch):
     monkeypatch.setenv(EXTRA_ENV, '{"X-Review-Marker": "w2"}')

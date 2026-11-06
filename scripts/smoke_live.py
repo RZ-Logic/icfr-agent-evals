@@ -18,9 +18,15 @@ Per model:
     one-sample task under the same sample id with a fixed one-line prompt that holds
     no case content, after roster.model_serving checks its endpoint.
 
+Before each model it prints the names of the request-header sources in force
+(roster.extra_headers_in_force(); the serving guard refuses the model when any is).
 It prints, per model, the resolved model string read from the log, the endpoint the
-serving guard checked, the token usage and the log path; never a key value. Exit 0
-when every model answered, 1 otherwise, 2 on bad arguments.
+serving guard checked, the token usage and the log path; never a key or header value.
+Exit 0 when every model answered, 1 otherwise, 2 on bad arguments.
+
+A smoke log is a record of the resolved model strings only. It sets sample_id and
+epochs = 1, so roster.check_run_config refuses it: never pass a smoke log to
+scripts/pilot_report.py, scripts/compare_runs.py or any other reader.
 
 Run: python scripts/smoke_live.py --log-dir <folder outside the repo>
      [--models a/b,c/d] [--sample-id <dev pilot case id>]
@@ -91,6 +97,12 @@ def resolve_sample_id(requested: str | None, ids: list[str]) -> str:
     if requested not in ids:
         raise ValueError(f"--sample-id {requested!r} is not a case of the dev pilot subset")
     return requested
+
+
+def extra_headers_line() -> str:
+    """The request-header sources in force, by name only (never a value)."""
+    sources = roster.extra_headers_in_force()
+    return "extra headers in force: " + (", ".join(sources) if sources else "none")
 
 
 def _log_folder(log_dir: str, model: str) -> str:
@@ -175,6 +187,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"live smoke on dev pilot case {sample_id} ({len(args.models)} models)")
     ok = True
     for model in args.models:
+        print(f"{model}: {extra_headers_line()}")
         try:
             answered, line = smoke_one(model, sample_id, args.log_dir)
         except Exception as e:  # one model's failure must not hide the others

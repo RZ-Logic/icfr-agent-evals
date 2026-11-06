@@ -169,3 +169,50 @@ def test_offline_fixed_prompt_path_answers_and_prints_the_resolved_model(tmp_pat
     assert "endpoint not recorded (offline)" in out
     assert "LIVE SMOKE RESULT: PASS" in out
     assert any((tmp_path / "mockllm_model").glob("*.eval"))
+
+
+def test_extra_headers_line_names_sources_never_values(monkeypatch):
+    monkeypatch.delenv(roster.EXTRA_HEADERS_ENV, raising=False)
+    assert smoke_live.extra_headers_line() == "extra headers in force: none"
+    monkeypatch.setenv(roster.EXTRA_HEADERS_ENV, "x-marker=secret-value")
+    line = smoke_live.extra_headers_line()
+    assert roster.EXTRA_HEADERS_ENV in line
+    assert "secret-value" not in line and "x-marker" not in line
+
+
+def test_main_prints_the_header_sources_before_each_model(tmp_path, capsys, monkeypatch):
+    monkeypatch.delenv(roster.EXTRA_HEADERS_ENV, raising=False)
+    code = smoke_live.main(["--log-dir", str(tmp_path), "--models", "mockllm/model"])
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert "mockllm/model: extra headers in force: none" in out
+    assert out.index("extra headers in force") < out.index("PASS mockllm/model")
+
+
+def test_docstring_says_smoke_logs_never_reach_the_readers():
+    doc = smoke_live.__doc__
+    assert "never pass a smoke log" in doc
+    assert "pilot_report.py" in doc and "compare_runs.py" in doc
+
+
+def test_evaluated_model_path_passes_split_dev_explicitly(tmp_path, monkeypatch):
+    """The C1 lock refuses a no-split build, so the pilot-task path must name split dev.
+    Both the task build and eval() are stand-ins: nothing generates."""
+    import inspect_ai
+
+    from icfr_agent_evals import task as task_module
+
+    seen: dict = {}
+
+    def fake_task(**kwargs):
+        seen.update(kwargs)
+        return object()
+
+    class _Log:
+        status, samples, location = "error", [], "stand-in"
+
+    monkeypatch.setattr(task_module, "variance_commentary", fake_task)
+    monkeypatch.setattr(inspect_ai, "eval", lambda *a, **k: [_Log()])
+    answered, line = smoke_live.smoke_one(roster.WORKER, "stand-in-id", str(tmp_path))
+    assert seen == {"split": "dev", "subset": "pilot", "epochs": 1}
+    assert answered is False and line.startswith("FAIL")
