@@ -14,6 +14,7 @@ import collections
 import hashlib
 import json
 import pathlib
+import argparse
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -84,10 +85,12 @@ def main() -> int:
         },
         "disjointness": disjoint,
     }
-    (out_dir / "COMPOSITION.json").write_text(json.dumps(summary, indent=1, sort_keys=True) + "\n", encoding="utf-8")
+    (out_dir / "COMPOSITION.json").write_text(json.dumps(summary, indent=1, sort_keys=True) + "\n", encoding="utf-8", newline='\n')
     print(json.dumps(summary, indent=1, sort_keys=True))
     return 0
 
 
 if __name__ == "__main__":
+    # argparse so that -h prints this docstring and exits before any write (F2-10, N1).
+    argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter).parse_args()
     sys.exit(main())

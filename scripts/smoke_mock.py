@@ -21,6 +21,7 @@ Run: python scripts/smoke_mock.py
 from __future__ import annotations
 
 import json
+import argparse
 import sys
 
 from inspect_ai import eval as inspect_eval
@@ -158,4 +159,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    # argparse so that -h prints this docstring and exits before any run (F2-10, N1).
+    argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter).parse_args()
     sys.exit(main())
