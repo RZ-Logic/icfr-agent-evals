@@ -21,11 +21,12 @@ dev split only; the evaluation split is never built.
 A deterministic mock proves the plumbing and the gate arithmetic, not statistical
 power; the A/A estimate of section 10 measures the gate's operating characteristics.
 
-Run: python scripts/rehearse_regression.py [log_dir]
+Run: python scripts/rehearse_regression.py [log_dir]   (-h prints help and creates no folder)
 """
 
 from __future__ import annotations
 
+import argparse
 import contextlib
 import importlib.util
 import io
@@ -183,8 +184,19 @@ def rehearse(log_dir: str = DEFAULT_LOG_DIR) -> dict[str, tuple[int, str]]:
 EXPECTED = {"regression": 1, "no-change": 0}
 
 
-def main() -> int:
-    log_dir = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_LOG_DIR
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """The optional positional log dir. argparse handles -h before any folder is made."""
+    parser = argparse.ArgumentParser(
+        description="Offline rehearsal of the pilot's deliberate-regression check (mockllm, dev split, no API key).",
+    )
+    parser.add_argument("log_dir", nargs="?", default=DEFAULT_LOG_DIR,
+                        help="folder for the three pilot logs and the comparison JSON "
+                             "(default: icfr-agent-evals-logs/rehearsal under the system temp folder)")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    log_dir = parse_args(argv).log_dir
     results = rehearse(log_dir)
     ok = True
     for name, (code, report) in results.items():
