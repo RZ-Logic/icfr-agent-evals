@@ -449,6 +449,58 @@ def consistency_summary(log: Any) -> list[str]:
     return lines
 
 
+def generation_stops(log: Any) -> dict[str, Any]:
+    """Stop reasons and output tokens of the evaluated model's last generation per sample-epoch.
+
+    A generation that stops on max_tokens (thinking plus answer at the 48,000 default, or
+    the D6 pin) is cut off: the strict parser scores it FM-000, so the count tells a
+    ceiling cut-off apart from a format break the model produced. Output tokens come
+    from the logged usage of the same event, thinking included where the provider bills it.
+    """
+    reasons: dict[str, int] = {}
+    cut_and_format_break = 0
+    tokens: list[int] = []
+    for s in log.samples:
+        last = None
+        for ev in s.events or ():
+            if getattr(ev, "event", None) == "model" and getattr(ev, "role", None) is None:
+                last = ev
+        if last is None or last.output is None:
+            continue
+        reason = str(last.output.stop_reason or "unknown")
+        reasons[reason] = reasons.get(reason, 0) + 1
+        usage = last.output.usage
+        if usage is not None and usage.output_tokens is not None:
+            tokens.append(int(usage.output_tokens))
+        if reason == "max_tokens" and getattr(s, "error", None) is None and any(
+                (v.metadata or {}).get("format_break") for v in (s.scores or {}).values()):
+            cut_and_format_break += 1
+    return {
+        "stop_reasons": dict(sorted(reasons.items())),
+        "max_tokens_stops": reasons.get("max_tokens", 0),
+        "max_tokens_stops_format_break": cut_and_format_break,
+        "output_tokens": {
+            "n": len(tokens),
+            "max": max(tokens) if tokens else None,
+            "median": statistics.median(tokens) if tokens else None,
+            "total": sum(tokens),
+        },
+    }
+
+
+def format_generation_stops(stops: dict[str, Any], n: int) -> list[str]:
+    other = ", ".join(f"{k} {v}" for k, v in stops["stop_reasons"].items() if k != "max_tokens") or "none"
+    tok = stops["output_tokens"]
+    tok_line = ("output tokens per generation: none logged" if tok["n"] == 0 else
+                f"output tokens per generation (thinking included where billed): max {tok['max']:,}, "
+                f"median {tok['median']:,.0f}, total {tok['total']:,} over {tok['n']} generations")
+    return [
+        f"generation stops: max_tokens {stops['max_tokens_stops']}/{n} "
+        f"(format breaks among them {stops['max_tokens_stops_format_break']}); other stop reasons: {other}",
+        tok_line,
+    ]
+
+
 def run_block(role: str, log: Any, path: str = "") -> tuple[list[str], dict[str, Any], list[dict[str, str]]]:
     """Printed lines, JSON payload and review rows for one run."""
     e = log.eval
@@ -474,6 +526,8 @@ def run_block(role: str, log: Any, path: str = "") -> tuple[list[str], dict[str,
     fb = sum(1 for s in log.samples if getattr(s, "error", None) is None
              and any((v.metadata or {}).get("format_break") for v in (s.scores or {}).values()))
     lines.append(f"format-break epochs {fb}/{len(log.samples)}; errored epochs {errored}/{len(log.samples)}")
+    stops = generation_stops(log)
+    lines.extend(format_generation_stops(stops, len(log.samples)))
     volume = rel.queue_volume(r)
     vol = queue_payload(volume)
     lines.append(f"Review queue volume: {volume.total_items} distinct (sample, epoch, reason), "
@@ -497,7 +551,8 @@ def run_block(role: str, log: Any, path: str = "") -> tuple[list[str], dict[str,
         "content_pass4": {"passed": passed, "n": r.scored_samples, "rate": r.content_pass_k_rate,
                           "ci95": [lo, hi], "per_sample": r.pass_k},
         "fm_counts": r.fm_counts, "fm002_by_direction": r.fm002_by_direction, "fm008": list(r.fm008),
-        "format_break_epochs": fb, "errored_epochs": errored, "queue_volume": vol, "sample_consistency": cons,
+        "format_break_epochs": fb, "errored_epochs": errored, "generation_stops": stops,
+        "queue_volume": vol, "sample_consistency": cons,
     }
     return lines, payload, review_rows(r, role, str(e.eval_id))
 

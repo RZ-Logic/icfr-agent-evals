@@ -84,6 +84,20 @@ def _flip(direction: str) -> str:
     return "surplus" if direction == "shortfall" else "shortfall"
 
 
+def _cut_outputs(answer_of):
+    """Like _keyed_outputs, but every generation stops on max_tokens with 48,000 output tokens,
+    the shape of a thinking run cut at the ceiling."""
+    inner = _keyed_outputs(answer_of)
+
+    def fn(messages, tools, tool_choice, config) -> ModelOutput:
+        out = inner(messages, tools, tool_choice, config)
+        out.choices[0].stop_reason = "max_tokens"  # stop_reason is a read-only view of choices[0]
+        out.usage = ModelUsage(input_tokens=1, output_tokens=48000, total_tokens=48001)
+        return out
+
+    return fn
+
+
 def _keyed_outputs(answer_of):
     """custom_outputs for mockllm: each case answered by answer_of(truth), keyed on a
     scope wallet that sits in that case's input and in no other pilot case."""
@@ -106,10 +120,11 @@ def _keyed_outputs(answer_of):
     return fn
 
 
-def _run_pilot(tmp_path_factory, label: str, answer_of, *, subset="pilot", epochs=4, **eval_kw) -> str:
+def _run_pilot(tmp_path_factory, label: str, answer_of, *, subset="pilot", epochs=4, outputs=_keyed_outputs,
+               **eval_kw) -> str:
     log = inspect_eval(
         variance_commentary(split="dev", subset=subset, epochs=epochs),
-        model=get_model("mockllm/model", custom_outputs=_keyed_outputs(answer_of)),
+        model=get_model("mockllm/model", custom_outputs=outputs(answer_of)),
         model_roles=ROLES,
         log_dir=_log_dir(tmp_path_factory, label),
         display="none",
@@ -134,6 +149,8 @@ def logs(tmp_path_factory):
     return {
         "sonnet": _run_pilot(tmp_path_factory, "report-sonnet", lambda t: _answer(t, t.direction)),
         "haiku_fb": _run_pilot(tmp_path_factory, "report-haiku-fb", lambda t: "not one JSON object"),
+        "haiku_cut": _run_pilot(tmp_path_factory, "report-haiku-cut", lambda t: "{\"asset\": \"BTC\", \"per",
+                                outputs=_cut_outputs),
         "haiku_settled": _run_pilot(tmp_path_factory, "report-haiku-settled", lambda t: _answer(t, _flip(t.direction))),
         "template": template.location,
         "nonpilot": _run_pilot(tmp_path_factory, "report-nonpilot", lambda t: _answer(t, t.direction),
@@ -195,6 +212,33 @@ def test_format_break_haiku_passes_reading_i_only(logs, capsys):
     assert "reading (ii): FAIL  failing hard cases 0, failing hard epochs 0" in out
     assert "reading (iii): FAIL  failing hard cases 0, failing hard epochs 0" in out
     assert "reading of record: not chosen" in out
+
+
+def test_generation_stops_tell_a_ceiling_cut_from_a_format_break(logs, capsys):
+    """D6: a generation that stops on max_tokens is FM-000 like any format break, and the
+    report says how many format breaks were ceiling cut-offs and how long generations ran."""
+    code, out, _ = _main(capsys, *_base(logs, "haiku_cut"))
+    assert code == 0
+    haiku = out.split("== Run haiku")[1].split("== Run template")[0]
+    assert "format-break epochs 80/80; errored epochs 0/80" in haiku
+    assert "generation stops: max_tokens 80/80 (format breaks among them 80); other stop reasons: none" in haiku
+    assert ("output tokens per generation (thinking included where billed): max 48,000, median 48,000, "
+            "total 3,840,000 over 80 generations") in haiku
+    sonnet = out.split("== Run sonnet")[1].split("== Run haiku")[0]
+    assert "generation stops: max_tokens 0/80 (format breaks among them 0); other stop reasons: stop 80" in sonnet
+    assert "max 1, median 1, total 80 over 80 generations" in sonnet
+
+
+def test_generation_stops_in_the_json_payload(logs, tmp_path):
+    out = tmp_path / "report.json"
+    code = pr.main([*_base(logs, "haiku_cut"), "--json", str(out)])
+    assert code == 0
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    stops = payload["runs"]["haiku"]["generation_stops"]
+    assert stops["max_tokens_stops"] == 80 and stops["max_tokens_stops_format_break"] == 80
+    assert stops["stop_reasons"] == {"max_tokens": 80}
+    assert stops["output_tokens"] == {"n": 80, "max": 48000, "median": 48000, "total": 3840000}
+    assert payload["runs"]["sonnet"]["generation_stops"]["stop_reasons"] == {"stop": 80}
 
 
 def test_settled_failure_haiku_passes_every_reading(logs, capsys):
