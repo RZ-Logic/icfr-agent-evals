@@ -17,11 +17,12 @@ It prints the FM-007 count, overall and per subset, and the H4 verdict. On the
 dev split the verdict exercises the code only; H4 is evaluated per model on the
 evaluation split.
 
-Run: python scripts/consistency_mock.py [log_dir]
+Run: python scripts/consistency_mock.py [log_dir]   (-h prints help and creates no folder)
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import sys
@@ -176,8 +177,19 @@ def check(report: ConsistencyReport, picked: dict[str, Plan]) -> list[str]:
     return problems
 
 
-def main() -> int:
-    log_dir = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_LOG_DIR
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """The optional positional log dir. argparse handles -h before any folder is made."""
+    parser = argparse.ArgumentParser(
+        description="Sample Consistency end to end with a mock model and epochs = 4 (dev split, no API key).",
+    )
+    parser.add_argument("log_dir", nargs="?", default=DEFAULT_LOG_DIR,
+                        help="folder for the mock run's log "
+                             "(default: icfr-agent-evals-logs/consistency under the system temp folder)")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    log_dir = parse_args(argv).log_dir
     log, report, picked = run(log_dir)
     print("planned multisets:")
     for sid, plan in sorted(picked.items()):
