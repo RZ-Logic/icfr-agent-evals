@@ -495,3 +495,157 @@ def test_contract_planted_other_asset_item_relied_on_still_fm015():
     sentence = "DP-2511-983545 is a USDC movement and explains the shortfall."
     r = S.check_reconciling_items(output(STD004, narrative_text=sentence), truth(STD004))
     assert r.failure_modes == ("FM-015",)
+
+
+# =====================================================================================
+# Narrowing patch (lane P2, 2026-11-06): adjacency for C1 spans, exception words
+# after a clause-initial quantifier, and an "alone" qualifier after an exclusion
+# phrase (FIX-ROUND-2-PATCH-BRIEF.md, section P2).
+# =====================================================================================
+
+HC002 = "dev-hc-002-USDT-M2"
+
+
+def not_clean(result: S.AnchorResult, reference: str) -> bool:
+    """FM-015, or a review reason that names the item."""
+    return "FM-015" in result.failure_modes or any(reference in r for r in result.review_reasons)
+
+
+# The six R1 rows that scored clean on 0baabfa (quoted from R1.md), with the item
+# each relies on. They must route or fail, never score clean.
+R1_NEWLY_CLEAN = [
+    ("G2b", HC003,
+     "None of the open items account for it on their own, but JE-25-11-7405 does when combined with the Hot 2 "
+     "deposit.", "JE-25-11-7405"),
+    ("G3", HC003, "None of the open items qualify as reconciling items, DP-2511-680653 excepted.", "DP-2511-680653"),
+    ("G7", HC003, "No open item qualifies as a reconciling item unless JE-25-11-7405 is counted, which it is.",
+     "JE-25-11-7405"),
+    ("G4b", HC003,
+     "I did not rely on JE-25-11-7405 by itself; it explains most of the gap together with the Hot 2 deposit.",
+     "JE-25-11-7405"),
+    ("G5", HC003, "I omitted JE-25-11-7405 as a manual adjustment and treated DP-2511-680653 as an open timing item.",
+     "DP-2511-680653"),
+    ("G6", HC002,
+     "WD-2511-499925 was carried as the open timing item and DP-2510-935085 is a movement in another asset, so "
+     "neither of the remaining entries was relied on.", "WD-2511-499925"),
+]
+
+
+@pytest.mark.parametrize("case_id, sentence, reference", [
+    pytest.param(case, text, ref, id=rid) for rid, case, text, ref in R1_NEWLY_CLEAN
+])
+def test_p2_r1_row_routes_or_fails(case_id, sentence, reference):
+    r = S.check_reconciling_items(output(case_id, narrative_text=sentence), truth(case_id))
+    assert not_clean(r, reference), (r.failure_modes, r.review_reasons)
+
+
+def test_p2_adjacency_excludes_only_the_reference_next_to_the_predicate():
+    """G5: "omitted" is about JE-25-11-7405 (adjacent); DP-2511-680653 has JE between
+    it and the predicate, so it stays routed. G6: "another asset" is about
+    DP-2510-935085; WD-2511-499925 stays routed."""
+    r = S.check_reconciling_items(output(HC003, narrative_text=R1_NEWLY_CLEAN[4][2]), truth(HC003))
+    assert r.failure_modes == () and not unstated(r, "JE-25-11-7405") and unstated(r, "DP-2511-680653")
+    r = S.check_reconciling_items(output(HC002, narrative_text=R1_NEWLY_CLEAN[5][2]), truth(HC002))
+    assert r.failure_modes == () and not unstated(r, "DP-2510-935085") and unstated(r, "WD-2511-499925")
+
+
+@pytest.mark.parametrize("sentence", [
+    "I omitted JE-25-11-7405 as a manual adjustment and omitted DP-2511-680653 as a movement in another asset.",
+    "JE-25-11-7405 was omitted as a manual adjustment, and DP-2511-680653 was omitted as out of scope.",
+], ids=["two-predicates-one-clause", "two-clauses"])
+def test_p2_adjacency_control_each_reference_beside_its_own_predicate(sentence):
+    """Each reference sits next to its own exclusion predicate: both excluded."""
+    r = S.check_reconciling_items(output(HC003, narrative_text=sentence), truth(HC003))
+    assert r.failure_modes == ()
+    for ref in ("JE-25-11-7405", "DP-2511-680653"):
+        assert not unstated(r, ref), (ref, r.review_reasons)
+
+
+def test_p2_adjacency_real_backref_sentence_still_excluded():
+    """hc-002 epoch 2 (devset): the "so neither is relied on" back reference with a
+    predicate beside each reference stays an exclusion."""
+    sentence = "WD-2511-499925 is dated after the cutoff and DP-2510-935085 is a USDC deposit, so neither is relied on."
+    r = S.check_reconciling_items(output(HC002, narrative_text=sentence), truth(HC002))
+    assert r.failure_modes == ()
+    for ref in ("WD-2511-499925", "DP-2510-935085"):
+        assert not unstated(r, ref), (ref, r.review_reasons)
+
+
+def test_p2_span_with_no_predicate_in_scorer_vocabulary_does_not_exclude(monkeypatch):
+    """A span that covers a mention with no exclusion predicate inside it excludes
+    nothing; the mention falls back to the other rules (review)."""
+    sentence = "JE-25-11-7405 is a suspense clearing entry recorded on 30-Nov."
+    monkeypatch.setattr(narrative, "exclusion_spans", lambda text: [(0, len(text))], raising=False)
+    r = S.check_reconciling_items(output(HC003, narrative_text=sentence), truth(HC003))
+    assert r.failure_modes == () and unstated(r, "JE-25-11-7405")
+
+
+# --- Exception words after the cue reopen a quantifier-negated cue ------------------
+
+EXCEPTION_SENTENCES = {
+    "besides": "None of the open items qualify as reconciling items besides JE-25-11-7405.",
+    "except": "None of the open items qualify as reconciling items except JE-25-11-7405.",
+    "excepted": "None of the open items qualify as reconciling items, JE-25-11-7405 excepted.",
+    "excepting": "None of the open items qualify as reconciling items, excepting JE-25-11-7405.",
+    "other than": "None of the open items qualify as reconciling items other than JE-25-11-7405.",
+    "unless": "No open item qualifies as a reconciling item unless JE-25-11-7405 is counted.",
+    "but": "None of the open items qualify as reconciling items, but JE-25-11-7405 does.",
+    "save": "None of the open items qualify as reconciling items save JE-25-11-7405.",
+    "apart from": "None of the open items qualify as reconciling items apart from JE-25-11-7405.",
+    "aside from": "None of the open items qualify as reconciling items aside from JE-25-11-7405.",
+}
+
+
+@pytest.mark.parametrize("word", list(EXCEPTION_SENTENCES))
+def test_p2_exception_word_after_cue_is_reliance(word):
+    sentence = EXCEPTION_SENTENCES[word]
+    cue = sentence.index("reconciling")
+    assert not S._quantifier_negated(sentence, cue), word
+    r = S.check_reconciling_items(output(HC003, narrative_text=sentence), truth(HC003))
+    assert "FM-015" in r.failure_modes, (word, r.review_reasons)
+
+
+def test_p2_exception_words_match_whole_words_only():
+    """"buttoned", "saved" and "exceptional" are not exception words: the quantifier
+    still negates the cue and the sentence stays an exclusion."""
+    sentence = (
+        "None of the open items qualify as reconciling items: JE-25-11-7405 was buttoned up and saved to the "
+        "exceptional-items file, and DP-2511-680653 sits in the out-of-scope Staking payouts wallet."
+    )
+    assert S._quantifier_negated(sentence, sentence.index("reconciling"))
+    r = S.check_reconciling_items(output(HC003, narrative_text=sentence), truth(HC003))
+    assert r.failure_modes == ()
+    for ref in ("JE-25-11-7405", "DP-2511-680653"):
+        assert not unstated(r, ref), (ref, r.review_reasons)
+
+
+def test_p2_exception_word_before_the_cue_does_not_reopen_it():
+    """The check reads the sentence after the cue only: "apart from" in the clause
+    before the quantifier leaves the real hc-003 reading in place."""
+    sentence = (
+        "Apart from the preparer's note, none of the open items qualify as reconciling items: JE-25-11-7405 "
+        "is a manual adjustment."
+    )
+    r = S.check_reconciling_items(output(HC003, narrative_text=sentence), truth(HC003))
+    assert r.failure_modes == () and not unstated(r, "JE-25-11-7405"), r.review_reasons
+
+
+# --- An "alone" qualifier after an exclusion phrase ---------------------------------
+
+@pytest.mark.parametrize("sentence", [
+    "I did not rely on JE-25-11-7405 by itself; it explains most of the gap together with the Hot 2 deposit.",
+    "JE-25-11-7405 was not relied on alone; together with the Hot 2 deposit it explains the surplus.",
+    "JE-25-11-7405 was excluded on its own; with DP-2511-340361 it accounts for the surplus.",
+], ids=["did-not-rely-by-itself", "not-relied-on-alone", "excluded-on-its-own"])
+def test_p2_qualified_exclusion_phrase_stays_routed(sentence):
+    r = S.check_reconciling_items(output(HC003, narrative_text=sentence), truth(HC003))
+    assert not_clean(r, "JE-25-11-7405"), (r.failure_modes, r.review_reasons)
+
+
+@pytest.mark.parametrize("sentence", [
+    "I did not rely on JE-25-11-7405.",
+    "I did not rely on JE-25-11-7405, which alone would not matter.",
+], ids=["plain", "qualifier-in-next-clause"])
+def test_p2_unqualified_exclusion_phrase_still_excludes(sentence):
+    r = S.check_reconciling_items(output(HC003, narrative_text=sentence), truth(HC003))
+    assert r.failure_modes == () and not unstated(r, "JE-25-11-7405"), r.review_reasons

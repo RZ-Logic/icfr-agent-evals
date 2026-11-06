@@ -884,11 +884,39 @@ _EXCLUDED_FROM_CATEGORY_RE = re.compile(
     r"(?:[A-Za-z0-9\-]+\s+){0,3}?from\s+(?:the\s+)?(?:list\s+of\s+)?(reconciling)\s+items?(?![A-Za-z])",
     re.IGNORECASE,
 )
+# Fix round 2 narrowing patch (lane P2, 2026-11-06). An exception word after the cue
+# in the same sentence ("None of the open items qualify as reconciling items,
+# DP-1 excepted"; "... unless JE-1 is counted"; "..., but JE-1 does") reopens the
+# cue: the clause-initial quantifier no longer negates it. Whole words only.
+_EXCEPTION_AFTER_CUE_RE = re.compile(
+    r"(?<![A-Za-z])(?:besides|except(?:ed|ing)?|other\s+than|unless|but|save|apart\s+from|aside\s+from)(?![A-Za-z])",
+    re.IGNORECASE,
+)
+# A qualifier right after an exclusion phrase, in the same clause, makes the phrase
+# a partial statement, not an exclusion ("I did not rely on JE-1 by itself"). The
+# mention then stays routed.
+_ALONE_QUALIFIER_RE = re.compile(
+    r"(?<![A-Za-z])(?:by\s+itself|by\s+themselves|on\s+its\s+own|on\s+their\s+own|in\s+isolation|alone)(?![A-Za-z])",
+    re.IGNORECASE,
+)
+_QUALIFIER_CLAUSE_END_RE = re.compile(r"[,;:]")
+
+
+def _qualified_exclusion(sentence: str, start: int) -> bool:
+    """True when an "alone" style qualifier follows the exclusion phrase or cue at
+    `start` before the next comma, semicolon or colon."""
+    tail = sentence[start:]
+    cut = _QUALIFIER_CLAUSE_END_RE.search(tail)
+    clause = tail[:cut.start()] if cut else tail
+    return bool(_ALONE_QUALIFIER_RE.search(clause))
 
 
 def _quantifier_negated(sentence: str, cue_start: int) -> bool:
     """True when the clause holding the cue opens with "none" or "no" and every word
-    between that quantifier and the cue is subject or linking vocabulary."""
+    between that quantifier and the cue is subject or linking vocabulary, and no
+    exception word follows the cue in the sentence (narrowing patch, lane P2)."""
+    if _EXCEPTION_AFTER_CUE_RE.search(sentence, cue_start):
+        return False
     head = sentence[:cue_start]
     breaks = list(_CLAUSE_START_RE.finditer(head))
     clause = head[breaks[-1].end():] if breaks else head
@@ -936,7 +964,12 @@ def _reliance_verdict(sentence: str, mention_in_exclusion_span: bool = False) ->
     span narrative.exclusion_spans returns (contract C1). The exclusion sources
     apply only when no explaining cue is still affirmed, so while one is, the
     verdict is exactly the ee39795 verdict: a phrase or a span can never turn a
-    reliance into a review or a pass."""
+    reliance into a review or a pass.
+
+    Narrowing patch (lane P2): an exclusion cue, an exclusion phrase or a negated
+    cue followed in its clause by an "alone" qualifier ("did not rely on JE-1 by
+    itself") is not an exclusion; the span argument already carries the adjacency
+    rule applied in ineligible_reliance."""
     category = _excluded_category_cues(sentence)
     polarities = []
     for m in _EXPLAIN_CUE_RE.finditer(sentence):
@@ -945,16 +978,21 @@ def _reliance_verdict(sentence: str, mention_in_exclusion_span: bool = False) ->
             m.start() in category or _quantifier_negated(sentence, m.start()) or _zero_subject(sentence, m.start())
         ):
             polarity = "negated"
+        if polarity == "negated" and _qualified_exclusion(sentence, m.start()):
+            polarity = "uncertain"
         polarities.append(polarity)
     explaining = "affirmed" in polarities
     uncertain = "uncertain" in polarities
     negated_explaining = bool(polarities) and not explaining and not uncertain
-    excluded = bool(_EXCLUSION_CUE_RE.search(sentence)) or negated_explaining
+    excluded = any(
+        not _qualified_exclusion(sentence, m.start()) for m in _EXCLUSION_CUE_RE.finditer(sentence)
+    ) or negated_explaining
     if explaining:
         return "unclear" if excluded else "relied"  # the ee39795 rule, untouched
     if uncertain:
         return "unclear"
-    if excluded or _FIX2_EXCLUSION_CUE_RE.search(sentence) or mention_in_exclusion_span:
+    phrase = any(not _qualified_exclusion(sentence, m.start()) for m in _FIX2_EXCLUSION_CUE_RE.finditer(sentence))
+    if excluded or phrase or mention_in_exclusion_span:
         return "excluded"
     return "unclear"
 
@@ -976,6 +1014,55 @@ def _exclusion_spans(text: str) -> list[tuple[int, int]]:
         if 0 <= start < end <= len(text):
             out.append((start, end))
     return out
+
+
+# Narrowing patch (lane P2): the exclusion predicates that make a C1 span count. The
+# scorer's own three, plus the two patterns narrative.py uses to build the spans.
+# Those two are private to narrative.py (lane L2's contract C1 vocabulary): they are
+# read here, never changed, and when either is absent the scorer's own vocabulary
+# stands alone. Promoting them to a public helper is an owner decision (P2 report).
+_SPAN_PREDICATE_RES: tuple[re.Pattern, ...] = tuple(
+    rx for rx in (
+        _EXCLUSION_CUE_RE,
+        _FIX2_EXCLUSION_CUE_RE,
+        _EXCLUDED_FROM_CATEGORY_RE,
+        getattr(narrative, "_EXCL_PREDICATE_RE", None),
+        getattr(narrative, "_EXCL_OTHER_ASSET_RE", None),
+    ) if isinstance(rx, re.Pattern)
+)
+
+
+def _predicate_spans(sentence: str) -> list[tuple[int, int]]:
+    """Character spans of every exclusion predicate in the sentence."""
+    spans = {(m.start(), m.end()) for rx in _SPAN_PREDICATE_RES for m in rx.finditer(sentence)}
+    return sorted(spans)
+
+
+def _adjacent_to_predicate(
+    sentence: str, mention: tuple[int, int], span: tuple[int, int], others: list[tuple[int, int]]
+) -> bool:
+    """Adjacency rule (narrowing patch, lane P2): a C1 span excludes a mention only
+    when, inside the span text, the mention is the reference next to the nearest
+    exclusion predicate: the span holds a predicate, no other fixture reference lies
+    between the mention and that predicate, and the predicate is not followed by an
+    "alone" qualifier. Positions are sentence offsets."""
+    s, e = mention
+    lo, hi = span
+    preds = [(ps, pe) for ps, pe in _predicate_spans(sentence) if lo <= ps and pe <= hi]
+    if not preds:
+        return False
+
+    def gap(p: tuple[int, int]) -> int:
+        ps, pe = p
+        if ps < e and s < pe:
+            return 0
+        return ps - e if ps >= e else s - pe
+
+    ps, pe = min(preds, key=gap)
+    if _qualified_exclusion(sentence, ps):
+        return False
+    between = (e, ps) if ps >= e else (pe, s)
+    return not any(os_ < between[1] and between[0] < oe for os_, oe in others)
 
 
 def _mention_spans(sentence: str, item) -> list[tuple[int, int]]:
@@ -1013,8 +1100,23 @@ def ineligible_reliance(parsed: dict, truth: CaseTruth) -> tuple[list[str], list
     exclusion = _exclusion_spans(narrative_text) if narrative_text else []
 
     def in_exclusion(offset: int, sentence: str, item) -> bool:
-        mentions = [(offset + s, offset + e) for s, e in _mention_spans(sentence, item)]
-        return bool(mentions) and all(any(xs <= s and e <= xe for xs, xe in exclusion) for s, e in mentions)
+        """Every mention of the item in this sentence lies inside a C1 span and is
+        the reference adjacent to that span's exclusion predicate (narrowing patch,
+        lane P2: a span no longer excludes every reference it covers)."""
+        mentions = _mention_spans(sentence, item)
+        if not mentions:
+            return False
+        others = sorted({
+            sp for other in truth.items if other.reference != item.reference for sp in _mention_spans(sentence, other)
+        } - set(mentions))
+        for s, e in mentions:
+            span = next(((xs, xe) for xs, xe in exclusion if xs <= offset + s and offset + e <= xe), None)
+            if span is None:
+                return False
+            local = (max(0, span[0] - offset), min(len(sentence), span[1] - offset))
+            if not _adjacent_to_predicate(sentence, (s, e), local, others):
+                return False
+        return True
 
     cited = {truth.item_by_reference(c).reference for c in parsed["entities_cited"]
              if isinstance(c, str) and truth.item_by_reference(c) is not None}
