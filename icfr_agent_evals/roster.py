@@ -23,8 +23,21 @@ vendor's first-party API (FIRST_PARTY_BASE_URLS). It also stops on an explicit
 base URL override, on any model_args, on a blank endpoint, and when
 ANTHROPIC_AUTH_TOKEN is set. It also stops when ANTHROPIC_CUSTOM_HEADERS or
 OPENAI_CUSTOM_HEADERS is set to a non-blank value, since either can replace the
-request credential while the host stays first-party. Each sample's transcript
-records the endpoints it checked. This is what makes the fixed SERVING_PLATFORMS claim true.
+request credential while the host stays first-party. For the same reason it stops
+when request headers from a GenerateConfig are in force: INSPECT_EVAL_EXTRA_HEADERS
+set to a non-blank value (the CLI reads it as --extra-headers), extra_headers on the
+active generate config (the eval config merged into the evaluated model's requests),
+or extra_headers on a model's own config (a role spec). The SDKs layer request headers
+after their auth headers, so any of these could swap the credential too. Each sample's
+transcript records the endpoints it checked. This is what makes the fixed
+SERVING_PLATFORMS claim true.
+
+Run config check: check_run_config reads a finished EvalLog and raises
+RunConfigError unless the run used the section 5 configuration. CLI generate flags
+(--reasoning-effort, --max-tokens, --seed and the sampling flags)
+replace the Task's GenerateConfig without a warning and the run still ends in
+success, so the readers check the log itself: plan.config and every ModelEvent the
+evaluated model sent.
 
 validate_roster and validate_serving are pure (no Inspect import) so each
 violation has a unit test; roster_check is the setup solver that resolves the
@@ -120,6 +133,10 @@ AUTH_TOKEN_ENV = "ANTHROPIC_AUTH_TOKEN"
 # The SDKs add these headers after their own auth headers, so either can replace the
 # request credential while the host stays first-party. Checked for every provider.
 CUSTOM_HEADERS_ENV: tuple[str, ...] = ("ANTHROPIC_CUSTOM_HEADERS", "OPENAI_CUSTOM_HEADERS")
+# Inspect's CLI reads this variable as --extra-headers into the eval GenerateConfig,
+# whose extra_headers the providers copy into every request after the auth headers.
+EXTRA_HEADERS_ENV = "INSPECT_EVAL_EXTRA_HEADERS"
+ACTIVE_CONFIG_SOURCE = "active GenerateConfig.extra_headers"
 SERVING_EVENT_SOURCE = "roster_check"
 
 
@@ -189,6 +206,7 @@ def validate_serving(
     auth_token_set: bool = False,
     model: str | None = None,
     custom_headers: Sequence[str] = (),
+    extra_headers: Sequence[str] = (),
 ) -> str:
     """Raise RosterError unless a real model is served by its vendor's first-party API.
 
@@ -204,6 +222,8 @@ def validate_serving(
     model: the "provider/name" string, for the error message only.
     custom_headers: the CUSTOM_HEADERS_ENV variables that are set and not blank;
         any one fails.
+    extra_headers: the sources of GenerateConfig request headers in force for this
+        model (extra_headers_in_force plus the model's own config); any one fails.
 
     Returns the endpoint with one trailing slash stripped.
     """
@@ -220,6 +240,12 @@ def validate_serving(
         raise RosterError(
             f"serving guard: {', '.join(custom_headers)} is set, so the client of {who} would "
             f"send those headers, which can replace the request credential; unset it"
+        )
+    if extra_headers:
+        raise RosterError(
+            f"serving guard: request headers are in force for {who} ({', '.join(extra_headers)}); "
+            f"the provider would send them after its auth headers, so they can replace the "
+            f"request credential; remove them (no roster run sets extra_headers)"
         )
     if model_args is None:
         model_args = {}
@@ -273,6 +299,21 @@ def custom_headers_set() -> list[str]:
     return [name for name in CUSTOM_HEADERS_ENV if os.environ.get(name, "").strip()]
 
 
+def extra_headers_in_force() -> list[str]:
+    """Name each source of GenerateConfig request headers in force (empty when none).
+
+    Sources: EXTRA_HEADERS_ENV set to a non-blank value, and non-empty extra_headers
+    on Inspect's active generate config (the eval config, which Inspect merges into
+    every request of the evaluated model; empty outside an eval). Names only, never
+    the header values, since a header can hold a credential."""
+    found = [EXTRA_HEADERS_ENV] if os.environ.get(EXTRA_HEADERS_ENV, "").strip() else []
+    from inspect_ai.model._generate_config import active_generate_config
+
+    if active_generate_config().extra_headers:
+        found.append(ACTIVE_CONFIG_SOURCE)
+    return found
+
+
 def model_serving(model: Any) -> dict[str, str]:
     """Check one resolved Inspect Model with validate_serving and return what was
     checked: {"model": "provider/name", "base_url": the client's base URL as read}.
@@ -280,7 +321,8 @@ def model_serving(model: Any) -> dict[str, str]:
     The endpoint is read as str(model.api.client.base_url), the SDK's URL object
     (httpx2.URL in anthropic 1.12.1 and openai 3.27.0). That is a private Inspect
     attribute, safe under the exact pin; a missing attribute or an unexpected type
-    fails closed."""
+    fails closed. Request headers in force (extra_headers_in_force, or extra_headers
+    on model.config) also fail."""
     url_types = _url_types()
     try:
         name = str(model)
@@ -288,6 +330,7 @@ def model_serving(model: Any) -> dict[str, str]:
         url = client.base_url
         explicit = [model.explicit_base_url, model.api.base_url]
         model_args = model.model_args
+        own_config = getattr(model, "config", None)
     except AttributeError as e:
         raise RosterError(f"serving guard: cannot read the client endpoint of {model!r} ({e}); refused") from e
     if not url_types or not isinstance(url, url_types):
@@ -299,9 +342,12 @@ def model_serving(model: Any) -> dict[str, str]:
     auth_token_set = bool(os.environ.get(AUTH_TOKEN_ENV)) or bool(getattr(client, "auth_token", None))
     observed = str(url)
     headers = custom_headers_set()
+    extra = extra_headers_in_force()
+    if getattr(own_config, "extra_headers", None):
+        extra.append(f"{name} config.extra_headers")
     for explicit_url in explicit:
         validate_serving(provider, observed, explicit_url, model_args, auth_token_set, model=name,
-                         custom_headers=headers)
+                         custom_headers=headers, extra_headers=extra)
     return {"model": name, "base_url": observed}
 
 
@@ -333,6 +379,167 @@ def retirement_metadata() -> dict:
         "floors": dict(RETIREMENT_FLOORS),
         "notice_policies": dict(NOTICE_POLICIES),
         "serving_platforms": dict(SERVING_PLATFORMS),
+    }
+
+
+# --- Run config check (section 5 reasoning, sampling parameters and seed) -----------
+
+# GenerateConfig fields a run may set: transport, retry and connection limits. None
+# of them changes what the provider is asked to sample.
+RUN_CONFIG_OPERATIONAL: tuple[str, ...] = (
+    "max_retries", "timeout", "attempt_timeout", "stream_idle_timeout",
+    "max_connections", "adaptive_connections",
+)
+# Every other set field refuses and is named with its value: section 5 sets no
+# sampling parameter, no reasoning token budget and no seed. (The field names are not
+# spelled out here; tests/test_task.py keeps sampling parameter names out of the package.)
+# Fields with their own rule: reasoning_effort equals the pin, max_tokens equals an
+# owner pin when one is given, batch only when allowed, extra_headers empty.
+_RUN_CONFIG_RULED = ("reasoning_effort", "max_tokens", "batch", "extra_headers")
+
+
+class RunConfigError(RuntimeError):
+    """A finished run whose effective eval or generate config is off the section 5 pins."""
+
+
+def _generate_fields(config: Any) -> dict[str, Any]:
+    """The fields of a GenerateConfig that are set (None means unset)."""
+    if config is None:
+        return {}
+    return {k: v for k, v in config.model_dump(exclude_none=True).items() if v is not None}
+
+
+def _check_generate(where: str, fields: Mapping[str, Any], *, evaluated: bool, allow_batch: bool,
+                    max_tokens_pin: int | None) -> None:
+    """Raise RunConfigError on the first field of one GenerateConfig off the pins.
+
+    evaluated: True for plan.config and the evaluated model's events, which must carry
+    reasoning_effort == REASONING_EFFORT (and max_tokens equal to a given pin)."""
+    if evaluated and fields.get("reasoning_effort") != REASONING_EFFORT:
+        raise RunConfigError(
+            f"run config: {where} has reasoning_effort={fields.get('reasoning_effort')!r}, "
+            f"not the pin {REASONING_EFFORT!r} (a --reasoning-effort flag replaces the Task config)"
+        )
+    other = sorted(set(fields) - set(RUN_CONFIG_OPERATIONAL) - set(_RUN_CONFIG_RULED))
+    if other:
+        named = ", ".join(f"{k}={fields[k]!r}" for k in other)
+        raise RunConfigError(
+            f"run config: {where} sets {named}; section 5 sets no sampling parameter and no seed, "
+            f"and only {list(RUN_CONFIG_OPERATIONAL)} may be set besides reasoning_effort"
+        )
+    if "max_tokens" in fields:
+        if max_tokens_pin is None or fields["max_tokens"] != max_tokens_pin:
+            raise RunConfigError(
+                f"run config: {where} sets max_tokens={fields['max_tokens']!r}; "
+                f"the max_tokens pin is {max_tokens_pin!r}"
+            )
+    elif evaluated and max_tokens_pin is not None:
+        raise RunConfigError(
+            f"run config: {where} leaves max_tokens unset; the max_tokens pin is {max_tokens_pin!r}"
+        )
+    if fields.get("batch") not in (None, False) and not allow_batch:
+        raise RunConfigError(f"run config: {where} sets batch={fields['batch']!r}; batch is not allowed for this run")
+    if fields.get("extra_headers"):
+        raise RunConfigError(
+            f"run config: {where} sets extra_headers ({len(fields['extra_headers'])} header(s)); "
+            f"request headers can replace the credential, so no roster run sets them"
+        )
+
+
+def check_run_config(log: Any, *, expected_samples: int | None = None, expected_epochs: int | None = 4,
+                     allow_batch: bool = True, max_tokens_pin: int | None = None) -> dict:
+    """Raise RunConfigError unless a finished EvalLog ran the section 5 configuration.
+
+    CLI generate flags replace the Task's GenerateConfig without a warning and the run
+    still ends in success, so this reads what the log says was sent.
+
+    log: a full EvalLog (samples and events read, not header_only), from a real run
+        or an offline mockllm run alike.
+    expected_samples: when given, the run must hold exactly expected_samples *
+        expected_epochs scored sample-epochs (no error, at least one score).
+    expected_epochs: config.epochs (and task_args epochs, when recorded) must equal it;
+        None skips the epoch check.
+    allow_batch: whether GenerateConfig.batch may be set (interactive or batch runs).
+    max_tokens_pin: the owner's max_tokens pin; None means max_tokens must be unset.
+
+    Checks: status success; eval config limit and sample_id None; plan.config and every
+    ModelEvent of the evaluated model (role None) carry reasoning_effort ==
+    REASONING_EFFORT; max_tokens per the pin; batch per allow_batch; extra_headers
+    empty on every ModelEvent; any other set GenerateConfig field outside
+    RUN_CONFIG_OPERATIONAL refuses (every sampling parameter, reasoning_tokens, seed). EvalConfig
+    fields such as retry_on_error and fail_on_error are not checked.
+
+    Returns a summary of the effective values (never a header value)."""
+    status = getattr(log, "status", None)
+    if status != "success":
+        raise RunConfigError(f"run config: log status is {status!r}, not 'success'")
+    try:
+        spec = log.eval
+        eval_config = spec.config
+        plan_config = log.plan.config
+    except AttributeError as e:
+        raise RunConfigError(f"run config: cannot read the log header ({e})") from e
+    for name in ("limit", "sample_id"):
+        value = getattr(eval_config, name, None)
+        if value is not None:
+            raise RunConfigError(
+                f"run config: eval config sets {name}={value!r}; a pre-registered run covers the whole dataset"
+            )
+    if expected_epochs is not None:
+        if eval_config.epochs != expected_epochs:
+            raise RunConfigError(
+                f"run config: eval config epochs={eval_config.epochs!r}, expected {expected_epochs} "
+                f"(an --epochs flag replaces the Task epochs)"
+            )
+        task_epochs = (spec.task_args or {}).get("epochs")
+        if task_epochs is not None and task_epochs != expected_epochs:
+            raise RunConfigError(f"run config: task_args epochs={task_epochs!r}, expected {expected_epochs}")
+
+    plan = _generate_fields(plan_config)
+    _check_generate("plan.config", plan, evaluated=True, allow_batch=allow_batch, max_tokens_pin=max_tokens_pin)
+
+    samples = log.samples
+    if samples is None:
+        raise RunConfigError("run config: the log has no samples; read it in full, not header_only")
+    evaluated_events = 0
+    for sample in samples:
+        for event in sample.events or ():
+            if getattr(event, "event", None) != "model":
+                continue
+            role = getattr(event, "role", None)
+            where = f"ModelEvent of sample {sample.id!r} epoch {sample.epoch}" + (f" role {role!r}" if role else "")
+            fields = _generate_fields(event.config)
+            if role is None:
+                evaluated_events += 1
+                _check_generate(where, fields, evaluated=True, allow_batch=allow_batch,
+                                max_tokens_pin=max_tokens_pin)
+            elif fields.get("extra_headers"):
+                raise RunConfigError(f"run config: {where} sets extra_headers; no roster run sets them")
+    if evaluated_events == 0:
+        raise RunConfigError("run config: no ModelEvent of the evaluated model; what the provider was sent is unknown")
+
+    scored = {(s.id, s.epoch) for s in samples if s.error is None and s.scores}
+    if expected_samples is not None:
+        epochs = expected_epochs if expected_epochs is not None else (eval_config.epochs or 1)
+        want = expected_samples * epochs
+        if len(scored) != want:
+            raise RunConfigError(
+                f"run config: {len(scored)} scored sample-epochs, expected exactly {want} "
+                f"({expected_samples} samples x {epochs} epochs)"
+            )
+    return {
+        "status": status,
+        "model": spec.model,
+        "epochs": eval_config.epochs,
+        "samples": len({s.id for s in samples}),
+        "scored_sample_epochs": len(scored),
+        "evaluated_model_events": evaluated_events,
+        "reasoning_effort": plan.get("reasoning_effort"),
+        "max_tokens": plan.get("max_tokens"),
+        "batch": plan.get("batch"),
+        "operational": {k: plan[k] for k in RUN_CONFIG_OPERATIONAL if k in plan},
+        "retry_on_error": getattr(eval_config, "retry_on_error", None),
+        "fail_on_error": getattr(eval_config, "fail_on_error", None),
     }
 
 

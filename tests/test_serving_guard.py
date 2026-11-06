@@ -17,7 +17,7 @@ import httpx2
 import pytest
 from inspect_ai._cli.util import parse_model_role_cli_args
 from inspect_ai.log._transcript import Transcript, init_transcript
-from inspect_ai.model import get_model
+from inspect_ai.model import GenerateConfig, get_model
 from inspect_ai.model import _model as inspect_model_module
 
 from icfr_agent_evals import roster
@@ -40,13 +40,14 @@ OPENAI = "https://api.openai.com/v1"
 URL_ENV = ("ANTHROPIC_BASE_URL", "OPENAI_BASE_URL", "INSPECT_EVAL_MODEL_BASE_URL")
 SCAN_ENV = ("SCOUT_SCAN_MODEL_BASE_URL", "INSPECT_EVAL_SCAN_MODEL_BASE_URL")
 HEADER_ENV = ("ANTHROPIC_CUSTOM_HEADERS", "OPENAI_CUSTOM_HEADERS")
+EXTRA_ENV = "INSPECT_EVAL_EXTRA_HEADERS"
 
 
 @pytest.fixture(autouse=True)
 def clean_env(monkeypatch, tmp_path):
     for name in ("HOME", "USERPROFILE", "APPDATA", "ANTHROPIC_CONFIG_DIR"):
         monkeypatch.setenv(name, str(tmp_path))
-    for name in (*URL_ENV, *SCAN_ENV, *HEADER_ENV, "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_PROFILE"):
+    for name in (*URL_ENV, *SCAN_ENV, *HEADER_ENV, EXTRA_ENV, "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_PROFILE"):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -476,3 +477,148 @@ def test_scan_jobs_skip_the_dotenv_when_loading_is_disabled(tmp_path, monkeypatc
 
 def test_roster_module_exposes_the_event_source():
     assert roster.SERVING_EVENT_SOURCE == "roster_check" and roster.EVALUATED_KEY == "evaluated_model"
+
+
+# --- GenerateConfig request headers (external review R4) ---------------------------------
+# --extra-headers, INSPECT_EVAL_EXTRA_HEADERS (the CLI reads it as --extra-headers) and a
+# model's own config.extra_headers all reach the request after the SDK's auth headers,
+# so each can replace the credential while the host stays first-party. The marker
+# values below are harmless strings; no test sends a request.
+
+MARKER = {"X-Review-Marker": "w2"}
+
+
+def test_extra_headers_variable_name_is_pinned():
+    assert roster.EXTRA_HEADERS_ENV == EXTRA_ENV
+
+
+def test_no_extra_headers_in_force_by_default():
+    assert roster.extra_headers_in_force() == []
+
+
+@pytest.mark.parametrize("provider, url", [("anthropic", ANTHROPIC), ("openai", OPENAI)])
+def test_validate_serving_refuses_any_extra_header_source(provider, url):
+    with pytest.raises(RosterError, match="request headers are in force"):
+        validate_serving(provider, url, extra_headers=[EXTRA_ENV])
+    assert validate_serving(provider, url, extra_headers=[]) == url
+
+
+@pytest.mark.parametrize("name", [WORKER, GRADER, CALIBRATOR])
+def test_extra_headers_variable_fails(name, monkeypatch):
+    monkeypatch.setenv(EXTRA_ENV, '{"X-Review-Marker": "w2"}')
+    assert roster.extra_headers_in_force() == [EXTRA_ENV]
+    with pytest.raises(RosterError, match=EXTRA_ENV):
+        model_serving(_model(name))
+
+
+@pytest.mark.parametrize("blank", ["", "  "])
+def test_blank_extra_headers_variable_passes(blank, monkeypatch):
+    monkeypatch.setenv(EXTRA_ENV, blank)
+    assert roster.extra_headers_in_force() == []
+    assert model_serving(_model(WORKER)) == {"model": WORKER, "base_url": ANTHROPIC}
+
+
+@pytest.mark.parametrize("name", [WORKER, GRADER, CALIBRATOR])
+def test_extra_headers_on_the_active_generate_config_fail(name):
+    # The eval config (--extra-headers) reaches the setup solver as Inspect's active
+    # generate config; it is set here the way Inspect sets it, in a copied context.
+    from inspect_ai.model._model import init_active_model
+
+    model = _model(name)
+
+    def run():
+        init_active_model(model, GenerateConfig(reasoning_effort="high", extra_headers=MARKER))
+        assert roster.extra_headers_in_force() == [roster.ACTIVE_CONFIG_SOURCE]
+        return model_serving(model)
+
+    with pytest.raises(RosterError, match="active GenerateConfig.extra_headers"):
+        contextvars.copy_context().run(run)
+
+
+def test_empty_extra_headers_on_the_active_generate_config_pass():
+    from inspect_ai.model._model import init_active_model
+
+    model = _model(WORKER)
+
+    def run():
+        init_active_model(model, GenerateConfig(reasoning_effort="high", extra_headers={}))
+        return model_serving(model)
+
+    assert contextvars.copy_context().run(run) == {"model": WORKER, "base_url": ANTHROPIC}
+
+
+@pytest.mark.parametrize("name", [WORKER, GRADER, CALIBRATOR])
+def test_extra_headers_on_a_model_config_fail(name):
+    with pytest.raises(RosterError, match="config.extra_headers"):
+        model_serving(_model(name, config=GenerateConfig(extra_headers=MARKER)))
+
+
+def test_extra_headers_on_a_stub_model_config_fail():
+    # The external reviewer's stub: it passed before the fix.
+    fake = _Fake(api=_Fake(client=_Fake(base_url=httpx2.URL(ANTHROPIC), auth_token=None), base_url=None),
+                 explicit_base_url=None, model_args={}, config=GenerateConfig(extra_headers=MARKER))
+    with pytest.raises(RosterError, match="request headers are in force"):
+        model_serving(fake)
+    fake.config = GenerateConfig()
+    assert model_serving(fake) == {"model": WORKER, "base_url": ANTHROPIC}
+
+
+def test_error_names_the_source_never_the_value(monkeypatch):
+    monkeypatch.setenv(EXTRA_ENV, '{"X-Review-Marker": "secret-looking-w2"}')
+    with pytest.raises(RosterError) as info:
+        model_serving(_model(WORKER))
+    assert "secret-looking-w2" not in str(info.value)
+
+
+def test_roster_check_stops_a_run_with_the_extra_headers_variable(monkeypatch):
+    monkeypatch.setenv(EXTRA_ENV, '{"X-Review-Marker": "w2"}')
+    with pytest.raises(RosterError, match=EXTRA_ENV):
+        _run_roster_check(monkeypatch, _model(WORKER),
+                          {"grader": _model(GRADER), "calibrator": _model(CALIBRATOR)})
+
+
+def test_roster_check_stops_a_run_with_eval_extra_headers(monkeypatch):
+    from inspect_ai.model._model import init_active_model
+
+    evaluated = _model(WORKER)
+
+    def run():
+        init_active_model(evaluated, GenerateConfig(reasoning_effort="high", extra_headers=MARKER))
+        return _run_roster_check(monkeypatch, evaluated, {"grader": _model(GRADER), "calibrator": _model(CALIBRATOR)})
+
+    with pytest.raises(RosterError, match="request headers are in force"):
+        contextvars.copy_context().run(run)
+
+
+def test_scanner_serving_rejects_extra_headers(monkeypatch):
+    monkeypatch.setenv(EXTRA_ENV, '{"X-Review-Marker": "w2"}')
+    with pytest.raises(ScannerModelError, match=EXTRA_ENV):
+        scanner_serving(SCOUT_SCANNER, _model(SCOUT_SCANNER))
+
+
+def test_eval_extra_headers_reach_the_setup_solver_and_offline_runs_still_skip_the_guard(tmp_path):
+    # A mock eval with extra_headers (the in-process form of --extra-headers): the setup
+    # stage sees them through extra_headers_in_force, and roster_check on an all-mockllm
+    # run still returns before the guard, so the run succeeds as before.
+    from inspect_ai import Task, eval as inspect_eval
+    from inspect_ai.dataset import Sample
+    from inspect_ai.solver import generate, solver
+
+    @solver
+    def record_in_force():
+        async def solve(state, generate):
+            state.store.set("in_force", roster.extra_headers_in_force())
+            return state
+
+        return solve
+
+    def run(**kw):
+        task = Task(dataset=[Sample(input="x", target="y")], setup=[record_in_force(), roster_check()],
+                    solver=generate())
+        log = inspect_eval(task, model="mockllm/model", model_roles={"grader": "mockllm/model",
+                           "calibrator": "mockllm/model"}, log_dir=str(tmp_path), display="none", **kw)[0]
+        assert log.status == "success", log.error
+        return log.samples[0].store["in_force"]
+
+    assert run(extra_headers=MARKER) == [roster.ACTIVE_CONFIG_SOURCE]
+    assert run() == []
