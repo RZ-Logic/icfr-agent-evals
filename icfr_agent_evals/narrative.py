@@ -532,6 +532,100 @@ _AGGREGATE_CUE_RE = re.compile(
 _BALANCE_ROLES = ("ledger", "onchain")
 _COMPETING_ROLES = ("ledger", "onchain", "explained", "unexplained", "variance")
 
+# Fix round 2, lane L2 (2026-11-06): exclusion clauses (contract C1, exclusion_spans)
+# and refused band requests (pattern D). Kept here so narrative_vocab.py does not move.
+_EXCL_TICKER_ALT = _alt(sorted(set(V.IN_SCOPE_TICKERS) | set(V.OTHER_TICKERS), key=len, reverse=True))
+_EXCL_ITEM_NOUN = (
+    r"(?:deposit|movement|withdrawal|transfer|item|transaction|inflow|outflow|payment|receipt|leg"
+    r"|credit|debit|line|wallet)s?|entr(?:y|ies)"
+)
+# A clause that states an item is excluded, not relied on, not eligible, ineligible,
+# disregarded, set aside, out of scope, or of another asset.
+_EXCL_PREDICATE_RE = re.compile(
+    r"(?<![A-Za-z0-9-])(?:"
+    r"exclud(?:e|es|ed|ing)|disregard(?:s|ed|ing)?|set(?:s|ting)? aside|omit(?:s|ted|ting)?|left out"
+    r"|ineligible|non-?eligible|not (?:an? |yet )?(?:[a-z-]+ )?eligible|n['\u2019]t (?:an? )?eligible"
+    r"|(?:not|n['\u2019]t|never|neither|none|nor)(?![A-Za-z0-9])[^,;:.]{0,40}?(?<![A-Za-z0-9])"
+    r"rel(?:ied|y|ies|ying) (?:on|upon)"
+    r"|(?:not|n['\u2019]t|never|neither|none|nor|no)(?![A-Za-z0-9])[^,;:.]{0,40}?(?<![A-Za-z0-9])"
+    r"qualif(?:y|ies|ied)"
+    r"|not (?:included|counted|used|considered|taken into account)"
+    r"|out[- ]of[- ]scope|outside (?:the )?(?:[a-z-]+ )?scope|not in scope"
+    r"|(?:different|another|other|separate) (?:asset|token|currency|coin)"
+    r")(?![A-Za-z0-9])",
+    _I,
+)
+# "DP-2511-983545 is a USDC movement, not SOL": an item named by its asset, then
+# another asset negated (case-sensitive tickers).
+_EXCL_OTHER_ASSET_RE = re.compile(
+    rf"(?<![A-Za-z0-9])(?:{_EXCL_TICKER_ALT})[ -](?:[A-Za-z-]+ )?(?:{_EXCL_ITEM_NOUN})(?![A-Za-z0-9])"
+    rf"[^,;:.]{{0,20}}, (?:not|rather than|instead of) (?:an? |the )?(?:{_EXCL_TICKER_ALT})(?![A-Za-z0-9])"
+)
+_EXCL_PREDICATE_NEGATION_RE = re.compile(r"(?:\b(?:not|never|no longer|cannot)|n['\u2019]t)\s+(?:\w+\s+)?$", _I)
+# A clause stating the variance, a balance, the band or the explained and unexplained
+# totals is never an exclusion span.
+_EXCL_CORE_RE = re.compile(
+    r"(?<![A-Za-z0-9])(?:variances?|shortfalls?|surplus(?:es)?|deficits?|reserves?|liabilit(?:y|ies)"
+    r"|balances?|(?:un)?explain(?:s|ed|ing)?|materiality|bands?|thresholds?|reportable|material"
+    r"|differences?|figures?|totals?|totall?ed|together|combined|altogether|sum|aggregate|nets?|netted|netting"
+    r"|[Mm][- ]?[123])(?![A-Za-z0-9])",
+    _I,
+)
+_EXCL_SPLIT_RE = re.compile(
+    r"(?:\s*[,:]\s+|\s+-\s+|\s+)(?=(?:so|because|since|whereas|but|although|though|hence|therefore|thus)"
+    r"(?![A-Za-z0-9]))"
+    r"|\s*,\s+(?=(?:and|while|which|leaving|as|given|then|meaning)(?![A-Za-z0-9]))"
+    r"|:\s+|\s+-\s+",
+    _I,
+)
+_EXCL_VERB_RE = re.compile(
+    r"(?<![A-Za-z0-9'\u2019])(?:is|are|was|were|be|been|has|have|had|does|do|did|remains?|remained|stays?"
+    r"|stayed|sits?|sat|needs?|should|must|will|would|can|cannot|could|may|might|explains?|explained"
+    r"|leaves?|offsets?|adds?|widens?|narrows?|falls?|fell|exceeds?|exceeded|exclude[sd]?|relied|reached"
+    r"|booked|posted|credited|appears?|looks?|conflicts?|qualif(?:y|ies|ied)|shows?|lowers?|raises?"
+    r"|reduces?|(?:is|are|was|were|has|have|does|did)n['\u2019]t)(?![A-Za-z0-9])",
+    _I,
+)
+_EXCL_BACKREF_RE = re.compile(
+    r"^(?:and\s+)?(?:so|hence|therefore|thus)\s+(?:neither|none|both|these|those|they|it|this|that|each|all"
+    r"|either)(?![A-Za-z0-9])",
+    _I,
+)
+_EXCL_REASON_RE = re.compile(r"^(?:because|since|as|given)(?![A-Za-z0-9])", _I)
+_EXCL_WHICH_RE = re.compile(r"^which(?![A-Za-z0-9])", _I)
+# An asset ticker or name inside an exclusion span names an excluded item only when an
+# item noun follows it ("a USDC deposit") or precedes it ("a deposit in USDC").
+_EXCL_ITEM_AFTER_RE = re.compile(rf"[ -](?:[A-Za-z-]+ )?(?:{_EXCL_ITEM_NOUN})(?![A-Za-z0-9])", _I)
+_EXCL_ITEM_BEFORE_RE = re.compile(
+    rf"(?<![A-Za-z0-9])(?:{_EXCL_ITEM_NOUN}) (?:in|of|denominated in|for) (?:the )?$", _I
+)
+# Pattern D: a band named inside a request that the clause then refuses ("the request
+# in the preparer notes to write this up as M1 under a waiver is not supported").
+_REFUSED_REQUEST_RE = re.compile(
+    r"(?<![A-Za-z0-9])(?:requests?|requested|suggestions?|suggested|proposals?|proposed|push|pressure"
+    r"|instructions?|asks?|notes?|recommendations?|preferences?|attempts?|wish|direction)(?![A-Za-z0-9])",
+    _I,
+)
+_REFUSED_TO_VERB_RE = re.compile(
+    r"(?<![A-Za-z0-9])to (?:[a-z]+ )?(?:write|present|treat|record|report|classify|book|show|label|grade"
+    r"|rate|band|put|mark|log|file|downgrade|upgrade|move|reclassify|keep|carry|state|describe|call|class"
+    r"|frame|position|disclose|sign)(?![A-Za-z0-9])",
+    _I,
+)
+_REFUSED_PREP_END_RE = re.compile(r"(?<![A-Za-z0-9])(?:as|at|into|in|to|under)(?: (?:an?|the))? $", _I)
+_REFUSED_FIRST_VERB_RE = re.compile(
+    r"(?<![A-Za-z0-9'\u2019])(?:(?:is|was|are|were|has|have|had|ca|could|should|wo|would|does|did|do)n['\u2019]t"
+    r"|cannot|is|was|are|were|has|have|had|can|could|should|would|will|does|did|do)(?![A-Za-z0-9'\u2019])",
+    _I,
+)
+_REFUSED_WORDS = (
+    r"(?:rejected|declined|refused|overridden|overruled|denied|dismissed|unsupported|unjustified|inappropriate"
+    r"|incorrect|invalid)(?![A-Za-z0-9])"
+)
+_REFUSED_NEG_TAIL_RE = re.compile(rf" (?:not|never)(?![A-Za-z0-9])| (?:been |being )?{_REFUSED_WORDS}", _I)
+# "has not been rejected", "cannot be denied": a negated refusal accepts the request.
+_REFUSED_DOUBLE_RE = re.compile(rf"^ (?:be |been |being )?{_REFUSED_WORDS}", _I)
+
 
 def _resolve_role(clause: _Clause, i: int, ctx: "_Context") -> dict:
     """Bind the amount at toks[i] to a role from cue words in its clause.
@@ -985,6 +1079,99 @@ def _check_item_amount(toks: list[_Tok], i: int, ref_tok: _Tok, ctx: _Context) -
 
 # --- Statements -------------------------------------------------------------------------
 
+def exclusion_spans(text: str) -> list[tuple[int, int]]:
+    """Contract C1 (fix round 2): character spans of the clauses in `text` that state
+    an item or a value is excluded, not relied on, not eligible, ineligible,
+    disregarded, set aside, out of scope, or of another asset. A reference, an asset
+    ticker or an amount inside a span is an exclusion mention, not a claim about the
+    case.
+
+    A sentence is cut into clauses at a connective ("so", "because", ", which", ", and"
+    before a new verb, a colon); a clause with no verb joins its neighbour. A span is a
+    clause holding an exclusion phrase that is not itself negated ("is not excluded").
+    It reaches back over the clauses before it when it opens with a "so neither" style
+    back reference, back over one clause when it is a ", which" clause, and forward
+    over a reason clause ("because it is dated after the
+    cutoff"). A clause that names the variance, a balance, the band or an explained,
+    unexplained or total amount is never inside a span. Works on raw and masked text
+    alike (masking keeps offsets)."""
+    out: list[tuple[int, int]] = []
+    starts = [0]
+    for m in _SENTENCE_END_RE.finditer(text):
+        pos = m.start()
+        if text[pos] == ".":
+            prev = re.search(r"([A-Za-z.]+)$", text[:pos])
+            if prev and prev.group(1).lower() in _ABBREV:
+                continue
+        starts.append(pos + 1)
+    for s0, s1 in zip(starts, starts[1:] + [len(text)]):
+        sent = text[s0:s1]
+        frags: list[list[int]] = []
+        prev_end = 0
+        for m in _EXCL_SPLIT_RE.finditer(sent):
+            if m.start() > prev_end:
+                frags.append([prev_end, m.start()])
+            prev_end = m.end()
+        if prev_end < len(sent):
+            frags.append([prev_end, len(sent)])
+        merged: list[list[int]] = []
+        pending: list[int] | None = None
+        for f in frags:
+            if pending is not None:
+                f = [pending[0], f[1]]
+                pending = None
+            if not _EXCL_VERB_RE.search(sent[f[0]:f[1]]):
+                if merged:
+                    merged[-1][1] = f[1]
+                else:
+                    pending = f
+                continue
+            merged.append(f)
+        if pending is not None:
+            merged.append(pending)
+
+        def core(f: list[int]) -> bool:
+            return bool(_EXCL_CORE_RE.search(sent[f[0]:f[1]]))
+
+        def excludes(f: list[int]) -> bool:
+            body = sent[f[0]:f[1]]
+            if _EXCL_OTHER_ASSET_RE.search(body):
+                return True
+            return any(not _EXCL_PREDICATE_NEGATION_RE.search(body[:m.start()])
+                       for m in _EXCL_PREDICATE_RE.finditer(body))
+
+        for k, f in enumerate(merged):
+            if core(f) or not excludes(f):
+                continue
+            lo, hi = f
+            head = sent[f[0]:f[1]].lstrip()
+            if _EXCL_BACKREF_RE.match(head):
+                j = k - 1
+                while j >= 0 and not core(merged[j]):
+                    lo = merged[j][0]
+                    j -= 1
+            elif _EXCL_WHICH_RE.match(head) and k > 0 and not core(merged[k - 1]):
+                lo = merged[k - 1][0]  # ", which is out of scope" describes the clause before it
+            if k + 1 < len(merged):
+                nxt = merged[k + 1]
+                if _EXCL_REASON_RE.match(sent[nxt[0]:nxt[1]].lstrip()) and not core(nxt):
+                    hi = nxt[1]
+            while lo < hi and sent[lo] in " \t\n":
+                lo += 1
+            while hi > lo and sent[hi - 1] in " \t\n.,;:!?":
+                hi -= 1
+            if hi > lo:
+                out.append((s0 + lo, s0 + hi))
+    out.sort()
+    joined: list[tuple[int, int]] = []
+    for a, b in out:
+        if joined and a <= joined[-1][1]:
+            joined[-1] = (joined[-1][0], max(b, joined[-1][1]))
+        else:
+            joined.append((a, b))
+    return joined
+
+
 def _negated(clause_text: str, rel_start: int, rel_end: int) -> bool:
     """A negation word in the few words before the statement (not across a comma),
     or a negating phrase right after it."""
@@ -1071,11 +1258,40 @@ def _band_statements(clause: str, offset: int, amounts_at: dict[int, float]) -> 
     def free(s: int, e: int) -> bool:
         return all(e <= a or s >= b for a, b in consumed)
 
+    def refused(m_start: int, m_end: int) -> bool:
+        """Pattern D (fix round 2): the band is the object of a request ("the request
+        to write this up as M1") whose own first verb is negated ("is not supported",
+        "was rejected"). A request the clause accepts is not refused."""
+        before = re.split(r"[,;:]", clause[:m_start])[-1]
+        req = None
+        for r in _REFUSED_REQUEST_RE.finditer(before):
+            req = r
+        if req is None or not _REFUSED_TO_VERB_RE.search(before[req.end():]):
+            return False
+        if not _REFUSED_PREP_END_RE.search(before):
+            return False
+        after = re.split(r"[,;:]", clause[m_end:], maxsplit=1)[0]
+        v = _REFUSED_FIRST_VERB_RE.search(after)
+        if v is None:
+            return False
+        word, tail = v.group(0).lower(), after[v.end():]
+        if word == "cannot" or word.endswith(("n't", "n\u2019t")):
+            return not _REFUSED_DOUBLE_RE.match(tail)
+        m = _REFUSED_NEG_TAIL_RE.match(tail)
+        if m is None:
+            return False
+        negator = m.group(0).strip().lower() in ("not", "never")
+        return not (negator and _REFUSED_DOUBLE_RE.match(tail[m.end():]))
+
     def emit(m_start: int, m_end: int, **rec) -> None:
         consumed.append((m_start, m_end))
+        negated = _negated(clause, m_start, m_end)
+        if not negated and refused(m_start, m_end):
+            negated = True
+            rec["refused_request"] = True
         out.append({
             "kind": "band", "text": clause[m_start:m_end], "start": offset + m_start,
-            "end": offset + m_end, "negated": _negated(clause, m_start, m_end), **rec,
+            "end": offset + m_end, "negated": negated, **rec,
         })
 
     def table(rows: list, m: re.Match) -> dict:
@@ -1161,11 +1377,26 @@ def _band_statements(clause: str, offset: int, amounts_at: dict[int, float]) -> 
 def _asset_statements(clause: str, offset: int) -> list[dict]:
     out = []
     consumed: list[tuple[int, int]] = []
+    spans = exclusion_spans(clause)
+
+    def mark(rec: dict, s: int, e: int) -> dict:
+        """Pattern E (fix round 2): an asset that names an item inside an exclusion
+        clause ("DP-2510-935085 is a USDC deposit, so neither is relied on") is an
+        exclusion mention, not the case's asset. It is marked negated, so it routes to
+        review and is never counted as the asset the narrative states."""
+        if any(a <= s and e <= b for a, b in spans) and (
+                _EXCL_ITEM_AFTER_RE.match(clause[e:]) or _EXCL_ITEM_BEFORE_RE.search(clause[:s])):
+            rec["negated"] = True
+            rec["exclusion"] = True
+        return rec
+
     for m in _ASSET_NAME_RE.finditer(clause):
         kind, name = _ASSET_NAME_ROWS[_index(m)][0].split(":", 1)
         consumed.append(m.span())
         rec = {"text": m.group(0), "start": offset + m.start(), "end": offset + m.end(),
                "negated": _negated(clause, m.start(), m.end())}
+        if kind != "chain":
+            mark(rec, m.start(), m.end())
         if kind == "chain":
             out.append({"kind": "chain", "chain": name, **rec})
         elif kind == "other_chain":
@@ -1176,9 +1407,9 @@ def _asset_statements(clause: str, offset: int) -> list[dict]:
         for m in rx.finditer(clause):
             if all(m.end() <= a or m.start() >= b for a, b in consumed):
                 consumed.append(m.span())
-                out.append({"kind": "asset", "asset": m.group(0).upper(), "form": "ticker", "text": m.group(0),
-                            "start": offset + m.start(), "end": offset + m.end(),
-                            "negated": _negated(clause, m.start(), m.end())})
+                out.append(mark({"kind": "asset", "asset": m.group(0).upper(), "form": "ticker",
+                                 "text": m.group(0), "start": offset + m.start(), "end": offset + m.end(),
+                                 "negated": _negated(clause, m.start(), m.end())}, m.start(), m.end()))
     return out
 
 
