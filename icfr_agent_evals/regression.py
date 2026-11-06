@@ -65,7 +65,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
-from .reliability import FM002, FM002_UNRECORDED, PREREGISTERED_K, GateError, _numeric, evaluate_trial
+from .reliability import (
+    FM002, FM002_UNRECORDED, PREREGISTERED_K, QUEUE_CODE, QUEUE_SWEEP, QUEUE_UNSTATED_REASON, GateError,
+    _numeric, evaluate_trial,
+)
 from .rubric import WIRED_SCORERS
 from .scoring import FABRICATION_REVIEW, SweepHit
 
@@ -80,11 +83,14 @@ SIGNOFF_CODES: tuple[str, ...] = (
 SWEEP_ROUTE = "narrative_sweep"   # route class: holds unconfirmed fabrications, stays on R1 under R2
 CODE_ROUTE = "code_review"        # route class: any other code-check review reason
 ROUTE_CLASSES: tuple[str, ...] = (SWEEP_ROUTE, CODE_ROUTE)
+assert (SWEEP_ROUTE, CODE_ROUTE) == (QUEUE_SWEEP, QUEUE_CODE), "reliability queue classes must match the route classes"
 # Trigger families: the FM codes, then the two route classes. A route trigger is
 # one route key ("<class>: <reason key>"), each counted on its own (route_key).
 SIGNOFF_TRIGGERS: tuple[str, ...] = (*SIGNOFF_CODES, *ROUTE_CLASSES)
 R1_ONLY: frozenset[str] = frozenset({"FM-005", "FM-015", SWEEP_ROUTE})
 LADDERS: tuple[str, ...] = ("R1", "R2")
+HOLM_M = len(DIMENSIONS) + 1   # the section 10(a) family: five dimensions and content-pass^4
+assert HOLM_M == 6
 SCORE_RANGE = (0.0, 3.0)
 
 # Wired dimension -> the scorer whose value is that dimension's score on an epoch.
@@ -105,6 +111,7 @@ SWEEP_REASON_PREFIXES: tuple[str, ...] = tuple(
 )
 FORMAT_BREAK_PREFIX = "format break:"
 UNSTATED_REASON = "review flagged with no stated reason"
+assert UNSTATED_REASON == QUEUE_UNSTATED_REASON
 _NARRATIVE_KIND_RE = re.compile(r"^([a-z][a-z0-9_]*)(?::\s|$)")  # narrative.py writes "kind: matched text"
 _TYPE_MISMATCH_RE = re.compile(r"^reconciling_items\[\d+\] .* type .* differs from (.+)$", re.DOTALL)
 _EXTRACTOR_RAISED_RE = re.compile(r"^(narrative extractor raised [A-Za-z_][A-Za-z0-9_.]*)")
@@ -259,6 +266,56 @@ def holm(pvalues: Mapping[str, float], alpha: float = FAMILY_ALPHA) -> dict[str,
         rejecting = rejecting and p <= alpha / (m - i + 1)
         out[name] = (running, rejecting)
     return out
+
+
+def t_ppf(q: float, df: float) -> float:
+    """Student t quantile by bisection on t_cdf; q in (0, 1)."""
+    if not 0.0 < q < 1.0 or math.isnan(df) or df <= 0:
+        raise ValueError(f"t_ppf needs 0 < q < 1 and df > 0, got q={q}, df={df}")
+    lo, hi = -1e3, 1e3
+    for _ in range(200):
+        mid = (lo + hi) / 2.0
+        if t_cdf(mid, df) < q:
+            lo = mid
+        else:
+            hi = mid
+    return (lo + hi) / 2.0
+
+
+def mcnemar_block_floor(m: int = HOLM_M, reversals: int = 0, *, alpha_rank: int = 1) -> int:
+    """Smallest one-way discordant count (worse) whose exact one-sided McNemar p clears
+    the Holm threshold FAMILY_ALPHA / (m - alpha_rank + 1) with `reversals` cases
+    going the other way. At rank 1 with m = 6 it is 7 with no reversal and 10 with
+    one (F2-02): content-pass^4 cannot block below it, and worse never exceeds the
+    baseline's passing cases. A protocol helper only; compare() is unchanged."""
+    if m < 1 or not 1 <= alpha_rank <= m:
+        raise ValueError(f"need m >= 1 and 1 <= alpha_rank <= m, got m={m}, alpha_rank={alpha_rank}")
+    if reversals < 0:
+        raise ValueError(f"reversals must be non-negative, got {reversals}")
+    threshold = FAMILY_ALPHA / (m - alpha_rank + 1)
+    for worse in range(1, 10_000):
+        if mcnemar_one_sided(worse, reversals) <= threshold:
+            return worse
+    raise ArithmeticError(f"no discordant count under 10000 blocks at threshold {threshold}")
+
+
+def paired_t_mdd(sd: float, n: int = 20, alpha_rank: int = 1, *, m: int = HOLM_M, power: float = 0.8) -> float:
+    """Minimal detectable mean drop of the one-sided paired t-test at Holm rank
+    `alpha_rank` of m, by the central-t approximation (t_{1-a, n-1} + t_{power, n-1}) *
+    sd / sqrt(n), sd being the sd of per-sample epoch-mean differences. Inferred, not
+    measured: at n = 20, rank 1, 80 percent power it is 0.390 at sd 0.5 and 0.780 at
+    sd 1.0 (F2-02). power = 0.5 gives the drop at which p just reaches the threshold."""
+    if not math.isfinite(sd) or sd < 0:
+        raise ValueError(f"sd must be finite and non-negative, got {sd}")
+    if n < 2:
+        raise ValueError(f"n must be at least 2, got {n}")
+    if m < 1 or not 1 <= alpha_rank <= m:
+        raise ValueError(f"need m >= 1 and 1 <= alpha_rank <= m, got m={m}, alpha_rank={alpha_rank}")
+    if not 0.0 < power < 1.0:
+        raise ValueError(f"power must lie in (0, 1), got {power}")
+    alpha = FAMILY_ALPHA / (m - alpha_rank + 1)
+    df = n - 1
+    return (t_ppf(1.0 - alpha, df) + t_ppf(power, df)) * sd / math.sqrt(n)
 
 
 # --- Records from Inspect samples and logs -----------------------------------------------

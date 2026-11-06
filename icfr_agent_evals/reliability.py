@@ -26,6 +26,14 @@ each (sample, epoch) firing FM-002 takes the single direction its scorers record
 (understated, overstated, mixed, or unordered for a structured value outside the
 enum), "mixed" when they differ, and "unrecorded" when no scorer recorded one, so
 the counts by direction sum to fm_counts["FM-002"].
+
+Queue volume (queue_volume) counts distinct (sample, epoch, reason) items and
+distinct (sample, epoch) pairs by class, never len(review_queue): the queue keeps
+one ReviewRow per routing scorer as the audit trail, so one format break on one
+epoch is six rows and faithfulness_anchor repeats the fabrication and reconciling
+reasons. Classes: format_break (FM-000), sample_error, narrative_sweep and
+code_review (regression.route_key), plus fm_listed for a reason that rides with an
+FM code (the section 10(b) fabrication listing), which is not a section 10(c) route.
 """
 
 from __future__ import annotations
@@ -175,6 +183,91 @@ def reliability_report(samples: Iterable[Any], k: int) -> ReliabilityReport:
         epoch_anomalies=anomalies,
         fm002_by_direction=dict(sorted(by_direction.items())),
     )
+
+
+# Queue classes, in print order. The two route classes match regression.SWEEP_ROUTE
+# and regression.CODE_ROUTE (checked there); fm_listed is the reason route_key maps
+# to None other than a format break.
+QUEUE_FORMAT_BREAK = "format_break"
+QUEUE_SAMPLE_ERROR = "sample_error"
+QUEUE_SWEEP = "narrative_sweep"
+QUEUE_CODE = "code_review"
+QUEUE_FM_LISTED = "fm_listed"
+QUEUE_CLASSES: tuple[str, ...] = (QUEUE_FORMAT_BREAK, QUEUE_SAMPLE_ERROR, QUEUE_SWEEP, QUEUE_CODE, QUEUE_FM_LISTED)
+QUEUE_UNSTATED_REASON = "review flagged with no stated reason"  # regression.UNSTATED_REASON
+_FORMAT_BREAK_PREFIX = "format break:"
+
+
+@dataclass(frozen=True)
+class QueueItem:
+    """One distinct (sample, epoch, reason) review item, with every scorer that raised it."""
+    sample_id: str
+    epoch: int
+    reason: str
+    queue_class: str             # one of QUEUE_CLASSES
+    route_key: str | None        # regression.route_key, None for format_break, sample_error, fm_listed
+    scorers: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class QueueVolume:
+    """Distinct review items and distinct (sample, epoch) pairs per queue class. A
+    pair can sit in several classes, so total_sample_epochs is counted on its own."""
+    items: dict[str, int]          # class -> distinct (sample, epoch, reason)
+    sample_epochs: dict[str, int]  # class -> distinct (sample, epoch)
+    total_items: int
+    total_sample_epochs: int
+    scorer_rows: int               # len(review_queue), the audit trail, never the volume
+
+
+def _queue_class(row: ReviewRow, reason: str) -> tuple[str, str | None]:
+    if row.scorer == SAMPLE_ERROR_SCORER:
+        return QUEUE_SAMPLE_ERROR, None
+    if reason.startswith(_FORMAT_BREAK_PREFIX):
+        return QUEUE_FORMAT_BREAK, None
+    from .regression import route_class, route_key  # regression imports this module
+
+    key = route_key(reason)
+    if key is None:
+        return QUEUE_FM_LISTED, None
+    return route_class(key), key
+
+
+def queue_items(report: ReliabilityReport) -> tuple[QueueItem, ...]:
+    """The review queue as distinct (sample, epoch, reason) items, in queue order.
+    A row with no stated reason is one item under QUEUE_UNSTATED_REASON."""
+    found: dict[tuple[str, int, str], tuple[str, str | None, list[str]]] = {}
+    for row in report.review_queue:
+        for reason in row.reasons or (QUEUE_UNSTATED_REASON,):
+            ident = (row.sample_id, row.epoch, reason)
+            if ident not in found:
+                found[ident] = (*_queue_class(row, reason), [])
+            if row.scorer not in found[ident][2]:
+                found[ident][2].append(row.scorer)
+    return tuple(QueueItem(sid, ep, reason, cls, key, tuple(scorers))
+                 for (sid, ep, reason), (cls, key, scorers) in found.items())
+
+
+def queue_volume(report: ReliabilityReport) -> QueueVolume:
+    """Section 6 review volume by class (F2-07): distinct items and distinct
+    (sample, epoch) pairs, so a scorer that repeats a reason never inflates it."""
+    items = queue_items(report)
+    per_items = Counter(i.queue_class for i in items)
+    per_pairs = {cls: len({(i.sample_id, i.epoch) for i in items if i.queue_class == cls}) for cls in QUEUE_CLASSES}
+    return QueueVolume(
+        items={cls: per_items.get(cls, 0) for cls in QUEUE_CLASSES},
+        sample_epochs=per_pairs,
+        total_items=len(items),
+        total_sample_epochs=len({(i.sample_id, i.epoch) for i in items}),
+        scorer_rows=len(report.review_queue),
+    )
+
+
+def format_queue_volume(volume: QueueVolume) -> str:
+    """One line: distinct items and (sample, epoch) pairs per class."""
+    parts = "; ".join(f"{cls} {volume.items[cls]} items / {volume.sample_epochs[cls]} epochs" for cls in QUEUE_CLASSES)
+    return (f"Review queue: {volume.total_items} distinct (sample, epoch, reason) items on "
+            f"{volume.total_sample_epochs} distinct (sample, epoch) pairs; {parts}")
 
 
 def format_fm_counts(report: ReliabilityReport) -> str:

@@ -543,3 +543,116 @@ def test_cli_help_exits_3_not_the_pass_code(dev_run, flag):
     proc = subprocess.run([sys.executable, str(SCRIPT), "--baseline", dev_run.path, "--candidate", dev_run.path, flag],
                           capture_output=True, text=True)
     assert proc.returncode == 3, proc.stderr
+
+
+# --- Run headers: task, model, revision and worker prompt (F2-08) ---------------------
+
+def _set_spec(**fields):
+    def edit(log):
+        for key, value in fields.items():
+            setattr(log.eval, key, value)
+    return edit
+
+
+def _set_revision(commit, dirty):
+    from inspect_ai.log import EvalRevision
+
+    def edit(log):
+        log.eval.revision = EvalRevision(type="git", origin="https://example.invalid/repo.git", commit=commit, dirty=dirty)
+    return edit
+
+
+@pytest.mark.parametrize(
+    "name,edit,field",
+    [
+        ("other-task", _set_spec(task="variance_commentary_template_baseline"), "task"),
+        ("other-prompt", _set_meta("worker_prompt_sha256", "f" * 64), "worker_prompt_sha256"),
+        ("no-prompt", _drop_meta("worker_prompt_sha256"), "worker_prompt_sha256"),
+    ],
+)
+def test_cli_refuses_a_candidate_on_another_task_or_prompt(dev_run, cli, capsys, name, edit, field):
+    """F2-08: the template log (another task) was accepted at exit 0; a candidate must
+    run the baseline's task and worker prompt."""
+    cand = _derive(dev_run, f"header-{name}", edit)
+    assert cli.main(["--baseline", dev_run.path, "--candidate", cand]) == 3
+    err = capsys.readouterr().err
+    assert "REFUSED" in err and field in err and "differs from the baseline" in err
+
+
+@pytest.mark.parametrize(
+    "name,edit",
+    [
+        ("other-model", _set_spec(model="mockllm/degraded")),
+        ("other-revision", _set_revision("0000000", True)),
+        ("package-prefixed-task", lambda log: setattr(log.eval, "task", f"icfr_agent_evals/{log.eval.task.rsplit('/', 1)[-1]}")),
+    ],
+)
+def test_cli_allows_a_baseline_and_candidate_on_different_models_or_revisions(dev_run, cli, capsys, name, edit):
+    """D2 form (i): a mock-degraded candidate against the real pilot baseline differs in
+    model and revision; the CLI and an eval() call name the same task with and without
+    the package prefix. The headers show both runs."""
+    cand = _derive(dev_run, f"header-ok-{name}", edit)
+    assert cli.main(["--baseline", dev_run.path, "--candidate", cand]) == 0
+    out = capsys.readouterr().out
+    lines = out.splitlines()
+    assert lines[0].startswith(f"baseline: {dev_run.path} | task ")
+    assert lines[1].startswith(f"candidate 1: {cand} | task ")
+    if name == "other-model":
+        assert "| model mockllm/model |" in lines[0] and "| model mockllm/degraded |" in lines[1]
+    if name == "other-revision":
+        assert "| revision 0000000 dirty True |" in lines[1]
+
+
+POOL_REVISION = _set_revision("1111111", False)
+
+
+def _pool_edit(*edits):
+    def edit(log):
+        for one in (POOL_REVISION, *edits):
+            one(log)
+    return edit
+
+
+@pytest.mark.parametrize(
+    "name,edit,field",
+    [
+        ("pool-model", _pool_edit(_set_spec(model="mockllm/degraded")), "model"),
+        ("pool-revision", _set_revision("0000000", False), "revision"),
+        ("pool-dirty", _set_revision("1111111", True), "dirty"),
+        ("pool-prompt", _pool_edit(_set_meta("worker_prompt_sha256", "f" * 64)), "worker_prompt_sha256"),
+    ],
+)
+def test_cli_refuses_pooled_candidates_that_differ(dev_run, cli, capsys, name, edit, field):
+    """F2-08: section 10(d) pools re-runs of one candidate; a run on another model,
+    revision, dirty state or worker prompt is another candidate, not a re-run."""
+    first = _derive(dev_run, "header-pool-base", POOL_REVISION)
+    other = _derive(dev_run, f"header-{name}", edit)
+    for a, b in ((first, other), (other, first)):
+        assert cli.main(["--baseline", dev_run.path, "--candidate", a, "--candidate", b]) == 3
+        err = capsys.readouterr().err
+        assert "REFUSED" in err and field in err
+    # a prompt change also differs from the baseline, which is checked first
+    assert ("pooled candidate" in err) is (field != "worker_prompt_sha256")
+
+
+def test_cli_pools_identical_headers_and_prints_one_line_per_run(dev_run, cli, tmp_path):
+    out_json = tmp_path / "headers.json"
+    code = cli.main(["--baseline", dev_run.path, "--candidate", dev_run.path, "--candidate", dev_run.path,
+                     "--json", str(out_json)])
+    assert code == 2  # unchanged: the pooled raw counts double (test_cli_pooled_rerun_counts_run_against_the_candidate)
+    runs = json.loads(out_json.read_text(encoding="utf-8"))["runs"]
+    assert [r["label"] for r in runs] == ["baseline", "candidate 1", "candidate 2"]
+    for r in runs:
+        assert set(r) == {"label", "path", "task", "model", "revision", "dirty", "worker_prompt_sha256"}
+        assert r["task"] == "variance_commentary" and r["model"] == "mockllm/model"
+        assert r["worker_prompt_sha256"] == dev_run.log.eval.metadata["worker_prompt_sha256"]
+
+
+def test_script_refuses_another_task_as_candidate_exit_3(dev_run):
+    """Through the script itself, as the review's repro ran it."""
+    cand = _derive(dev_run, "header-script-template", _set_spec(task="variance_commentary_template_baseline"))
+    proc = subprocess.run([sys.executable, str(SCRIPT), "--baseline", dev_run.path, "--candidate", cand],
+                          capture_output=True, text=True)
+    assert proc.returncode == 3
+    assert "REFUSED" in proc.stderr and "variance_commentary_template_baseline" in proc.stderr
+    assert "RESULT" not in proc.stdout

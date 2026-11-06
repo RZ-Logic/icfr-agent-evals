@@ -215,3 +215,57 @@ def test_rehearse_prints_both_reports(rh, tmp_path_factory, capsys, monkeypatch)
 
 def test_dimensions_contract_unchanged():
     assert DIMENSIONS == ("correctness", "faithfulness", "calibration", "completeness", "robustness")
+
+
+# --- Run headers and the caught condition (F2-08, F2-02) -------------------------------
+
+def test_report_opens_with_one_header_line_per_run(runs, cli):
+    code, report = _cli(cli, ["--baseline", runs.baseline.path, "--candidate", runs.regression.path])
+    assert code == 1
+    lines = report.splitlines()
+    for line, (label, path) in zip(lines, (("baseline", runs.baseline.path), ("candidate 1", runs.regression.path))):
+        assert line.startswith(f"{label}: {path} | task variance_commentary | model mockllm/model | revision ")
+        assert "| worker_prompt_sha256 " in line
+    assert lines[2] == "Section 10(a) paired rule (Holm, m = 6)"
+
+
+def _edited_copy(src: str, dest: Path, edit) -> str:
+    from inspect_ai.log import read_eval_log, write_eval_log
+
+    log = read_eval_log(src)
+    edit(log)
+    write_eval_log(log, str(dest))
+    return str(dest)
+
+
+def test_another_task_as_candidate_is_refused_not_passed(runs, cli, tmp_path):
+    """F2-08 repro: the template baseline's log (another task) passed at exit 0."""
+    cand = _edited_copy(runs.no_change.path, tmp_path / "template-task.eval",
+                        lambda log: setattr(log.eval, "task", "variance_commentary_template_baseline"))
+    code, report = _cli(cli, ["--baseline", runs.baseline.path, "--candidate", cand])
+    assert code == 3 and report == ""
+
+
+def test_pooling_a_candidate_on_another_model_is_refused(runs, cli, tmp_path):
+    """F2-08 repro: a correct and a degraded run pooled as one candidate. Runs on
+    another model are refused; same-header re-runs still pool (section 10(d))."""
+    other = _edited_copy(runs.no_change.path, tmp_path / "other-model.eval",
+                         lambda log: setattr(log.eval, "model", "mockllm/other"))
+    code, _ = _cli(cli, ["--baseline", runs.baseline.path, "--candidate", runs.regression.path, "--candidate", other])
+    assert code == 3
+    code, _ = _cli(cli, ["--baseline", runs.baseline.path, "--candidate", other])
+    assert code == 0  # a baseline and a candidate may differ in model (D2 form (i))
+
+
+def test_rehearsal_regression_clears_the_pass4_block_floor(runs, cli, tmp_path):
+    """Caught (D2): exit 1 with the rejecting tests named. The degraded pair turns 18
+    passing cases, above the floor of 7 (10 with one reversal) at Holm rank 1."""
+    from icfr_agent_evals.regression import mcnemar_block_floor
+
+    out_json = tmp_path / "caught.json"
+    code, _ = _cli(cli, ["--baseline", runs.baseline.path, "--candidate", runs.regression.path, "--json", str(out_json)])
+    payload = json.loads(out_json.read_text(encoding="utf-8"))
+    assert code == 1
+    assert sorted(n for n, t in payload["paired"].items() if t["rejected"]) == ["content_pass4", "correctness", "faithfulness"]
+    worse = payload["paired"][PASS4]["detail"]["worse"]
+    assert worse == 18 >= mcnemar_block_floor(reversals=1) > mcnemar_block_floor() == 7
