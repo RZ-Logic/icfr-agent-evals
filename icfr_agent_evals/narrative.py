@@ -763,11 +763,35 @@ def _resolve_role(clause: _Clause, i: int, ctx: "_Context") -> dict:
         j = i + 1
         while j < len(toks) and _is_link(toks[j]):
             j += 1
+        partitive_after = False
         if j < len(toks) and toks[j].kind == "cue" and toks[j].role not in ("neutral", "explained"):
             partitive_after = toks[j].role == "variance" and any(toks[m].low == "of" for m in range(i + 1, j))
             subject_ok = subject_ok and partitive_after
         if subject_ok:
-            return {"role": "explained", "resolution": "aggregate_total", "cue": toks[agg].text}
+            out = {"role": "explained", "resolution": "aggregate_total", "cue": toks[agg].text}
+            # Aggregate step (2026-11-06, FIX-ROUND-2-AGGREGATE-BRIEF): "Together they
+            # total $X, all of it unexplained" labels the explained total as the
+            # unexplained amount. A role cue later in the clause (past the linking run,
+            # so past a comma or a verb) that is neither neutral nor explained, with no
+            # amount of its own before it, contradicts the binding: the figure keeps
+            # this resolution and _check_amount routes it instead of passing it. The
+            # partitive variance cue right after the amount ("$X of the surplus") is a
+            # part-of statement, not a contradiction, and is skipped; an amount before
+            # the cue takes the cue ("net to $X, leaving $0.00 unexplained"), and a cue
+            # with an amount of its own right after it over linking tokens labels that
+            # amount ("and the unexplained remainder is $40,000").
+            for k in range(j + 1 if partitive_after else j, len(toks)):
+                t = toks[k]
+                if t.kind == "amount":
+                    break
+                if t.kind == "cue" and t.role not in ("neutral", "explained"):
+                    m = k + 1
+                    while m < len(toks) and _is_link(toks[m]):
+                        m += 1
+                    if not (m < len(toks) and toks[m].kind == "amount"):
+                        out.update(route_reason="aggregate_total_role_cue_follows", cue_after=t.text)
+                    break
+            return out
 
     # "$X of the shortfall" is a part of the variance, not the variance: that cue
     # neither binds the amount nor separates it from the next cue
@@ -1023,6 +1047,11 @@ def _check_amount(toks: list[_Tok], i: int, binding: dict, ctx: _Context) -> dic
         else:
             rec.update(verdict="FM-001", reason="amount_role_unresolved_and_ungrounded", review=True)
 
+    if rec["verdict"] == "ok" and binding.get("route_reason"):
+        # aggregate step (2026-11-06): the figure is the explained total but a role cue
+        # later in its clause labels it otherwise (_resolve_role, aggregate_total), so it
+        # routes rather than passes; a figure that is wrong keeps its FM-001 above
+        rec.update(verdict="review", reason=binding["route_reason"])
     if rec["verdict"] == "ok" and signed is not None and (
         (amt.data["negative"] and signed > 0) or (amt.data["positive"] and signed < 0)
     ):

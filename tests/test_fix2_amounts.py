@@ -452,6 +452,90 @@ def test_cue_after_the_next_amount_belongs_to_that_amount():
     assert "FM-001" not in result.failure_modes
 
 
+# Aggregate step (2026-11-06, FIX-ROUND-2-AGGREGATE-BRIEF.md, R3.md): five wrong narratives
+# label the explained total as the unexplained amount with a role cue after a comma or a
+# verb, which the aggregate_total look-ahead (linking tokens only) never read. The figure
+# keeps the aggregate_total binding and routes with aggregate_total_role_cue_follows; it
+# never passes. (row id from R3.md, case, sentence, amount text, the cue word after it)
+B_R3_WRONG = [
+    ("Z8", "dev-hc-013-ETH-M2", "Together they total $25,000.00, all of it unexplained.", "$25,000.00", "unexplained"),
+    ("ZB1", "dev-hc-013-ETH-M2", "Together they total $25,000.00, the entire amount unreconciled.", "$25,000.00",
+     "unreconciled"),
+    ("ZB2", "dev-hc-001-BTC-M2", "The four items total $34,068.30, all still unexplained.", "$34,068.30", "unexplained"),
+    ("ZB3", "dev-std-012-SOL-M3", "Together they total $342,165.48, which is the unexplained portion.", "$342,165.48",
+     "unexplained portion"),
+    ("W11", "dev-hc-013-ETH-M2",
+     "Together they total $25,000.00, all of it unexplained, since DP-2511-159273 was left out of the schedule "
+     "but carried as the bridging item.",
+     "$25,000.00", "unexplained"),
+]
+
+
+@pytest.mark.parametrize(("row_id", "case_id", "sentence", "amt", "cue"), B_R3_WRONG, ids=[r[0] for r in B_R3_WRONG])
+def test_aggregate_total_with_a_contradicting_cue_after_routes(row_id, case_id, sentence, amt, cue):
+    result = run(case_id, sentence)
+    x = amount(result, amt)
+    assert x["verdict"] != "ok", x
+    assert (x["role"], x["resolution"], x["verdict"], x["reason"]) == (
+        "explained", "aggregate_total", "review", "aggregate_total_role_cue_follows"), x
+    assert x["cue_after"].lower() == cue, x
+    assert f"aggregate_total_role_cue_follows: {amt}" in result.review_reasons, result.review_reasons
+    assert "FM-001" not in result.failure_modes, result.extractions
+
+
+def test_aggregate_total_route_reaches_the_scorer_review_reasons():
+    from icfr_agent_evals.scoring import check_correctness
+
+    case_id, sentence = B_R3_WRONG[0][1], B_R3_WRONG[0][2]
+    result = check_correctness(answer(case_id, sentence), TRUTH[case_id])
+    assert "aggregate_total_role_cue_follows: $25,000.00" in result.review_reasons, result.review_reasons
+
+
+def test_aggregate_total_with_a_wrong_figure_and_a_cue_after_still_fails():
+    # the route is added only to a figure that is the explained total: a wrong figure
+    # keeps FM-001 (24,000.00 is no subset sum of the cited items either)
+    result = run("dev-hc-013-ETH-M2", "Together they total $24,000.00, all of it unexplained.")
+    x = amount(result, "$24,000.00")
+    assert (x["resolution"], x["verdict"], x["reason"]) == ("aggregate_total", "FM-001", "explained_amount_mismatch"), x
+    assert "FM-001" in result.failure_modes
+
+
+def test_aggregate_total_with_an_amount_before_the_cue_stays_ok():
+    # K8 (R3.md, dev-hc-001): the cue after $0.00 belongs to $0.00, so the total passes
+    result = run("dev-hc-001-BTC-M2", "Together the four items net to $34,068.30, leaving $0.00 unexplained.")
+    total, rest = amount(result, "$34,068.30"), amount(result, "$0.00")
+    assert (total["role"], total["resolution"], total["verdict"]) == ("explained", "aggregate_total", "ok"), total
+    assert (rest["role"], rest["verdict"]) == ("unexplained", "ok"), rest
+    assert not result.review_reasons and not result.failure_modes, result
+
+
+def test_aggregate_total_with_the_cue_in_the_next_sentence_stays_ok():
+    # the scan ends at the clause: a cue in the next sentence is out of this check's scope
+    result = run("dev-hc-013-ETH-M2", "Together they total $25,000.00. None of it is explained.")
+    x = amount(result, "$25,000.00")
+    assert (x["role"], x["resolution"], x["verdict"]) == ("explained", "aggregate_total", "ok"), x
+    assert not [r for r in result.review_reasons if "$25,000.00" in r], result.review_reasons
+
+
+def test_aggregate_total_cue_with_its_own_amount_after_is_not_a_contradiction():
+    # the tests/test_narrative.py control: the cue labels the amount right after it
+    result = run("dev-hc-001-BTC-M2",
+                 "Explained items total $34,068.30 and the unexplained remainder is $0.00.")
+    total, rest = amount(result, "$34,068.30"), amount(result, "$0.00")
+    assert (total["role"], total["resolution"], total["verdict"]) == ("explained", "aggregate_total", "ok"), total
+    assert (rest["role"], rest["verdict"]) == ("unexplained", "ok"), rest
+    assert not result.review_reasons and not result.failure_modes, result
+
+
+def test_aggregate_total_partitive_variance_cue_is_not_a_contradiction():
+    # "$X of the surplus" is a part-of statement (the existing exception), not a later cue
+    result = run("dev-std-007-ETH-M3",
+                 "Open in-scope hot-1 items net to USD 1,880,341.85 of the surplus: DP-2510-146805 "
+                 "(USD 793,139.26) increases it.")
+    x = amount(result, "USD 1,880,341.85")
+    assert (x["role"], x["resolution"], x["verdict"]) == ("explained", "aggregate_total", "ok"), x
+
+
 # --- Pattern C: a hyphen inside a word is not an aside dash ---------------------------------
 C_FIXED = [
     # real, dev-hc-015-SOL-M1 epoch 4
