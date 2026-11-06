@@ -1,0 +1,461 @@
+"""scripts/pilot_report.py (contract C5): the section 13 pilot row from saved logs.
+
+Findings F2-05 (no report), F2-01 (difficulty check (b) readings), F2-02 (McNemar
+floor and paired-t drop), F2-06 (review-verdict CSV), F2-07 (queue volume as
+distinct rows) and F2-09 (no Sample Consistency on the template log).
+
+Mock logs only: the pilot task on mockllm with scripted outputs keyed per case, and
+the template baseline on none/none. Dev split pilot only; nothing reads the
+evaluation split. Logs go to pytest's temp dir unless ICFR_TEST_LOG_DIR is set.
+"""
+
+from __future__ import annotations
+
+import csv
+import importlib.util
+import json
+import os
+import uuid
+from pathlib import Path
+from types import SimpleNamespace as NS
+
+import pytest
+from inspect_ai import eval as inspect_eval
+from inspect_ai.log import read_eval_log, write_eval_log
+from inspect_ai.model import ModelOutput, ModelUsage, get_model
+
+from icfr_agent_evals import baseline
+from icfr_agent_evals import consistency as con
+from icfr_agent_evals.casefile import ASSETS, truth_of
+from icfr_agent_evals.dataset import build_dataset
+from icfr_agent_evals.scoring import SweepHit
+from icfr_agent_evals.task import variance_commentary
+
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPT = ROOT / "scripts" / "pilot_report.py"
+ROLES = {"grader": "mockllm/grader", "calibrator": "mockllm/calibrator"}
+CSV_COLUMNS = ["run_label", "log_eval_id", "sample_id", "epoch", "scorers", "route_key", "reason",
+               "verdict", "reviewer", "date"]
+
+
+def _load_script():
+    spec = importlib.util.spec_from_file_location("pilot_report", SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+pr = _load_script()
+
+
+def _log_dir(tmp_path_factory, label: str) -> str:
+    root = os.environ.get("ICFR_TEST_LOG_DIR")
+    if root:
+        path = Path(root) / f"{label}-{uuid.uuid4().hex[:8]}"
+        path.mkdir(parents=True, exist_ok=True)
+        return str(path)
+    return str(tmp_path_factory.mktemp(label))
+
+
+# --- Scripted pilot runs ------------------------------------------------------------------
+
+def _pilot():
+    return sorted(build_dataset(split="dev", subset="pilot"), key=lambda s: str(s.id))
+
+
+def _answer(truth, direction: str) -> str:
+    items = truth.eligible_items()
+    word = "fell short of" if direction == "shortfall" else "exceeded"
+    return json.dumps({
+        "asset": truth.asset,
+        "period": truth.period,
+        "variance_amount_usd": abs(truth.variance_usd),
+        "variance_direction": direction,
+        "materiality_band": truth.materiality_band,
+        "entities_cited": [truth.custodian, *(i.reference for i in items)],
+        "reconciling_items": [{"reference": i.reference, "amount_usd": i.amount_usd, "type": i.type} for i in items],
+        "narrative": f"On-chain reserves {word} ledger liabilities for the period.",
+    })
+
+
+def _flip(direction: str) -> str:
+    return "surplus" if direction == "shortfall" else "shortfall"
+
+
+def _keyed_outputs(answer_of):
+    """custom_outputs for mockllm: each case answered by answer_of(truth), keyed on a
+    scope wallet that sits in that case's input and in no other pilot case."""
+    samples = _pilot()
+    inputs = {str(s.id): str(s.input) for s in samples}
+    outputs = {}
+    for s in samples:
+        t = truth_of(s.metadata)
+        key = next(w for w in t.scope_wallets
+                   if w in inputs[str(s.id)] and not any(w in v for o, v in inputs.items() if o != str(s.id)))
+        outputs[key] = answer_of(t)
+
+    def fn(messages, tools, tool_choice, config) -> ModelOutput:
+        blob = "\n".join(getattr(m, "text", "") or "" for m in messages)
+        key = next((w for w in outputs if w in blob), None)
+        out = ModelOutput.from_content(model="mockllm/model", content=outputs.get(key, "unmatched"))
+        out.usage = ModelUsage(input_tokens=1, output_tokens=1, total_tokens=2)
+        return out
+
+    return fn
+
+
+def _run_pilot(tmp_path_factory, label: str, answer_of, *, subset="pilot", epochs=4) -> str:
+    log = inspect_eval(
+        variance_commentary(split="dev", subset=subset, epochs=epochs),
+        model=get_model("mockllm/model", custom_outputs=_keyed_outputs(answer_of)),
+        model_roles=ROLES,
+        log_dir=_log_dir(tmp_path_factory, label),
+        display="none",
+    )[0]
+    assert log.status == "success", log.error
+    return log.location
+
+
+@pytest.fixture(scope="module")
+def logs(tmp_path_factory):
+    """sonnet: correct; haiku_fb: a format break on every epoch; haiku_settled: the
+    wrong direction on every case (FM-003, a settled failure); template: the baseline;
+    nonpilot: a dev run without the subset."""
+    template = inspect_eval(
+        baseline.variance_commentary_template_baseline(split="dev", subset="pilot"),
+        log_dir=_log_dir(tmp_path_factory, "report-template"),
+        display="none",
+    )[0]
+    assert template.status == "success", template.error
+    return {
+        "sonnet": _run_pilot(tmp_path_factory, "report-sonnet", lambda t: _answer(t, t.direction)),
+        "haiku_fb": _run_pilot(tmp_path_factory, "report-haiku-fb", lambda t: "not one JSON object"),
+        "haiku_settled": _run_pilot(tmp_path_factory, "report-haiku-settled", lambda t: _answer(t, _flip(t.direction))),
+        "template": template.location,
+        "nonpilot": _run_pilot(tmp_path_factory, "report-nonpilot", lambda t: _answer(t, t.direction),
+                               subset=None, epochs=1),
+    }
+
+
+def _main(capsys, *argv):
+    code = pr.main([str(a) for a in argv])
+    out = capsys.readouterr()
+    return code, out.out, out.err
+
+
+def _base(logs, haiku="haiku_fb"):
+    return ["--sonnet", logs["sonnet"], "--haiku", logs[haiku], "--template", logs["template"]]
+
+
+def _rewrite(tmp_path, src: str, name: str, mutate) -> str:
+    log = read_eval_log(src)
+    mutate(log)
+    path = tmp_path / name
+    write_eval_log(log, str(path))
+    return str(path)
+
+
+# --- End to end ---------------------------------------------------------------------------
+
+SECTIONS = (
+    "PILOT REPORT", "== Run sonnet", "== Run haiku", "== Run template", "content-pass^4", "FM counts",
+    "Review queue volume", "Sample Consistency (summary)", "H4 line (rehearsal", pr.TEMPLATE_CONSISTENCY_LINE,
+    "== Template margin per anchor (sonnet", "== Template margin per anchor (haiku",
+    "== Difficulty check (a)", "== Difficulty check (b)", "McNemar block floor", "Paired-t minimal detectable drop",
+    "== Deliberate regression", "PILOT REPORT: DONE",
+)
+
+
+def test_report_prints_every_section(logs, capsys):
+    code, out, err = _main(capsys, *_base(logs))
+    assert code == pr.EXIT_OK, err
+    for section in SECTIONS:
+        assert section in out, section
+    assert "len(review_queue)" not in out and "scorer rows" not in out
+
+
+def test_difficulty_a_passes_on_the_template(logs, capsys):
+    code, out, _ = _main(capsys, *_base(logs))
+    assert code == 0
+    assert ("== Difficulty check (a) from the template log: PASS  memo-only cases failing through the "
+            "reconciling-items score only 4/4; other standard cases clean 4/4") in out
+
+
+def test_format_break_haiku_passes_reading_i_only(logs, capsys):
+    """F2-01: an all-format-break Haiku passes the literal reading and no other."""
+    code, out, _ = _main(capsys, *_base(logs, "haiku_fb"))
+    assert code == 0
+    assert "reading (i): PASS  failing hard cases 12, failing hard epochs 48" in out
+    assert "reading (ii): FAIL  failing hard cases 0, failing hard epochs 0" in out
+    assert "reading (iii): FAIL  failing hard cases 0, failing hard epochs 0" in out
+    assert "reading of record: not chosen" in out
+
+
+def test_settled_failure_haiku_passes_every_reading(logs, capsys):
+    code, out, _ = _main(capsys, *_base(logs, "haiku_settled"), "--reading-b", "iii")
+    assert code == 0
+    for reading in ("i", "ii"):
+        assert f"reading ({reading}): PASS  failing hard cases 12, failing hard epochs 48" in out
+    assert "reading (iii): PASS  (reading of record)  failing hard cases 12, failing hard epochs 48" in out
+    assert "Difficulty check (b) verdict under reading (iii): PASS" in out
+
+
+@pytest.mark.parametrize("asset", ASSETS)
+def test_settled_failure_counts_on_every_asset(logs, asset):
+    """The settled FM-003 failure counts under all three readings on each asset's hard cases."""
+    b = pr.difficulty_b(read_eval_log(logs["haiku_settled"]))
+    hard = {str(s.id) for s in read_eval_log(logs["haiku_settled"]).samples
+            if s.metadata["truth"]["case_kind"] != "standard" and s.metadata["truth"]["asset"] == asset}
+    assert hard
+    for reading in pr.READINGS:
+        assert hard <= set(b["readings"][reading]["failing_cases"])
+
+
+def test_template_margin_and_floors(logs, capsys):
+    code, out, _ = _main(capsys, *_base(logs))
+    assert code == 0
+    assert ("overall            reconciling_items_anchor   n=20  worker 3.000 template 2.650 "
+            "margin +0.350 [+0.036, +0.664]") in out
+    assert "McNemar block floor on content-pass^4: 7 one-way discordant cases with no reversal, 10 with one reversal" in out
+    assert "Sonnet log passes content-pass^4 on 20 of 20" in out
+    assert "inferred" in out and "sd 0.5: 0.390" in out
+
+
+def test_template_never_gets_sample_consistency(logs, capsys, monkeypatch):
+    """F2-09: the template log is never passed to consistency.report_from_log."""
+    seen = []
+    real = con.report_from_log
+
+    def spy(log, k=None):
+        seen.append(log.eval.task)
+        return real(log, k)
+
+    monkeypatch.setattr(con, "report_from_log", spy)
+    code, out, _ = _main(capsys, *_base(logs))
+    assert code == 0
+    assert seen and not any(str(t).endswith(pr.TEMPLATE_TASK) for t in seen)
+    template_block = out.split("== Run template")[1].split("== Template margin")[0]
+    assert pr.TEMPLATE_CONSISTENCY_LINE in template_block
+    assert "FM-007" not in template_block and "H4" not in template_block
+
+
+def test_queue_volume_counts_distinct_rows(logs, capsys):
+    """F2-07: a format break is six scorer rows but one (sample, epoch, reason)."""
+    code, out, _ = _main(capsys, *_base(logs))
+    assert code == 0
+    haiku = out.split("== Run haiku")[1].split("== Run template")[0]
+    assert "Review queue volume: 80 distinct (sample, epoch, reason), 80 distinct (sample, epoch)" in haiku
+    assert "format break     80 (sample, epoch, reason), 80 (sample, epoch)" in haiku
+
+
+def test_review_csv_columns_and_rows(logs, capsys, tmp_path):
+    """F2-06: exactly the C5 columns, one row per distinct (run, sample, epoch, route
+    key), verdict, reviewer and date blank."""
+    path = tmp_path / "review.csv"
+    code, _, err = _main(capsys, *_base(logs), "--review-csv", path)
+    assert code == 0, err
+    raw = path.read_bytes()
+    assert b"\r\n" not in raw
+    with open(path, encoding="utf-8", newline="") as fh:
+        reader = csv.DictReader(fh)
+        assert reader.fieldnames == CSV_COLUMNS
+        rows = list(reader)
+    assert len(rows) == 80  # 20 cases x 4 epochs, one format-break route each, Haiku only
+    keys = [(r["run_label"], r["sample_id"], r["epoch"], r["route_key"]) for r in rows]
+    assert len(set(keys)) == len(keys)
+    assert {r["run_label"] for r in rows} == {"haiku"}
+    assert {r["route_key"] for r in rows} == {pr.FORMAT_BREAK}
+    assert all(r["verdict"] == r["reviewer"] == r["date"] == "" for r in rows)
+    assert all(len(r["scorers"].split(";")) == 6 for r in rows)
+    assert tuple(CSV_COLUMNS) == pr.REVIEW_CSV_COLUMNS
+
+
+def test_json_output(logs, capsys, tmp_path):
+    path = tmp_path / "report.json"
+    code, _, _ = _main(capsys, *_base(logs), "--json", path)
+    assert code == 0
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["runs"]["template"]["content_pass4"]["passed"] == 15
+    assert data["runs"]["template"]["sample_consistency"] == pr.TEMPLATE_CONSISTENCY_LINE
+    assert data["difficulty_a"]["verdict"] == "PASS"
+    assert {r: v["verdict"] for r, v in data["difficulty_b"]["readings"].items()} == {"i": "PASS", "ii": "FAIL", "iii": "FAIL"}
+    assert data["floors"]["mcnemar_floor"] == {"no_reversal": 7, "one_reversal": 10}
+
+
+def test_regression_caught_only_on_an_automatic_block(logs, capsys):
+    """F2-02 under D2: caught means compare_runs.py exit 1, the rejecting tests named."""
+    code, out, _ = _main(capsys, *_base(logs), "--regression-baseline", logs["sonnet"],
+                         "--regression-candidate", logs["haiku_settled"])
+    assert code == 0
+    verdict = next(line for line in out.splitlines() if line.startswith("Regression verdict:"))
+    assert verdict.startswith("Regression verdict: caught: compare_runs.py exit 1, automatic block by ")
+    assert "correctness" in verdict and "content_pass4" in verdict
+    code, out, _ = _main(capsys, *_base(logs), "--regression-baseline", logs["sonnet"],
+                         "--regression-candidate", logs["sonnet"])
+    assert code == 0
+    assert "Regression verdict: NOT caught: compare_runs.py exit 0" in out
+    assert "caught: compare_runs.py exit 1" not in out
+
+
+# --- Refusals (exit 3) --------------------------------------------------------------------
+
+def test_refuses_a_missing_file(logs, capsys, tmp_path):
+    code, out, err = _main(capsys, "--sonnet", tmp_path / "absent.eval", "--haiku", logs["haiku_fb"],
+                           "--template", logs["template"])
+    assert code == pr.EXIT_REFUSED and "not found" in err and out == ""
+
+
+def test_refuses_a_non_pilot_log(logs, capsys):
+    code, out, err = _main(capsys, "--sonnet", logs["nonpilot"], "--haiku", logs["haiku_fb"],
+                           "--template", logs["template"])
+    assert code == 3 and "not the dev pilot" in err and out == ""
+
+
+def test_refuses_a_status_error_log(logs, capsys, tmp_path):
+    bad = _rewrite(tmp_path, logs["sonnet"], "error.eval", lambda log: setattr(log, "status", "error"))
+    code, out, err = _main(capsys, "--sonnet", bad, "--haiku", logs["haiku_fb"], "--template", logs["template"])
+    assert code == 3 and "status is 'error'" in err and out == ""
+
+
+def test_refuses_mismatched_dataset_hashes(logs, capsys, tmp_path):
+    def mutate(log):
+        log.eval.metadata["dataset_sha256"] = "0" * 64
+
+    bad = _rewrite(tmp_path, logs["haiku_fb"], "hash.eval", mutate)
+    code, out, err = _main(capsys, "--sonnet", logs["sonnet"], "--haiku", bad, "--template", logs["template"])
+    assert code == 3 and "dataset content" in err and out == ""
+
+
+def test_refuses_swapped_roles_and_half_a_pair(logs, capsys):
+    code, _, err = _main(capsys, "--sonnet", logs["template"], "--haiku", logs["haiku_fb"], "--template", logs["template"])
+    assert code == 3 and "runs task" in err
+    code, _, err = _main(capsys, "--sonnet", logs["sonnet"], "--haiku", logs["haiku_fb"], "--template", logs["sonnet"])
+    assert code == 3 and "runs task" in err
+    code, _, err = _main(capsys, *_base(logs), "--regression-baseline", logs["sonnet"])
+    assert code == 3 and "go together" in err
+
+
+@pytest.mark.parametrize("argv", [["--help"], [], ["--sonnet", "x.eval"], ["--reading-b", "iv"]])
+def test_argument_errors_exit_3(argv):
+    with pytest.raises(SystemExit) as e:
+        pr.main(argv)
+    assert e.value.code == pr.EXIT_REFUSED
+
+
+def test_run_config_hook_is_a_no_op_today():
+    assert pr.run_config_check(object()) is None
+
+
+# --- Difficulty check (b) readings, one epoch at a time -----------------------------------
+
+def _score(value, *, codes=(), reasons=(), review=None, format_break=False):
+    meta = {"failure_modes": list(codes), "review_reasons": list(reasons),
+            "requires_human_review": bool(reasons) if review is None else review}
+    if format_break:
+        meta["format_break"] = True
+    return NS(value=value, metadata=meta)
+
+
+def _epoch(scores, *, error=None, epoch=1, sid="dev-hc-001-BTC-M2", kind="edge"):
+    return NS(id=sid, epoch=epoch, error=error, scores=scores, metadata={"truth": {"case_kind": kind}})
+
+
+def _clean():
+    return {n: _score(3) for n in pr.ANCHORS}
+
+
+def test_correct_epoch_fails_no_reading():
+    for reading in pr.READINGS:
+        assert not pr.epoch_fail(_epoch(_clean()), reading)
+
+
+def test_format_break_epoch_fails_reading_i_only():
+    fb = {n: _score(0, codes=["FM-000"], reasons=["format break: not one JSON object"], format_break=True)
+          for n in pr.ANCHORS}
+    assert [pr.epoch_fail(_epoch(fb), r) for r in pr.READINGS] == [True, False, False]
+
+
+@pytest.mark.parametrize("asset", ASSETS)
+def test_sweep_provisional_zero_fails_reading_i_only(asset):
+    """F2-01: a correct answer whose narrative trips the sweep ('the <asset> custody
+    wallet') scores a provisional 0 with only a sweep reason."""
+    scores = _clean()
+    scores["fabrication_anchor"] = _score(0, reasons=[SweepHit(f"{asset} custody wallet", "custodian_vocabulary").reason])
+    assert [pr.epoch_fail(_epoch(scores), r) for r in pr.READINGS] == [True, False, False]
+
+
+@pytest.mark.parametrize("asset", ASSETS)
+def test_sweep_route_beside_a_settled_code_still_fails(asset):
+    scores = _clean()
+    scores["fabrication_anchor"] = _score(0, reasons=[SweepHit(f"{asset} custody wallet", "custodian_vocabulary").reason])
+    scores["correctness_anchor"] = _score(0, codes=["FM-003"])
+    assert all(pr.epoch_fail(_epoch(scores), r) for r in pr.READINGS)
+
+
+def test_code_review_route_fails_i_and_ii_not_iii():
+    scores = _clean()
+    scores["reconciling_items_anchor"] = _score(1, reasons=["reconciling_items[0] type 'x' differs from 'y'"])
+    assert [pr.epoch_fail(_epoch(scores), r) for r in pr.READINGS] == [True, True, False]
+
+
+def test_settled_low_anchor_fails_every_reading():
+    scores = _clean()
+    scores["completeness_anchor"] = _score(2)
+    assert all(pr.epoch_fail(_epoch(scores), r) for r in pr.READINGS)
+
+
+def test_errored_epoch_fails_reading_i_only():
+    errored = _epoch({}, error=NS(message="boom"))
+    assert [pr.epoch_fail(errored, r) for r in pr.READINGS] == [True, False, False]
+
+
+def test_missing_epoch_counts_under_reading_i_only():
+    log = NS(samples=[_epoch(_clean(), epoch=e) for e in (1, 2, 3)])
+    b = pr.difficulty_b(log)
+    assert b["missing_epochs"] == [["dev-hc-001-BTC-M2", 4]]
+    assert b["readings"]["i"]["failing_epochs"] == [["dev-hc-001-BTC-M2", 4]]
+    assert b["readings"]["ii"]["verdict"] == b["readings"]["iii"]["verdict"] == "FAIL"
+
+
+def test_standard_cases_never_count_for_b():
+    scores = _clean()
+    scores["correctness_anchor"] = _score(0, codes=["FM-003"])
+    log = NS(samples=[_epoch(scores, epoch=e, sid="dev-std-002-BTC-M1", kind="standard") for e in (1, 2, 3, 4)])
+    assert all(v["verdict"] == "FAIL" for v in pr.difficulty_b(log)["readings"].values())
+
+
+def test_unknown_reading_raises():
+    with pytest.raises(ValueError):
+        pr.epoch_fail(_epoch(_clean()), "iv")
+
+
+# --- Queue and statistics -----------------------------------------------------------------
+
+def test_queue_classes_and_route_keys():
+    sweep = SweepHit("BTC custody wallet", "custodian_vocabulary").reason
+    scores = _clean()
+    scores["fabrication_anchor"] = _score(0, reasons=[sweep])
+    scores["faithfulness_anchor"] = _score(0, reasons=[sweep])  # repeats its component's reason
+    scores["reconciling_items_anchor"] = _score(1, reasons=["reconciling_items[0] type 'x' differs from 'y'"])
+    log = NS(samples=[_epoch(scores), _epoch({}, error=NS(message="boom"), epoch=2)])
+    entries = pr.queue_entries(log)
+    vol = pr.queue_volume(entries)
+    assert vol[pr.SWEEP_ROUTE] == {"sample_epoch_reason": 1, "sample_epoch": 1}
+    assert vol[pr.CODE_ROUTE] == {"sample_epoch_reason": 1, "sample_epoch": 1}
+    assert vol[pr.SAMPLE_ERROR] == {"sample_epoch_reason": 1, "sample_epoch": 1}
+    assert vol["all"] == {"sample_epoch_reason": 3, "sample_epoch": 2}
+    rows = pr.review_rows(entries, "sonnet", "abc")
+    assert len(rows) == 3
+    sweep_row = next(r for r in rows if r["route_key"].startswith(pr.SWEEP_ROUTE))
+    assert sweep_row["scorers"] == "fabrication_anchor;faithfulness_anchor"
+
+
+def test_statistics_helpers():
+    assert pr.mcnemar_floor(0) == 7 and pr.mcnemar_floor(1) == 10
+    assert pr.paired_t_mdd(0.5) == pytest.approx(0.390, abs=0.001)
+    assert pr.paired_t_mdd(1.0) == pytest.approx(0.780, abs=0.001)
+    lo, hi = pr.clopper_pearson(20, 20)
+    assert hi == 1.0 and lo == pytest.approx(0.025 ** (1 / 20), abs=1e-6)
+    lo, hi = pr.clopper_pearson(0, 20)
+    assert lo == 0.0 and hi == pytest.approx(1 - 0.025 ** (1 / 20), abs=1e-6)
+    assert pr.t_ppf(0.975, 19) == pytest.approx(2.093, abs=0.001)
