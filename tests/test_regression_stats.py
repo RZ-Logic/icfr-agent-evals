@@ -35,6 +35,7 @@ from icfr_agent_evals.regression import (
     paired_t_one_sided,
     t_cdf,
 )
+from icfr_agent_evals.regression import HOLM_M, mcnemar_block_floor, paired_t_mdd, t_ppf
 from icfr_agent_evals.reliability import GateError
 
 REL = 1e-9
@@ -716,3 +717,102 @@ def test_ladder_r2_skips_single_epoch_rises_except_fabrication_and_sweep():
 def test_unknown_ladder_is_value_error(ladder):
     with pytest.raises(ValueError):
         compare(make_run(n=4), [make_run(n=4)], ladder=ladder)
+
+
+# --- Protocol helpers: the pass^4 block floor and the paired-t floor (F2-02, F2-03) ---
+
+def test_holm_family_size_is_six():
+    assert HOLM_M == 6 == len(DIMENSIONS) + 1
+
+
+@pytest.mark.parametrize(
+    "reversals,rank,floor",
+    # exact one-sided McNemar against 0.05 / (6 - rank + 1); worked in the F2 power probe:
+    # rank 1: p(7, 0) = 2^-7 = 0.00781 <= 0.00833 < p(6, 0) = 0.01562; p(10, 1) = 12 / 2^11 = 0.00586
+    # <= 0.00833 < p(9, 1) = 11 / 2^10 = 0.01074
+    [(0, 1, 7), (0, 2, 7), (0, 3, 7), (0, 4, 6), (0, 5, 6), (0, 6, 5),
+     (1, 1, 10), (1, 2, 10), (1, 3, 9), (1, 4, 9), (1, 5, 8), (1, 6, 7)],
+)
+def test_mcnemar_block_floor_table(reversals, rank, floor):
+    assert mcnemar_block_floor(reversals=reversals, alpha_rank=rank) == floor
+    threshold = FAMILY_ALPHA / (HOLM_M - rank + 1)
+    assert mcnemar_one_sided(floor, reversals) <= threshold < mcnemar_one_sided(floor - 1, reversals)
+
+
+def test_mcnemar_block_floor_defaults_pin_seven_and_ten():
+    assert mcnemar_block_floor() == 7
+    assert mcnemar_block_floor(6, 1) == 10
+
+
+@pytest.mark.parametrize("worse,blocks", [(5, False), (6, False), (7, True), (8, True)])
+def test_pass4_blocks_at_the_floor_and_not_below(worse, blocks):
+    """compare() agrees with the helper: w one-way discordant cases with every
+    dimension unchanged block at w = 7 (Holm 0.047) and not at 6 (0.094)."""
+    cand = make_run(edit=route(set(range(worse)), {1}, f"{CODE_ROUTE}: probe"))
+    rep = compare(make_run(), [cand])
+    assert rep.paired[PASS4].detail["worse"] == worse
+    assert rep.blocked is blocks
+    assert (worse >= mcnemar_block_floor()) is blocks
+
+
+def test_pass4_floor_with_one_reversal_through_compare():
+    """One reversal: 9 worse cases do not block, 10 do."""
+    base = make_run(edit=route({19}, {1}, f"{CODE_ROUTE}: probe"))
+    for worse, blocks in ((9, False), (10, True)):
+        cand = make_run(edit=route(set(range(worse)), {1}, f"{CODE_ROUTE}: probe"))
+        rep = compare(base, [cand])
+        assert (rep.paired[PASS4].detail["worse"], rep.paired[PASS4].detail["better"]) == (worse, 1)
+        assert rep.paired[PASS4].rejected is blocks
+
+
+@pytest.mark.parametrize("bad", [dict(m=0), dict(alpha_rank=0), dict(alpha_rank=7), dict(reversals=-1)])
+def test_mcnemar_block_floor_rejects_bad_arguments(bad):
+    with pytest.raises(ValueError):
+        mcnemar_block_floor(**bad)
+
+
+@pytest.mark.parametrize(
+    "q,df,expected",
+    # Student t table values: t_0.975,19 = 2.093024; t_0.8,19 = 0.860951; t_0.995,19 = 2.860935
+    [(0.975, 19, 2.093024), (0.8, 19, 0.860951), (0.995, 19, 2.860935), (0.5, 19, 0.0)],
+)
+def test_t_ppf_table_values(q, df, expected):
+    assert t_ppf(q, df) == pytest.approx(expected, abs=1e-5)
+
+
+@pytest.mark.parametrize("q", [1e-6, 0.01, 0.3, 0.7, 1 - 0.05 / 6, 0.999])
+def test_t_ppf_inverts_t_cdf(q):
+    assert t_cdf(t_ppf(q, 19), 19) == pytest.approx(q, abs=1e-12)
+
+
+@pytest.mark.parametrize(
+    "sd,rank,power,expected",
+    # (t_{1-a,19} + t_{power,19}) * sd / sqrt(20); a = 0.05 / 6 at rank 1, 0.05 / 5 at rank 2;
+    # t_{1-0.05/6,19} = 2.625106, t_{1-0.01,19} = 2.539483, t_{0.8,19} = 0.860951
+    [(0.5, 1, 0.8, 0.389753), (1.0, 1, 0.8, 0.779506), (0.25, 1, 0.8, 0.194876),
+     (0.5, 2, 0.8, 0.380180), (0.5, 1, 0.5, 0.293496), (0.0, 1, 0.8, 0.0)],
+)
+def test_paired_t_mdd_values(sd, rank, power, expected):
+    assert paired_t_mdd(sd, 20, rank, power=power) == pytest.approx(expected, abs=1e-5)
+
+
+def test_paired_t_mdd_defaults_and_scaling():
+    assert paired_t_mdd(0.5) == paired_t_mdd(0.5, n=20, alpha_rank=1)
+    assert paired_t_mdd(1.0) == pytest.approx(2 * paired_t_mdd(0.5))
+    assert paired_t_mdd(0.5, n=80) < paired_t_mdd(0.5, n=20)
+
+
+def test_paired_t_mdd_threshold_drop_just_reaches_rank_one_alpha():
+    """At power 0.5 a constant-sd drop of exactly the returned size gives p at the
+    rank-1 threshold: the t-statistic equals t_{1-a, n-1}."""
+    sd, n = 0.5, 20
+    drop = paired_t_mdd(sd, n, power=0.5)
+    t = -drop / (sd / n ** 0.5)
+    assert t_cdf(t, n - 1) == pytest.approx(FAMILY_ALPHA / HOLM_M, rel=1e-9)
+
+
+@pytest.mark.parametrize("bad", [dict(sd=-0.1), dict(sd=float("nan")), dict(sd=0.5, n=1), dict(sd=0.5, alpha_rank=7),
+                                 dict(sd=0.5, power=1.0), dict(sd=0.5, power=0.0)])
+def test_paired_t_mdd_rejects_bad_arguments(bad):
+    with pytest.raises(ValueError):
+        paired_t_mdd(**bad)

@@ -9,7 +9,7 @@ import json
 from types import SimpleNamespace
 
 import pytest
-from casefactory import good_output, make_truth
+from casefactory import ALL_ASSETS, good_output, make_truth
 from inspect_ai import Epochs, Task
 from inspect_ai import eval as inspect_eval
 from inspect_ai.dataset import MemoryDataset
@@ -17,13 +17,19 @@ from inspect_ai.model import ModelOutput, ModelUsage
 from inspect_ai.solver import Generate, TaskState, solver
 
 from icfr_agent_evals.casefile import CaseFile, to_sample, truth_of
+from icfr_agent_evals.regression import CODE_ROUTE, SWEEP_ROUTE, route_key
 from icfr_agent_evals.reliability import (
+    QUEUE_CLASSES,
     GateError,
     assert_gate,
     evaluate_trial,
+    format_queue_volume,
+    queue_items,
+    queue_volume,
     reliability_report,
     report_from_log,
 )
+from icfr_agent_evals.scoring import FABRICATION_REVIEW
 from icfr_agent_evals.scorers import CONTENT_SCORERS
 
 ANCHORS = ("correctness_anchor", "fabrication_anchor", "reconciling_items_anchor", "completeness_anchor")
@@ -183,3 +189,112 @@ def test_epochs_override_fails_the_report(tmp_path):
                        epochs=1, log_dir=str(tmp_path), display="none")[0]
     with pytest.raises(GateError, match="differ from the task argument"):
         report_from_log(log)
+
+
+# --- Queue volume: distinct items by class, never scorer rows (F2-07) ------------------
+
+SWEEP_TEXT = "Balances were also confirmed by Fireblocks."
+
+
+@solver
+def queue_mix_output():
+    """Epoch 1 clean, epoch 2 a format break, epoch 3 a narrative sweep hit,
+    epoch 4 a sample error; keyed by state.epoch, no model call."""
+
+    async def solve(state: TaskState, generate: Generate) -> TaskState:
+        if state.epoch == 4:
+            raise RuntimeError("queue-mix sample error")
+        truth = truth_of(state.metadata)
+        if state.epoch == 2:
+            content = "not one JSON object"
+        else:
+            content = json.dumps(good_output(truth, narrative=SWEEP_TEXT if state.epoch == 3 else None))
+        out = ModelOutput.from_content(model="mockllm/model", content=content)
+        out.usage = ModelUsage(input_tokens=1, output_tokens=1, total_tokens=2)
+        state.output = out
+        return state
+
+    return solve
+
+
+@pytest.fixture(scope="module")
+def queue_mix(tmp_path_factory):
+    truths = [make_truth(asset, case_id=f"dev-queue-{asset.lower()}") for asset in ALL_ASSETS]
+    ds = MemoryDataset([to_sample(CaseFile(t, {}, f"case {t.case_id}")) for t in truths])
+    task = Task(dataset=ds, solver=[queue_mix_output()], scorer=[s() for s in CONTENT_SCORERS],
+                epochs=Epochs(4, reducer=["mean"]))
+    log = inspect_eval(task, model="mockllm/model", log_dir=str(tmp_path_factory.mktemp("queue-mix")),
+                       display="none", fail_on_error=False)[0]
+    assert log.status == "success", log.error
+    assert len(log.samples) == 4 * len(ALL_ASSETS)
+    return report_from_log(log)
+
+
+def test_queue_volume_counts_distinct_items_by_class_on_a_mock_log(queue_mix):
+    vol = queue_volume(queue_mix)
+    n = len(ALL_ASSETS)
+    assert vol.items == {"format_break": n, "sample_error": n, "narrative_sweep": n, "code_review": 0, "fm_listed": 0}
+    assert vol.sample_epochs == vol.items
+    assert vol.total_items == vol.total_sample_epochs == 3 * n
+    # the audit trail is larger: a format break is one row per content scorer, and
+    # faithfulness_anchor repeats the sweep reason of fabrication_anchor
+    assert vol.scorer_rows == len(queue_mix.review_queue) == n * (len(CONTENT_SCORERS) + 2 + 1)
+    assert vol.scorer_rows > vol.total_items
+    line = format_queue_volume(vol)
+    assert f"{3 * n} distinct (sample, epoch, reason) items on {3 * n} distinct (sample, epoch) pairs" in line
+
+
+@pytest.mark.parametrize("asset", ALL_ASSETS)
+def test_queue_items_per_asset_keep_reason_class_and_scorers(queue_mix, asset):
+    sid = f"dev-queue-{asset.lower()}"
+    items = {i.epoch: i for i in queue_items(queue_mix) if i.sample_id == sid}
+    assert sorted(items) == [2, 3, 4]
+    fb, sweep, err = items[2], items[3], items[4]
+    assert fb.queue_class == "format_break" and fb.reason.startswith("format break:") and fb.route_key is None
+    assert len(fb.scorers) == len(CONTENT_SCORERS)
+    assert sweep.queue_class == SWEEP_ROUTE and sweep.route_key == route_key(sweep.reason)
+    assert sweep.route_key.startswith(f"{SWEEP_ROUTE}: ") and "Fireblocks" in sweep.reason
+    assert set(sweep.scorers) == {"fabrication_anchor", "faithfulness_anchor"}
+    assert err.queue_class == "sample_error" and "queue-mix sample error" in err.reason
+    assert err.scorers == ("sample_error",) and err.route_key is None
+    # the clean epoch reaches neither the queue nor the volume
+    assert all(t.success for t in queue_mix.trials if t.sample_id == sid and t.epoch == 1)
+
+
+def test_queue_volume_code_review_fm_listing_and_unstated_reason():
+    """A code-check reason is code_review by its route key, the fabrication listing
+    that rides with FM-005 is fm_listed (not a 10(c) route), a flag with no reason is
+    one code_review item, and two scorers repeating one reason are one item."""
+    overrides = {
+        "reconciling_items_anchor": _score(3, review=True, reasons=["negation: not reconciled"]),
+        "faithfulness_anchor": _score(3, review=True, reasons=["negation: not reconciled"]),
+        "fabrication_anchor": _score(0, ["FM-005"], review=True, reasons=[FABRICATION_REVIEW]),
+        "completeness_anchor": _score(3, review=True),
+    }
+    rep = reliability_report([_sample("a", 1, overrides), _sample("a", 2)], k=2)
+    items = {i.reason: i for i in queue_items(rep)}
+    assert items["negation: not reconciled"].queue_class == CODE_ROUTE
+    assert items["negation: not reconciled"].route_key == f"{CODE_ROUTE}: negation"
+    assert items["negation: not reconciled"].scorers == ("reconciling_items_anchor", "faithfulness_anchor")
+    assert items[FABRICATION_REVIEW].queue_class == "fm_listed" and items[FABRICATION_REVIEW].route_key is None
+    assert items["review flagged with no stated reason"].queue_class == CODE_ROUTE
+    vol = queue_volume(rep)
+    assert vol.items == {"format_break": 0, "sample_error": 0, "narrative_sweep": 0, "code_review": 2, "fm_listed": 1}
+    assert vol.sample_epochs == {"format_break": 0, "sample_error": 0, "narrative_sweep": 0, "code_review": 1, "fm_listed": 1}
+    assert (vol.total_items, vol.total_sample_epochs, vol.scorer_rows) == (3, 1, 4)
+
+
+def test_queue_volume_of_a_clean_report_is_zero_in_every_class():
+    vol = queue_volume(reliability_report([_sample("a", e) for e in (1, 2)], k=2))
+    assert set(vol.items) == set(vol.sample_epochs) == set(QUEUE_CLASSES)
+    assert not any(vol.items.values()) and vol.total_items == vol.total_sample_epochs == vol.scorer_rows == 0
+
+
+def test_review_rows_stay_one_per_scorer():
+    """ReviewRow and review_queue keep their audit-trail shape (F2-07 adds a view)."""
+    dup = {"fabrication_anchor": _score(0, review=True, reasons=["sweep hit"]),
+           "faithfulness_anchor": _score(0, review=True, reasons=["sweep hit"])}
+    rep = reliability_report([_sample("a", 1, dup)], k=1)
+    assert [(r.scorer, r.reasons) for r in rep.review_queue] == [("fabrication_anchor", ("sweep hit",)),
+                                                                 ("faithfulness_anchor", ("sweep hit",))]
+    assert queue_volume(rep).total_items == 1

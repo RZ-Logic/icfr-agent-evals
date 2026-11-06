@@ -11,13 +11,23 @@ records the choice (section 10(c)).
 Every candidate run must hold the baseline's full sample id set and the same
 dataset content, so the comparison never runs on an overlap (ratified 2026-11-03).
 
+The report opens with one header line per run: path, task, model, git revision
+and dirty flag, and worker_prompt_sha256. A candidate must run the baseline's task
+and worker prompt, and pooled candidates must agree with each other on model, task,
+revision and worker prompt (F2-08). Baseline and candidate may differ in model and
+revision, so a mock-degraded candidate can be compared with a real baseline. Task
+names compare by registry name without the package prefix: the CLI records
+"variance_commentary" and an eval() call "icfr_agent_evals/variance_commentary".
+
 Exit codes (ratified 2026-11-03):
   0  pass: no automatic block and no sign-off case
   1  automatic block: a Holm rejection in 10(a) or a fabrication rejection in 10(b)
   2  no automatic block, sign-off cases pending under 10(c)
   3  refused: an evaluation-split log, a truncated run (--limit, --sample-id, or
      scored samples short of the dataset's count), runs whose split, seed, subset,
-     Task version or dataset content (version and hashes) differ, a help request,
+     Task version or dataset content (version and hashes) differ, a candidate on
+     another task or worker prompt, pooled candidates that differ in model, task,
+     revision or worker prompt, a help request,
      a --json path that cannot be written, or any other input the gates cannot read
 """
 
@@ -67,9 +77,54 @@ class _HelpAction(argparse.Action):
         sys.exit(EXIT_REFUSED)
 
 
+# run_header fields: a candidate must match the baseline on BASELINE_MATCHED, and
+# pooled candidates must match each other on POOL_MATCHED (section 10(d) pools
+# re-runs of one candidate, never two different candidates).
+BASELINE_MATCHED = ("task", "worker_prompt_sha256")
+POOL_MATCHED = ("model", "task", "revision", "dirty", "worker_prompt_sha256")
+
+
+def run_header(log: Any) -> dict[str, Any]:
+    """Task (registry name without the package prefix), model, git revision and dirty
+    flag, and worker_prompt_sha256 from a log header; an absent field is None."""
+    spec = log.eval
+    task = getattr(spec, "task", None)
+    revision = getattr(spec, "revision", None)
+    return {
+        "task": None if task is None else str(task).rsplit("/", 1)[-1],
+        "model": getattr(spec, "model", None),
+        "revision": getattr(revision, "commit", None),
+        "dirty": getattr(revision, "dirty", None),
+        "worker_prompt_sha256": (getattr(spec, "metadata", None) or {}).get("worker_prompt_sha256"),
+    }
+
+
+def format_header(label: str, path: str, header: dict[str, Any]) -> str:
+    return (f"{label}: {path} | task {header['task']} | model {header['model']} | revision {header['revision']}"
+            f" dirty {header['dirty']} | worker_prompt_sha256 {header['worker_prompt_sha256']}")
+
+
+def check_run_headers(baseline: Any, candidates: Sequence[Any], paths: Sequence[str]) -> None:
+    """F2-08: a candidate on another task or worker prompt is not a regression of the
+    baseline, and pooled candidates must be re-runs of one configuration."""
+    base = run_header(baseline)
+    heads = [run_header(c) for c in candidates]
+    for path, head in zip(paths, heads):
+        diff = {k: (base[k], head[k]) for k in BASELINE_MATCHED if base[k] != head[k]}
+        if diff:
+            raise GateError(f"{path} differs from the baseline in {sorted(diff)} (baseline, candidate): {diff}")
+    for path, head in zip(paths[1:], heads[1:]):
+        diff = {k: (heads[0][k], head[k]) for k in POOL_MATCHED if heads[0][k] != head[k]}
+        if diff:
+            raise GateError(f"pooled candidate {path} differs from {paths[0]} in {sorted(diff)}"
+                            f" (first, this): {diff}; pooled runs must be re-runs of one candidate")
+
+
 def check_matching_runs(baseline: Any, candidates: Sequence[Any], paths: Sequence[str]) -> None:
     """Paired runs must share split, seed and subset, and the Task version and dataset
-    content behind each sample id, or pairing by id compares different cases."""
+    content behind each sample id, or pairing by id compares different cases; the
+    run headers must pass check_run_headers."""
+    check_run_headers(baseline, candidates, paths)
     base_args = baseline.eval.task_args or {}
     base_content = content_fingerprint(baseline)
     for path, cand in zip(paths, candidates):
@@ -91,8 +146,9 @@ def _fmt_directions(counts: dict[str, int]) -> str:
     return ", ".join(f"{d} {n}" for d, n in counts.items()) or "none"
 
 
-def render(report: GateReport, ladder: str, instances: Sequence[FabricationInstance]) -> str:
-    lines = ["Section 10(a) paired rule (Holm, m = 6)"]
+def render(report: GateReport, ladder: str, instances: Sequence[FabricationInstance],
+           headers: Sequence[str] = ()) -> str:
+    lines = [*headers, "Section 10(a) paired rule (Holm, m = 6)"]
     for name in (*DIMENSIONS, PASS4):
         t = report.paired[name]
         verdict = "BLOCK" if t.rejected else "pass"
@@ -145,7 +201,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         check_matching_runs(base_log, cand_logs, args.candidate)
         report = compare(baseline, candidates, k=PREREGISTERED_K, ladder=args.ladder)
         instances = fabrication_instances(candidates)
-        text = render(report, args.ladder, instances)
+        run_headers = [("baseline", args.baseline, run_header(base_log))]
+        run_headers += [(f"candidate {i + 1}", p, run_header(log)) for i, (p, log) in enumerate(zip(args.candidate, cand_logs))]
+        text = render(report, args.ladder, instances, [format_header(*h) for h in run_headers])
         code = EXIT_BLOCK if report.blocked else EXIT_SIGNOFF if report.signoff else EXIT_PASS
         if args.json_out:
             payload = {
@@ -153,6 +211,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "candidates": list(args.candidate),
                 "ladder": args.ladder,
                 "exit_code": code,
+                "runs": [{"label": label, "path": path, **head} for label, path, head in run_headers],
                 **asdict(report),
                 "fabrication_instances": [asdict(f) for f in instances],
             }
