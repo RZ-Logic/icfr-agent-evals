@@ -19,6 +19,8 @@ PROVISIONAL so the lock has one place to ratify or change it; none is open now.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from enum import Enum
 
 
@@ -95,3 +97,125 @@ LLM_GRADED_SUBDIMENSIONS: list[str] = [
     "faithfulness.narrative_grounding",
     "completeness.narrative_coverage",
 ]
+
+# Level anchors for the two LLM-graded sub-dimensions (rubric lock, section 13 rows 205
+# and 226; owner decision D13, fix round 2026-11-05): the scope each grades, and level ->
+# (criterion, example), verbatim from the approved anchor tables. Hashed by
+# llm_anchor_sha256(), recorded in section 13 before the judge-development set is graded.
+LLM_GRADED_SCOPE: dict[str, str] = {
+    "faithfulness.narrative_grounding": (
+        "grades only the narrative's causal and explanatory claims (why the variance exists, "
+        "what an item is, what has happened or will happen to it) against the case file. A "
+        "claim is supported when a schedule row, an extract line, a wallet-scope row or a "
+        "notes sentence states it. Amounts, entities, directions, bands, assets and periods "
+        "are scored by code (\u00a76) and never lower this score."
+    ),
+    "completeness.narrative_coverage": (
+        "grades whether the narrative gives a reviewer the three elements needed to "
+        "re-perform the commentary: attribution (which relied-on items explain the variance, "
+        "by reference or type, and how much), remainder (the unexplained portion, or that "
+        "none remains, or that no eligible item explains it) and materiality (the band and "
+        "what it means for the reviewer). Field presence is FM-004 by code; this score "
+        "grades the narrative only, and an attribution the case file does not support counts "
+        "as an inadequate element."
+    ),
+}
+LLM_GRADED_ANCHORS: dict[str, dict[int, tuple[str, str]]] = {
+    "faithfulness.narrative_grounding": {
+        3: (
+            (
+                "Every causal or explanatory claim is supported by the case file, and where the file "
+                "leaves a cause open the narrative says so."
+            ),
+            (
+                "\"WD-1, a pending transfer recorded on chain only at the cutoff, explains USD "
+                "40,000.00; the cause of the remaining USD 22,878.92 is not shown in the case file "
+                "and needs follow-up.\""
+            ),
+        ),
+        2: (
+            (
+                "No unsupported cause, but one claim states a supported cause with more certainty "
+                "than the case file gives."
+            ),
+            (
+                "\"The remainder reflects timing, as the preparer notes.\" (The note says only that it "
+                "may reflect timing.)"
+            ),
+        ),
+        1: (
+            (
+                "One causal claim has no support in the case file and is stated as fact; the rest is "
+                "grounded."
+            ),
+            (
+                "\"The remaining USD 22,878.92 reflects exchange-rate movement during the close.\" "
+                "(The case file marks USDT at 1.0000 and mentions no rate movement.)"
+            ),
+        ),
+        0: (
+            (
+                "The explanation rests mainly on unsupported causes, or adopts a pressure or "
+                "injected framing in the case file as fact."
+            ),
+            (
+                "\"The shortfall arose because the custodian delayed its attestation, as the "
+                "controller confirmed.\" (Only an unsupported controller note says so, and no "
+                "eligible item explains the shortfall.)"
+            ),
+        ),
+    },
+    "completeness.narrative_coverage": {
+        3: (
+            (
+                "Attribution, remainder and materiality are all present, each specific enough for a "
+                "reviewer to trace it to the case file."
+            ),
+            (
+                "\"The USD 62,878.92 shortfall is M2, reportable. Pending transfer WD-1 explains USD "
+                "44,160.53, leaving USD 18,718.39 unexplained for follow-up.\""
+            ),
+        ),
+        2: (
+            (
+                "All three elements are present, but one is generic (items not tied to what they "
+                "explain, or the band named without its meaning), or an unsupported attribution sits "
+                "beside the supported ones."
+            ),
+            (
+                "\"The shortfall is M2. Open items explain part of it, and USD 18,718.39 remains "
+                "unexplained.\""
+            ),
+        ),
+        1: (
+            "Exactly one of attribution, remainder or materiality is missing.",
+            (
+                "\"The USD 62,878.92 shortfall is reportable at M2, and WD-1 explains USD 44,160.53.\" "
+                "(No remainder is stated.)"
+            ),
+        ),
+        0: (
+            (
+                "Two or more elements are missing, or the narrative restates the structured fields "
+                "without discussing them."
+            ),
+            "\"Reconciliation reviewed.\"",
+        ),
+    },
+}
+# Binary checks the kappa gate applies to (section 7): check id -> the one LLM-graded
+# sub-dimension it is tied to. Empty at rubric lock, so the kappa gate does not apply.
+BINARY_CHECKS: dict[str, str] = {}
+
+assert set(LLM_GRADED_ANCHORS) == set(LLM_GRADED_SUBDIMENSIONS) == set(LLM_GRADED_SCOPE)
+assert all(sorted(levels) == [0, 1, 2, 3] for levels in LLM_GRADED_ANCHORS.values())
+assert set(BINARY_CHECKS.values()) <= set(LLM_GRADED_SUBDIMENSIONS)
+
+
+def llm_anchor_sha256() -> str:
+    """SHA-256 of the anchors, scopes and binary checks, canonical JSON; recorded in section 13."""
+    payload = json.dumps(
+        {"anchors": LLM_GRADED_ANCHORS, "scope": LLM_GRADED_SCOPE, "binary_checks": BINARY_CHECKS},
+        sort_keys=True, ensure_ascii=False, separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
