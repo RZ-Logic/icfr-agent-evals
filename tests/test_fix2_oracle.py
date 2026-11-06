@@ -413,6 +413,7 @@ PATTERN_G_RUN = [
 @pytest.mark.parametrize("case_id,entities,text,token", [
     pytest.param(case, ents, text, tok, id=rid) for rid, case, ents, text, tok in PATTERN_G_RUN
 ])
+@pytest.mark.xfail(strict=True, reason="G1/G2 rules reverted 2026-11-06 (R2.md); structural reliance fix pending")
 def test_pattern_g_number_word_before_wallet_not_swept(case_id, entities, text, token):
     result = check_fabrication(answer(case_id, text, entities), truth(case_id))
     assert result.failure_modes == ()
@@ -466,8 +467,18 @@ PATTERN_G_EXCLUDED = [
 ]
 
 
+# Revert of 2026-11-06 (R2.md): the rows the ee39795 reading routes are strict
+# xfails, so a later structural fix that clears them is noticed. The two rows the
+# ee39795 reading already handled (T0.md, "the 51 passes on ee39795") stay plain.
+_G2_REVERTED_XFAIL = pytest.mark.xfail(
+    strict=True, reason="G1/G2 rules reverted 2026-11-06 (R2.md); structural reliance fix pending"
+)
+_G2_PASSING_ON_EE39795 = {"G-std007-none-of-these", "G-hc003-paraphrase-passive"}
+
+
 @pytest.mark.parametrize("case_id,text,refs", [
-    pytest.param(case, text, refs, id=rid) for rid, case, text, refs in PATTERN_G_EXCLUDED
+    pytest.param(case, text, refs, id=rid, marks=() if rid in _G2_PASSING_ON_EE39795 else _G2_REVERTED_XFAIL)
+    for rid, case, text, refs in PATTERN_G_EXCLUDED
 ])
 def test_pattern_g_clear_exclusion_not_routed(case_id, text, refs):
     result = check_reconciling_items(answer(case_id, text), truth(case_id))

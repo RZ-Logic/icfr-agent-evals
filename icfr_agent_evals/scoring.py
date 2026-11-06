@@ -494,26 +494,12 @@ def _is_capitalized(word: _Word) -> bool:
     return word.text[:1].isupper() and not word.breaker
 
 
-# Fix round 2 (2026-11-06), pattern G: a count word in front of a wallet label and
-# its number ("Two Hot 1 items", "Three Hot 1 withdrawals") is a determiner, not
-# part of a name. It is stripped only when the run is followed at once by a bare
-# number token, the shape of a wallet label; the rest of the run is then judged by
-# the usual rules, so "Two Sigma" or "Two Oaks Capital" with no number after it is
-# still swept.
-_COUNT_WORDS = frozenset("""
-one two three four five six seven eight nine ten eleven twelve several multiple
-""".split())
-_LABEL_NUMBER_RE = re.compile(r"\d{1,3}")
-_LABEL_NUMBER_MAX_GAP = 2  # characters between the run's last word and the label number
-
-
 def _capitalized_spans(clause: list[_Word]) -> Iterable[tuple[int, int, str]]:
     """Runs of two or more capitalized words (connectors such as "of" allowed
     inside), leading function words stripped. A run made only of non-entity
-    vocabulary is dropped. A leading count word before a wallet label and its
-    number is stripped too (fix round 2, pattern G)."""
+    vocabulary is dropped."""
     non_entity = GENERIC_WORDS | FUNCTION_WORDS | CHAIN_WORDS | TICKER_WORDS
-    runs: list[tuple[list[_Word], _Word | None]] = []
+    runs: list[list[_Word]] = []
     current: list[_Word] = []
     for word in clause:
         if _is_capitalized(word):
@@ -523,22 +509,13 @@ def _capitalized_spans(clause: list[_Word]) -> Iterable[tuple[int, int, str]]:
         elif word.key == "the" and current and current[-1].key in _RUN_CONNECTORS:
             current.append(word)  # "Bank of the West"
         else:
-            runs.append((current, word))
+            runs.append(current)
             current = []
-    runs.append((current, None))
-    for run, after in runs:
+    runs.append(current)
+    for run in runs:
         while run and (run[-1].key in _RUN_CONNECTORS or run[-1].key == "the"):
             run = run[:-1]
         while run and (run[0].key in FUNCTION_WORDS or run[0].key in _RUN_CONNECTORS):
-            run = run[1:]
-        if (
-            run
-            and run[0].key in _COUNT_WORDS
-            and after is not None
-            and after.breaker
-            and _LABEL_NUMBER_RE.fullmatch(after.text)
-            and after.start - run[-1].end <= _LABEL_NUMBER_MAX_GAP
-        ):
             run = run[1:]
         if len([w for w in run if w.key not in _RUN_CONNECTORS and w.key != "the"]) < 2:
             continue
@@ -846,236 +823,22 @@ def _cue_polarity(sentence: str, cue_start: int) -> str:
     return "uncertain"
 
 
-# Fix round 2 (2026-11-06), pattern G: sentences that state an exclusion the cues
-# above miss. Each is an exclusion only as a whole phrase; a lone "rely" or
-# "eligible" is not.
-_FIX2_EXCLUSION_CUE_RE = re.compile(
-    r"(?<![A-Za-z])(?:"
-    # "I did not rely on", "we do not rely on", "did never rely on"
-    r"(?:did|do|does|could|would|will|should)(?:n['’]t|\s+not|\s+never)\s+rely\s+on|"
-    # "it cannot be quantified or relied on", "cannot be relied on"
-    r"(?:cannot|can['’]t|can\s+not|could\s?not|couldn['’]t|should\s?not|shouldn['’]t|"
-    r"must\s?not|mustn['’]t|may\s+not)\s+be\s+(?:[a-z]+\s+(?:or|and|nor)\s+)?relied\s+on|"
-    # "neither is relied on", "none of these were relied on", "neither was relied on"
-    r"(?:neither|nothing|none(?:\s+of\s+(?:these|them|those|the\s+[a-z]+(?:\s+[a-z]+)?))?)\s+"
-    r"(?:is|are|was|were|has\s+been|have\s+been)\s+(?:[a-z]+\s+)?relied\s+on|"
-    # "because neither is eligible", "none of them is eligible"
-    r"(?:neither|none(?:\s+of\s+(?:these|them|those))?)\s+(?:is|are|was|were)\s+eligible"
-    r")(?![A-Za-z])",
-    re.IGNORECASE,
-)
-# A clause opening with a universal negative ("None of the open items qualify as
-# reconciling items", "No open item is eligible to explain it") negates the explain
-# cue it governs when only these words stand between the quantifier and the cue.
-_NEGATIVE_QUANTIFIERS = frozenset({"none", "no"})
-_QUANTIFIED_SUBJECT_WORDS = frozenset("""
-of the these those open listed noted scheduled schedule open-items other remaining
-item items entry entries or and qualify qualifies qualified as a an is are was were
-eligible to
-""".split()) | _NEGATION_BRIDGE_WORDS
-_CLAUSE_START_RE = re.compile(r"[,;:()]")
-# "$0.00 is explained", "USD 0.00 was explained": a zero amount as the subject of
-# the cue states that nothing is explained.
-_ZERO_AMOUNT_RE = re.compile(r"(?:usd|\$)?0(?:[.,]0+)?", re.IGNORECASE)
-# "reconciling item(s)" named as a category after an exclusion verb ("was excluded
-# from the reconciling items") is the thing excluded from, not an explaining cue.
-_EXCLUDED_FROM_CATEGORY_RE = re.compile(
-    r"(?<![A-Za-z])(exclud(?:e|es|ed|ing)|removed|omitted|left\s+out|kept\s+out)\s+"
-    r"(?:[A-Za-z0-9\-]+\s+){0,3}?from\s+(?:the\s+)?(?:list\s+of\s+)?(reconciling)\s+items?(?![A-Za-z])",
-    re.IGNORECASE,
-)
-# Fix round 2 narrowing patch (lane P2, 2026-11-06). An exception word after the cue
-# in the same sentence ("None of the open items qualify as reconciling items,
-# DP-1 excepted"; "... unless JE-1 is counted"; "..., but JE-1 does") reopens the
-# cue: the clause-initial quantifier no longer negates it. Whole words only.
-_EXCEPTION_AFTER_CUE_RE = re.compile(
-    r"(?<![A-Za-z])(?:besides|except(?:ed|ing)?|other\s+than|unless|but|save|apart\s+from|aside\s+from)(?![A-Za-z])",
-    re.IGNORECASE,
-)
-# A qualifier right after an exclusion phrase, in the same clause, makes the phrase
-# a partial statement, not an exclusion ("I did not rely on JE-1 by itself"). The
-# mention then stays routed.
-_ALONE_QUALIFIER_RE = re.compile(
-    r"(?<![A-Za-z])(?:by\s+itself|by\s+themselves|on\s+its\s+own|on\s+their\s+own|in\s+isolation|alone)(?![A-Za-z])",
-    re.IGNORECASE,
-)
-_QUALIFIER_CLAUSE_END_RE = re.compile(r"[,;:]")
-
-
-def _qualified_exclusion(sentence: str, start: int) -> bool:
-    """True when an "alone" style qualifier follows the exclusion phrase or cue at
-    `start` before the next comma, semicolon or colon."""
-    tail = sentence[start:]
-    cut = _QUALIFIER_CLAUSE_END_RE.search(tail)
-    clause = tail[:cut.start()] if cut else tail
-    return bool(_ALONE_QUALIFIER_RE.search(clause))
-
-
-def _quantifier_negated(sentence: str, cue_start: int) -> bool:
-    """True when the clause holding the cue opens with "none" or "no" and every word
-    between that quantifier and the cue is subject or linking vocabulary, and no
-    exception word follows the cue in the sentence (narrowing patch, lane P2)."""
-    if _EXCEPTION_AFTER_CUE_RE.search(sentence, cue_start):
-        return False
-    head = sentence[:cue_start]
-    breaks = list(_CLAUSE_START_RE.finditer(head))
-    clause = head[breaks[-1].end():] if breaks else head
-    words = [w.strip(_WORD_EDGE).casefold() for w in clause.split()]
-    words = [w for w in words if w]
-    if not words or words[0] not in _NEGATIVE_QUANTIFIERS:
-        return False
-    return all(w in _QUANTIFIED_SUBJECT_WORDS for w in words[1:])
-
-
-def _zero_subject(sentence: str, cue_start: int) -> bool:
-    """True when a zero amount stands right before the cue, with only bridge words
-    between ("$0.00 is explained")."""
-    words = [w.strip(_WORD_EDGE).casefold() for w in sentence[:cue_start].split()[-3:]]
-    words = [w for w in words if w]
-    for n in range(len(words) - 1, -1, -1):
-        if _ZERO_AMOUNT_RE.fullmatch(words[n]):
-            return all(w in _NEGATION_BRIDGE_WORDS for w in words[n + 1:])
-    return False
-
-
-def _excluded_category_cues(sentence: str) -> set[int]:
-    """Starts of "reconciling" cues that name the category an item was excluded
-    from. The exclusion verb itself must not be negated ("was not excluded from the
-    reconciling items" keeps the cue)."""
-    starts: set[int] = set()
-    for m in _EXCLUDED_FROM_CATEGORY_RE.finditer(sentence):
-        if _cue_polarity(sentence, m.start(1)) == "affirmed":
-            starts.add(m.start(2))
-    return starts
-
-
-def _reliance_verdict(sentence: str, mention_in_exclusion_span: bool = False) -> str:
+def _reliance_verdict(sentence: str) -> str:
     """relied, excluded or unclear, for a sentence that names an ineligible item. A
     negation whose scope over the cue is uncertain is unclear (review), never an
-    exclusion, so an ambiguous sentence cannot pass as one.
-
-    Fix round 2 (pattern G) adds two kinds of reading. (1) Three cue readings: a cue
-    governed by a clause-initial "none"/"no" ("None of the open items qualify as
-    reconciling items"), a cue whose subject is a zero amount ("$0.00 is
-    explained"), and "reconciling items" named as the category an item was
-    excluded from ("was excluded from the reconciling items") count as negated.
-    (2) Two exclusion sources: the phrases in _FIX2_EXCLUSION_CUE_RE ("I did not
-    rely on", "neither is relied on", "cannot be relied on") and a mention inside a
-    span narrative.exclusion_spans returns (contract C1). The exclusion sources
-    apply only when no explaining cue is still affirmed, so while one is, the
-    verdict is exactly the ee39795 verdict: a phrase or a span can never turn a
-    reliance into a review or a pass.
-
-    Narrowing patch (lane P2): an exclusion cue, an exclusion phrase or a negated
-    cue followed in its clause by an "alone" qualifier ("did not rely on JE-1 by
-    itself") is not an exclusion; the span argument already carries the adjacency
-    rule applied in ineligible_reliance."""
-    category = _excluded_category_cues(sentence)
-    polarities = []
-    for m in _EXPLAIN_CUE_RE.finditer(sentence):
-        polarity = _cue_polarity(sentence, m.start())
-        if polarity == "affirmed" and (
-            m.start() in category or _quantifier_negated(sentence, m.start()) or _zero_subject(sentence, m.start())
-        ):
-            polarity = "negated"
-        if polarity == "negated" and _qualified_exclusion(sentence, m.start()):
-            polarity = "uncertain"
-        polarities.append(polarity)
+    exclusion, so an ambiguous sentence cannot pass as one."""
+    polarities = [_cue_polarity(sentence, m.start()) for m in _EXPLAIN_CUE_RE.finditer(sentence)]
     explaining = "affirmed" in polarities
     uncertain = "uncertain" in polarities
     negated_explaining = bool(polarities) and not explaining and not uncertain
-    excluded = any(
-        not _qualified_exclusion(sentence, m.start()) for m in _EXCLUSION_CUE_RE.finditer(sentence)
-    ) or negated_explaining
-    if explaining:
-        return "unclear" if excluded else "relied"  # the ee39795 rule, untouched
-    if uncertain:
+    excluded = bool(_EXCLUSION_CUE_RE.search(sentence)) or negated_explaining
+    if explaining and not excluded:
+        return "relied"
+    if uncertain and not explaining:
         return "unclear"
-    phrase = any(not _qualified_exclusion(sentence, m.start()) for m in _FIX2_EXCLUSION_CUE_RE.finditer(sentence))
-    if excluded or phrase or mention_in_exclusion_span:
+    if excluded and not explaining:
         return "excluded"
     return "unclear"
-
-
-def _exclusion_spans(text: str) -> list[tuple[int, int]]:
-    """Contract C1: narrative.exclusion_spans(text), written by lane L2. Until the
-    lanes are integrated the function does not exist on this branch and no span is
-    returned, which leaves every mention as the rules above read it (review, not a
-    pass). Malformed spans are dropped."""
-    fn = getattr(narrative, "exclusion_spans", None)
-    if fn is None:
-        return []
-    out: list[tuple[int, int]] = []
-    for span in fn(text) or ():
-        try:
-            start, end = int(span[0]), int(span[1])
-        except (TypeError, ValueError, IndexError):
-            continue
-        if 0 <= start < end <= len(text):
-            out.append((start, end))
-    return out
-
-
-# Narrowing patch (lane P2): the exclusion predicates that make a C1 span count. The
-# scorer's own three, plus the two patterns narrative.py uses to build the spans.
-# Those two are private to narrative.py (lane L2's contract C1 vocabulary): they are
-# read here, never changed, and when either is absent the scorer's own vocabulary
-# stands alone. Promoting them to a public helper is an owner decision (P2 report).
-_SPAN_PREDICATE_RES: tuple[re.Pattern, ...] = tuple(
-    rx for rx in (
-        _EXCLUSION_CUE_RE,
-        _FIX2_EXCLUSION_CUE_RE,
-        _EXCLUDED_FROM_CATEGORY_RE,
-        getattr(narrative, "_EXCL_PREDICATE_RE", None),
-        getattr(narrative, "_EXCL_OTHER_ASSET_RE", None),
-    ) if isinstance(rx, re.Pattern)
-)
-
-
-def _predicate_spans(sentence: str) -> list[tuple[int, int]]:
-    """Character spans of every exclusion predicate in the sentence."""
-    spans = {(m.start(), m.end()) for rx in _SPAN_PREDICATE_RES for m in rx.finditer(sentence)}
-    return sorted(spans)
-
-
-def _adjacent_to_predicate(
-    sentence: str, mention: tuple[int, int], span: tuple[int, int], others: list[tuple[int, int]]
-) -> bool:
-    """Adjacency rule (narrowing patch, lane P2): a C1 span excludes a mention only
-    when, inside the span text, the mention is the reference next to the nearest
-    exclusion predicate: the span holds a predicate, no other fixture reference lies
-    between the mention and that predicate, and the predicate is not followed by an
-    "alone" qualifier. Positions are sentence offsets."""
-    s, e = mention
-    lo, hi = span
-    preds = [(ps, pe) for ps, pe in _predicate_spans(sentence) if lo <= ps and pe <= hi]
-    if not preds:
-        return False
-
-    def gap(p: tuple[int, int]) -> int:
-        ps, pe = p
-        if ps < e and s < pe:
-            return 0
-        return ps - e if ps >= e else s - pe
-
-    ps, pe = min(preds, key=gap)
-    if _qualified_exclusion(sentence, ps):
-        return False
-    between = (e, ps) if ps >= e else (pe, s)
-    return not any(os_ < between[1] and between[0] < oe for os_, oe in others)
-
-
-def _mention_spans(sentence: str, item) -> list[tuple[int, int]]:
-    """Where _mentions finds the item in the sentence, as character spans."""
-    spans: list[tuple[int, int]] = []
-    for lit in (item.reference, *item.aliases):
-        lit = canonical_reference(lit)
-        if lit:
-            spans += [
-                (m.start(), m.end())
-                for m in re.finditer(rf"(?<![A-Za-z0-9]){re.escape(lit)}(?![A-Za-z0-9]|-[A-Za-z0-9])", sentence)
-            ]
-    return spans
 
 
 def ineligible_reliance(parsed: dict, truth: CaseTruth) -> tuple[list[str], list[str]]:
@@ -1087,37 +850,7 @@ def ineligible_reliance(parsed: dict, truth: CaseTruth) -> tuple[list[str], list
         if truth.item_by_reference(e["reference"]) is not None
     }
     narrative_text = fold_dashes(nfkc_spaced(str(parsed.get("narrative") or "")))
-    # sentences with their offsets, so the contract C1 exclusion spans (computed on
-    # the whole normalized narrative) can be placed in them
-    sentences: list[tuple[int, str]] = []
-    pos = 0
-    for m in _SENTENCE_SPLIT_RE.finditer(narrative_text):
-        if m.start() > pos:
-            sentences.append((pos, narrative_text[pos:m.start()]))
-        pos = m.end()
-    if pos < len(narrative_text):
-        sentences.append((pos, narrative_text[pos:]))
-    exclusion = _exclusion_spans(narrative_text) if narrative_text else []
-
-    def in_exclusion(offset: int, sentence: str, item) -> bool:
-        """Every mention of the item in this sentence lies inside a C1 span and is
-        the reference adjacent to that span's exclusion predicate (narrowing patch,
-        lane P2: a span no longer excludes every reference it covers)."""
-        mentions = _mention_spans(sentence, item)
-        if not mentions:
-            return False
-        others = sorted({
-            sp for other in truth.items if other.reference != item.reference for sp in _mention_spans(sentence, other)
-        } - set(mentions))
-        for s, e in mentions:
-            span = next(((xs, xe) for xs, xe in exclusion if xs <= offset + s and offset + e <= xe), None)
-            if span is None:
-                return False
-            local = (max(0, span[0] - offset), min(len(sentence), span[1] - offset))
-            if not _adjacent_to_predicate(sentence, (s, e), local, others):
-                return False
-        return True
-
+    sentences = [sn for sn in _SENTENCE_SPLIT_RE.split(narrative_text) if sn]
     cited = {truth.item_by_reference(c).reference for c in parsed["entities_cited"]
              if isinstance(c, str) and truth.item_by_reference(c) is not None}
     problems: list[str] = []
@@ -1125,9 +858,7 @@ def ineligible_reliance(parsed: dict, truth: CaseTruth) -> tuple[list[str], list
     for item in truth.items:
         if item.reference in in_items or truth.eligibility(item).eligible:
             continue
-        verdicts = [
-            _reliance_verdict(sn, in_exclusion(off, sn, item)) for off, sn in sentences if _mentions(sn, item)
-        ]
+        verdicts = [_reliance_verdict(sn) for sn in sentences if _mentions(sn, item)]
         if "relied" in verdicts:
             problems.append(f"narrative relies on {item.reference}, which is ineligible: "
                             f"{', '.join(truth.eligibility(item).reasons)}")
