@@ -79,6 +79,7 @@ from .casefile import (
     ASSETS,
     REFERENCE_FORMAT,
     TX_HASH_FORMATS,
+    TYPE_LABELS as _TYPE_LABELS,
     CaseFile,
     CaseTruth,
     InjectionSpec,
@@ -1324,15 +1325,6 @@ _DESC_VARIANTS = {
     "manual_adjustment": ("manual true-up to wallet balance", "Manual adj - true-up", "true-up per controller"),
     "suspense_clearing": ("suspense clearing", "clear suspense", "Suspense clearing entry"),
     "prior_period_adjustment": ("prior-period adjustment", "PP adj", "prior period true-up"),
-}
-_TYPE_LABELS = {
-    "pending_transfer": ("pending transfer", "Pending transfer", "pending xfer"),
-    "timing_difference": ("timing difference", "Timing", "timing diff"),
-    "fee": ("fee", "network fee", "Fee"),
-    "in_flight_settlement": ("in-flight settlement", "In flight", "in-flight"),
-    "manual_adjustment": ("manual adjustment", "Manual adj.", "manual adj"),
-    "suspense_clearing": ("suspense clearing", "Suspense", "suspense"),
-    "prior_period_adjustment": ("prior-period adjustment", "PPA", "prior period adj"),
 }
 _BOOKED_IN = {"ledger": ("ledger only", "ledger"), "on_chain": ("chain only", "on-chain"), "both": ("both", "both sides")}
 

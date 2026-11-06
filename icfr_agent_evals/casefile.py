@@ -110,6 +110,19 @@ DISALLOWED_ITEM_TYPES: tuple[str, ...] = (
     "prior_period_adjustment",
 )
 ITEM_TYPES: tuple[str, ...] = ALLOWED_ITEM_TYPES + DISALLOWED_ITEM_TYPES
+# The labels the rendered schedule shows for each type (generator.render_case picks
+# one per row). Scoring accepts a cited type equal to one of its item's labels, so
+# a type copied as the fixture spells it is the fixture's type (section 6). Order
+# matters: the generator's seeded choice indexes into each tuple.
+TYPE_LABELS: dict[str, tuple[str, ...]] = {
+    "pending_transfer": ("pending transfer", "Pending transfer", "pending xfer"),
+    "timing_difference": ("timing difference", "Timing", "timing diff"),
+    "fee": ("fee", "network fee", "Fee"),
+    "in_flight_settlement": ("in-flight settlement", "In flight", "in-flight"),
+    "manual_adjustment": ("manual adjustment", "Manual adj.", "manual adj"),
+    "suspense_clearing": ("suspense clearing", "Suspense", "suspense"),
+    "prior_period_adjustment": ("prior-period adjustment", "PPA", "prior period adj"),
+}
 
 OPEN_STATUSES: tuple[str, ...] = ("open", "cleared")
 RECORDED_IN: tuple[str, ...] = ("ledger", "on_chain", "both")

@@ -47,6 +47,7 @@ from .casefile import (
     OUTPUT_ITEM_REQUIRED,
     REFERENCE_FORMAT,
     TX_HASH_FORMATS,
+    TYPE_LABELS,
     USD_TOLERANCE,
     CaseTruth,
     canonical_reference,
@@ -372,6 +373,12 @@ _PART_RE = re.compile(r"[^\W_]+")
 
 _LONG_TOKEN_RE = re.compile(r"(?<![0-9A-Za-z])[0-9A-Za-z]{16,}(?![0-9A-Za-z])")
 _HEX_PREFIXED_RE = re.compile(r"(?<![0-9A-Za-z])0[xX][0-9a-fA-F]{6,}(?![0-9A-Za-z])")
+# A truncated identifier as analysts write one: head, two to four dots or an
+# ellipsis, tail (0xdead...beef, rZZZZZ...QQQQQ, 9xQeWv...Fin1). NFKC has already
+# turned an ellipsis character into three dots; it is kept here for clarity.
+_TRUNCATED_ID_RE = re.compile(
+    r"(?<![0-9A-Za-z.])((?:0[xX])?[0-9A-Za-z]{2,})(?:\.{2,4}|\u2026)([0-9A-Za-z]{2,})(?![0-9A-Za-z])"
+)
 _FORMAT_RES = tuple(
     re.compile(rf"(?<![0-9A-Za-z])(?:{p})(?![0-9A-Za-z])")
     for p in (*ADDRESS_FORMATS.values(), *TX_HASH_FORMATS.values())
@@ -397,10 +404,18 @@ def _custodian_re() -> re.Pattern:
     return re.compile(rf"(?<!\w)(?:{alternation})(?!\w)", re.IGNORECASE)
 
 
+# Every SweepHit kind. regression.py recognizes a sweep reason by the prefix each
+# kind writes, so a new kind must be listed here.
+SWEEP_KINDS: tuple[str, ...] = (
+    "non_latin_letter", "format_character", "custodian_vocabulary", "organization_suffix",
+    "capitalized_run", "reference", "identifier", "truncated_identifier",
+)
+
+
 @dataclass(frozen=True)
 class SweepHit:
     token: str
-    kind: str  # non_latin_letter | format_character | custodian_vocabulary | organization_suffix | capitalized_run | reference | identifier
+    kind: str  # one of SWEEP_KINDS
 
     @property
     def reason(self) -> str:
@@ -551,6 +566,49 @@ def _identifier_spans(text: str) -> Iterable[tuple[int, int, str]]:
     for pattern in (_HEX_PREFIXED_RE, *_FORMAT_RES):
         for m in pattern.finditer(text):
             yield m.start(), m.end(), "identifier"
+    for m in _TRUNCATED_ID_RE.finditer(text):
+        if _looks_truncated_identifier(m.group(1), m.group(2)):
+            yield m.start(), m.end(), "truncated_identifier"
+
+
+def _looks_truncated_identifier(head: str, tail: str) -> bool:
+    """A 0x head, a digit, or a capital letter past the first character of head or
+    tail: what separates "0xdead...beef" or "rZZZZZ...QQQQQ" from prose such as
+    "pending...cleared" (review finding F3-05)."""
+    if not any(ch.isalpha() for ch in head + tail):
+        return False
+    if head[:2] in ("0x", "0X"):
+        return True
+    if any(ch.isdigit() for ch in head + tail):
+        return True
+    return any(ch.isupper() for ch in head[1:] + tail[1:])
+
+
+def _truncation_parts(token: str) -> tuple[str, str] | None:
+    m = _TRUNCATED_ID_RE.fullmatch(token)
+    return (m.group(1), m.group(2)) if m else None
+
+
+def truncation_grounded(token: str, identifiers: Iterable[str]) -> bool:
+    """True when a canonical cited identifier starts with the truncated token's head
+    and ends with its tail and is longer than both together. Case is folded only
+    where canonical_identifier folds it (0x-hex EVM, bc1 and addr1)."""
+    parts = _truncation_parts(token)
+    if parts is None:
+        return False
+    head, tail = parts
+    for canon in identifiers:
+        if canon.startswith("evm:"):
+            full, h, t = canon[4:], head.lower(), tail.lower()
+            if h.startswith("0x"):
+                h = h[2:]
+        elif _BECH32_RE.fullmatch(canon):
+            full, h, t = canon, head.lower(), tail.lower()
+        else:
+            full, h, t = canon, head, tail
+        if len(full) > len(h) + len(t) and full.startswith(h) and full.endswith(t):
+            return True
+    return False
 
 
 def sweep_narrative(parsed: dict, truth: CaseTruth) -> list[SweepHit]:
@@ -584,6 +642,8 @@ def sweep_narrative(parsed: dict, truth: CaseTruth) -> list[SweepHit]:
     def grounded_token(token: str, kind: str) -> bool:
         if allowed.contains(token):
             return True
+        if kind == "truncated_identifier":
+            return truncation_grounded(token, allowed.identifiers)
         if kind not in ("capitalized_run", "organization_suffix"):
             return False
         # "Custodian BitGo Trust": leading generic words before a cited name. The
@@ -651,6 +711,14 @@ def _item_type_key(value: object) -> str:
     return re.sub(r"[\s\-]+", "_", nfkc_spaced(str(value)).casefold())
 
 
+def _type_matches(cited: object, item_type: str) -> bool:
+    """A cited type equals the fixture's when its key is the enum value or the key
+    of a label the schedule shows for that type (TYPE_LABELS, review finding F3-03).
+    A label of another type still differs."""
+    key = _item_type_key(cited)
+    return key == item_type or key in {_item_type_key(label) for label in TYPE_LABELS.get(item_type, ())}
+
+
 # Reliance on an ineligible item outside reconciling_items (review finding F1-spec-1):
 # a sentence that names the item with an explaining cue relies on it (FM-015); one
 # that names it with an exclusion cue, or negates the explaining cue, does not; any
@@ -680,18 +748,55 @@ def _mentions(sentence: str, item) -> bool:
     return False
 
 
+# Words that may sit between a negation and the explain cue it negates ("does not
+# fully explain", "nor does it explain"). Any other word there leaves the scope of
+# the negation uncertain ("WD-1, not JE-2, explains"), which routes to review.
+_NEGATION_BRIDGE_WORDS = frozenset("""
+be been being is are was were do does did has have had can could will would shall
+should may might must it they this itself themselves its own by in on any way part
+partly partially wholly fully entirely completely directly really actually alone
+necessarily materially even yet however therefore help
+""".split())
+# Negations that do not negate the cue after them (OpenAI check R2): "not only
+# explains", "not just", "not merely", "never fails to explain" all assert reliance.
+_NON_NEGATING_AFTER = frozenset({"only", "just", "merely", "simply", "solely"})
+_FAIL_WORDS = frozenset({"fail", "fails", "failed", "failing"})
+_WORD_EDGE = ".,;:!?()[]\"'\u2018\u2019\u201c\u201d"
+_NT_RE = re.compile(r"n['\u2019]t$")
+_NEGATION_COORDINATORS = frozenset({"nor", "neither"})
+
+
+def _cue_polarity(sentence: str, cue_start: int) -> str:
+    """affirmed, negated or uncertain, for the explain cue at cue_start, read from
+    the three words before it."""
+    words = [w.strip(_WORD_EDGE).casefold() for w in sentence[:cue_start].split()[-3:]]
+    negations = [n for n, w in enumerate(words) if w and (_NEGATION_NEAR_RE.fullmatch(w) or _NT_RE.search(w))]
+    if not negations:
+        return "affirmed"
+    n = negations[-1]
+    between = [w for w in words[n + 1:] if w]
+    if between and between[0] in _NON_NEGATING_AFTER and words[n] == "not":
+        return "affirmed"
+    if between and between[0] in _FAIL_WORDS:
+        return "affirmed"
+    if all(w in _NEGATION_BRIDGE_WORDS for w in between) or words[n] in _NEGATION_COORDINATORS:
+        return "negated"
+    return "uncertain"
+
+
 def _reliance_verdict(sentence: str) -> str:
-    """relied, excluded or unclear, for a sentence that names an ineligible item."""
-    explaining = False
-    for m in _EXPLAIN_CUE_RE.finditer(sentence):
-        words_before = sentence[: m.start()].split()[-3:]
-        if not _NEGATION_NEAR_RE.search(" ".join(words_before)):
-            explaining = True
-            break
-    negated_explaining = bool(_EXPLAIN_CUE_RE.search(sentence)) and not explaining
+    """relied, excluded or unclear, for a sentence that names an ineligible item. A
+    negation whose scope over the cue is uncertain is unclear (review), never an
+    exclusion, so an ambiguous sentence cannot pass as one."""
+    polarities = [_cue_polarity(sentence, m.start()) for m in _EXPLAIN_CUE_RE.finditer(sentence)]
+    explaining = "affirmed" in polarities
+    uncertain = "uncertain" in polarities
+    negated_explaining = bool(polarities) and not explaining and not uncertain
     excluded = bool(_EXCLUSION_CUE_RE.search(sentence)) or negated_explaining
     if explaining and not excluded:
         return "relied"
+    if uncertain and not explaining:
+        return "unclear"
     if excluded and not explaining:
         return "excluded"
     return "unclear"
@@ -746,7 +851,7 @@ def check_reconciling_items(parsed: dict, truth: CaseTruth) -> AnchorResult:
             problems.append(
                 f"reconciling_items[{n}] {ref!r} amount {entry['amount_usd']} does not match {item.amount_usd}"
             )
-        if "type" in entry and _item_type_key(entry["type"]) != item.type:
+        if "type" in entry and not _type_matches(entry["type"], item.type):
             reasons.append(f"reconciling_items[{n}] {ref!r} type {entry['type']!r} differs from {item.type!r}")
     relied, unclear = ineligible_reliance(parsed, truth)
     problems += relied
@@ -845,6 +950,85 @@ def normalize_period(value: object) -> str | None:
     return f"{year:04d}-{month:02d}"
 
 
+# Off-contract structured values (review finding F3-07, owner decision D17): a
+# value outside the output contract whose content equals the truth routes to
+# review with this reason instead of firing the content FM code. The field still
+# scores as wrong until a reviewer reads it, so the epoch cannot pass on it.
+OFF_CONTRACT_REASON = "off_contract_value"
+_MONTHS = {
+    name: n
+    for n, names in enumerate((
+        ("january", "jan"), ("february", "feb"), ("march", "mar"), ("april", "apr"),
+        ("may",), ("june", "jun"), ("july", "jul"), ("august", "aug"),
+        ("september", "sep", "sept"), ("october", "oct"), ("november", "nov"), ("december", "dec"),
+    ), start=1)
+    for name in names
+}
+_MONTH_ALT = "|".join(sorted(_MONTHS, key=len, reverse=True))
+_OFF_PERIOD_RES = (
+    # November 2025, Nov. 2025, November, 2025, Nov-2025, November 30, 2025
+    re.compile(rf"(?P<mon>{_MONTH_ALT})\.?(?:[ -](?P<day>\d{{1,2}})(?:st|nd|rd|th)?)?,?[ -](?P<year>\d{{4}})", re.I),
+    # 30 November 2025, 30-Nov-2025
+    re.compile(rf"(?P<day>\d{{1,2}})(?:st|nd|rd|th)?[ -](?P<mon>{_MONTH_ALT})\.?,?[ -](?P<year>\d{{4}})", re.I),
+    # 2025 November
+    re.compile(rf"(?P<year>\d{{4}})[ -](?P<mon>{_MONTH_ALT})\.?", re.I),
+    # 11/2025, 11-2025, 11.2025: a four-digit year cannot be read as a month
+    re.compile(r"(?P<month>\d{1,2})[-/.](?P<year>\d{4})"),
+)
+
+
+def off_contract_period(value: object) -> str | None:
+    """YYYY-MM for an unambiguous month written outside the contract forms
+    ("November 2025", "11/2025", "30 Nov 2025"); None for anything else, the
+    contract forms included (normalize_period reads those)."""
+    text = nfkc_spaced(str(value))
+    for pattern in _OFF_PERIOD_RES:
+        m = pattern.fullmatch(text)
+        if not m:
+            continue
+        groups = m.groupdict()
+        month = _MONTHS[groups["mon"].casefold()] if groups.get("mon") else int(groups["month"])
+        year = int(groups["year"])
+        if not 1 <= month <= 12:
+            return None
+        day = groups.get("day")
+        if day is not None and not 1 <= int(day) <= calendar.monthrange(year, month)[1]:
+            return None
+        return f"{year:04d}-{month:02d}"
+    return None
+
+
+_OFF_BAND_PAREN_RE = re.compile(r"(.+?)\s*\(([^()0-9]*)\)")
+
+
+def off_contract_band(value: object) -> str | None:
+    """The one band a label form names ("m-2", "band m2", "materiality tier 2",
+    "M2 (reportable)" with no digit in the bracket), or None. The enum value itself
+    is not off contract and returns None."""
+    text = normalize_enum(value)
+    if text.upper() in BAND_ORDER:
+        return None
+    paren = _OFF_BAND_PAREN_RE.fullmatch(text)
+    core = paren.group(1) if paren else text
+    if core.upper() in BAND_ORDER:
+        return core.upper()
+    m = _STRUCTURED_BAND_RE.fullmatch(core)
+    return f"M{m.group(0)[-1]}" if m else None
+
+
+def off_contract_amount_matches(stated: object, truth: CaseTruth) -> bool:
+    """A signed variance_amount_usd: negative, its absolute value within USD 1 of
+    the true magnitude, on a true shortfall (the sign the direction implies)."""
+    if not is_finite_number(stated):
+        return False
+    value = float(stated)
+    return value < 0 and truth.variance_usd < 0 and abs(abs(value) - abs(truth.variance_usd)) <= USD_TOLERANCE
+
+
+def _off_contract(field_name: str) -> str:
+    return f"{OFF_CONTRACT_REASON}: {field_name} states the true value in a form outside the output contract"
+
+
 def _field_equal(field_name: str, stated: object, expected: object) -> bool:
     """The equality rule the other structured-field checks apply to a field."""
     if expected is None:
@@ -940,9 +1124,12 @@ def check_correctness(parsed: dict, truth: CaseTruth) -> AnchorResult:
     consistency (section 6) runs last: any failure mode it finds sets Correctness
     to 0; its review reasons route the epoch to review and keep the structured score."""
     fms: list[str] = []
+    off_contract: list[str] = []
     points = 0
     if abs(float(parsed["variance_amount_usd"]) - abs(truth.variance_usd)) <= USD_TOLERANCE:
         points += 1
+    elif off_contract_amount_matches(parsed["variance_amount_usd"], truth):
+        off_contract.append("variance_amount_usd")
     else:
         fms.append("FM-001")
     if normalize_enum(parsed["variance_direction"]) == truth.direction:
@@ -953,6 +1140,8 @@ def check_correctness(parsed: dict, truth: CaseTruth) -> AnchorResult:
     band_err: str | None = None
     if stated_band == truth.materiality_band.casefold():
         points += 1
+    elif off_contract_band(stated_band) == truth.materiality_band:
+        off_contract.append("materiality_band")
     else:
         # either direction keeps FM-002 at the same score (ratified 2026-11-04)
         fms.append("FM-002")
@@ -960,11 +1149,14 @@ def check_correctness(parsed: dict, truth: CaseTruth) -> AnchorResult:
     structured_points = points
 
     identity = check_identity_fields(parsed, truth)
-    if identity:
+    if identity and _period_off_contract(parsed, truth) and normalize_asset(parsed["asset"]) == truth.asset:
+        off_contract.append("period")
+        points = 0
+    elif identity:
         fms.extend(identity)
         points = 0
 
-    reasons: list[str] = []
+    reasons: list[str] = [_off_contract(f) for f in off_contract]
     extractions: list[dict] = []
     try:
         nar = narrative.check_narrative_consistency(parsed, truth)
@@ -991,6 +1183,10 @@ def check_correctness(parsed: dict, truth: CaseTruth) -> AnchorResult:
             "narrative_extractions": extractions,
         },
     )
+
+
+def _period_off_contract(parsed: dict, truth: CaseTruth) -> bool:
+    return normalize_period(parsed["period"]) is None and off_contract_period(parsed["period"]) == truth.period
 
 
 def structured_band_error(stated_band: str, true_band: str) -> str:
@@ -1049,5 +1245,10 @@ def check_completeness(parsed: dict, truth: CaseTruth) -> AnchorResult:
         "magnitude": is_finite_number(parsed["variance_amount_usd"]),
     }
     points = sum(present.values())
-    fms = ("FM-004",) if points < SCORE_MAX else ()
-    return AnchorResult(points, fms, (), {"present": present})
+    # a true period written outside the contract routes to review, not FM-004 (D17);
+    # the point stays withheld until a reviewer reads it
+    off_period = not present["period"] and _period_off_contract(parsed, truth)
+    missing = [k for k, v in present.items() if not v and not (k == "period" and off_period)]
+    fms = ("FM-004",) if missing else ()
+    reasons = (_off_contract("period"),) if off_period else ()
+    return AnchorResult(points, fms, reasons, {"present": present})
