@@ -92,7 +92,7 @@ python -m inspect_ai eval icfr_agent_evals/task.py@variance_commentary -T split=
 
 - 80 worker calls. The OpenAI key constructs the grader role only; no grader or calibrator call is made, since the LLM-graded sub-dimensions are not wired.
 - Runtime [inferred]: 20 waves at 4 connections; about 30 to 45 minutes at 8,000 output tokens and 60 to 90 tokens per second, up to about 4 hours at the 48,000 ceiling.
-- If D6 pins `max_tokens`, add `--max-tokens <pin>` to this and step 6, and pass the same pin to `check_run_config`. Thinking counts toward `max_tokens`, so a low pin turns a cut-off answer into FM-000.
+- If D6 pins `max_tokens`, add `--max-tokens <pin>` to this and step 6, and pass the same pin as `--max-tokens-pin <pin>` to `pilot_report.py` and `compare_runs.py` (their readers refuse any other `max_tokens`). Thinking counts toward `max_tokens`, so a low pin turns a cut-off answer into FM-000.
 - A trace line naming `enforced_spend_limit_reached` means a spend cap was hit: stop with Ctrl+C. [F4-01]
 - If the run ends with status error, recover the same log, never read it as a pilot log:
 
@@ -126,7 +126,7 @@ Form (ii), keyed: step 3's pre-flight, then a second Sonnet leg on a weakened-pr
 `rehearse_regression.py` takes its log folder as an optional positional argument (default `icfr-agent-evals-logs/rehearsal` under the system temp folder); `-h` prints usage and creates nothing. Measured on the merged fix round: the rehearsal prints `REHEARSAL RESULT: PASS`, and `compare_runs.py` with step 4's mock log as baseline and the rehearsal's regression log as candidate prints one header line per run, then `RESULT: BLOCKED (automatic)`, and exits 1.
 
 **Caught (D2 default).** [F2-02, F2-03, F2-04]
-- Caught means `compare_runs.py` exits 1 on the pair (pilot Sonnet baseline, regressed candidate), with the rejecting test named in its output. Exit 0 is not caught, and exit 2 is not caught.
+- Caught means `compare_runs.py` exits 1 on the pair (pilot Sonnet baseline, regressed candidate), with the rejecting test named in its output. Exit 0 is not caught, and exit 2 is not caught; `pilot_report.py` prints those two as `MISSED (no automatic block)` and prints `caught` only on exit 1.
 - Size the regression from the baseline's own per-case results. The exact one-sided McNemar test on content-pass^4 under Holm with m = 6 blocks only from 7 one-way discordant cases with no reversal, 10 with one; a regression that turns fewer passing cases can be caught only by the paired t-tests, at the floor `pilot_report.py` prints.
 - A baseline passing pass^4 on fewer than 7 of 20 cases is recorded as "only the t-tests can catch it".
 - A regression confined to reconciling-item omission fires no FM code and no review route, so at n = 20 it can pass the gates with no sign-off case. It is a declared blind spot of the regression at pilot size.
