@@ -67,10 +67,11 @@ from typing import Any, Iterable, Mapping, Sequence
 
 from .reliability import (
     FM002, FM002_UNRECORDED, PREREGISTERED_K, QUEUE_CODE, QUEUE_SWEEP, QUEUE_UNSTATED_REASON, GateError,
-    _numeric, evaluate_trial,
+    _numeric, evaluate_trial, require_run_config,
 )
 from .rubric import WIRED_SCORERS
 from .scoring import FABRICATION_REVIEW, SweepHit
+from .scoring import SWEEP_KINDS as _SWEEP_KINDS  # every SweepHit kind, truncated_identifier included
 
 DIMENSIONS: tuple[str, ...] = ("correctness", "faithfulness", "calibration", "completeness", "robustness")
 PASS4 = "content_pass4"
@@ -103,8 +104,6 @@ for _dim, _scorer in DIMENSION_SCORERS.items():
     assert WIRED_SCORERS.get(_scorer) == _dim, f"{_scorer} does not report {_dim} in rubric.WIRED_SCORERS"
 
 # Sweep reasons, recognized by the prefix SweepHit.reason writes before the token.
-_SWEEP_KINDS = ("non_latin_letter", "format_character", "custodian_vocabulary", "organization_suffix",
-                "capitalized_run", "reference", "identifier")
 _SENTINEL = "\x00sentinel\x00"
 SWEEP_REASON_PREFIXES: tuple[str, ...] = tuple(
     SweepHit(_SENTINEL, kind).reason.split(repr(_SENTINEL))[0] for kind in _SWEEP_KINDS
@@ -471,8 +470,11 @@ def content_fingerprint(log: Any) -> dict[str, Any]:
     return out
 
 
-def records_from_log(log_or_path: Any) -> list[EpochRecord]:
-    """Records from an EvalLog (or a path to one) read with its samples."""
+def records_from_log(log_or_path: Any, *, run_config: bool = True,
+                     max_tokens_pin: int | None = None) -> list[EpochRecord]:
+    """Records from an EvalLog (or a path to one) read with its samples. With
+    run_config (the default) the log must also pass the contract C2 run
+    configuration check at PREREGISTERED_K epochs (reliability.require_run_config)."""
     log = load_log(log_or_path)
     refuse_evaluation_split(log)
     if log.samples is None:
@@ -482,6 +484,8 @@ def records_from_log(log_or_path: Any) -> list[EpochRecord]:
     declared = (log.eval.task_args or {}).get("epochs")
     if declared is not None and int(declared) != ran:
         raise GateError(f"run epochs {ran} differ from the task argument epochs {declared}")
+    if run_config:
+        require_run_config(log, expected_epochs=PREREGISTERED_K, max_tokens_pin=max_tokens_pin)
     return records_from_samples(log.samples)
 
 

@@ -24,10 +24,12 @@ from icfr_agent_evals.reliability import (
     assert_gate,
     evaluate_trial,
     format_queue_volume,
+    is_template_baseline_log,
     queue_items,
     queue_volume,
     reliability_report,
     report_from_log,
+    require_run_config,
 )
 from icfr_agent_evals.scoring import FABRICATION_REVIEW
 from icfr_agent_evals.scorers import CONTENT_SCORERS
@@ -162,7 +164,9 @@ def test_flag_raised_only_on_epoch_three_reaches_the_queue(tmp_path):
     assert log.status == "success", log.error
     assert len(log.samples) == 4
 
-    rep = report_from_log(log)
+    with pytest.raises(GateError, match="run config"):  # contract C2: no ModelEvent, no pinned effort
+        report_from_log(log)
+    rep = report_from_log(log, run_config=False)  # a hand-built Task that makes no model call
     assert rep.k == 4
     assert [(r.sample_id, r.epoch, r.scorer) for r in rep.review_queue] == [("dev-epoch-3", 3, "fabrication_anchor"), ("dev-epoch-3", 3, "faithfulness_anchor")]
     assert rep.pass_k == {"dev-epoch-3": 0}
@@ -227,7 +231,7 @@ def queue_mix(tmp_path_factory):
                        display="none", fail_on_error=False)[0]
     assert log.status == "success", log.error
     assert len(log.samples) == 4 * len(ALL_ASSETS)
-    return report_from_log(log)
+    return report_from_log(log, run_config=False)  # a hand-built Task that makes no model call
 
 
 def test_queue_volume_counts_distinct_items_by_class_on_a_mock_log(queue_mix):
@@ -298,3 +302,79 @@ def test_review_rows_stay_one_per_scorer():
     assert [(r.scorer, r.reasons) for r in rep.review_queue] == [("fabrication_anchor", ("sweep hit",)),
                                                                  ("faithfulness_anchor", ("sweep hit",))]
     assert queue_volume(rep).total_items == 1
+
+
+# --- Run configuration (contract C2): roster.check_run_config in the reader ----------
+
+C2_ROLES = {"grader": "mockllm/grader", "calibrator": "mockllm/calibrator"}
+C2_OVERRIDES = {"clean": {}, "effort_low": {"reasoning_effort": "low"}, "temperature": {"temperature": 0.7}}
+
+
+def _two_cases(task):
+    keep = sorted(str(s.id) for s in task.dataset)[:2]
+    task.dataset = task.dataset.filter(lambda s: str(s.id) in keep)
+    return task
+
+
+@pytest.fixture(scope="module")
+def c2_logs(tmp_path_factory):
+    """Two dev pilot cases at epochs 4 on mockllm: a clean run, the same run with an
+    eval-level override (what a CLI --reasoning-effort low or --temperature 0.7 does),
+    and the template baseline (none/none). Every run ends in status success."""
+    from icfr_agent_evals.baseline import variance_commentary_template_baseline
+    from icfr_agent_evals.task import variance_commentary
+
+    out = {}
+    for label, kw in C2_OVERRIDES.items():
+        out[label] = inspect_eval(_two_cases(variance_commentary(split="dev", subset="pilot", epochs=4)),
+                                  model="mockllm/model", model_roles=C2_ROLES, display="none",
+                                  log_dir=str(tmp_path_factory.mktemp(f"c2-{label}")), **kw)[0]
+    out["template"] = inspect_eval(_two_cases(variance_commentary_template_baseline(split="dev", subset="pilot")),
+                                   log_dir=str(tmp_path_factory.mktemp("c2-template")), display="none")[0]
+    for label, log in out.items():
+        assert log.status == "success", (label, log.error)
+    return out
+
+
+def test_report_from_log_reads_a_clean_mock_pilot_log(c2_logs):
+    rep = report_from_log(c2_logs["clean"])
+    assert rep.k == 4 and rep.scored_samples == 2
+    summary = require_run_config(c2_logs["clean"])
+    assert summary["reasoning_effort"] == "high" and summary["scored_sample_epochs"] == 8
+
+
+@pytest.mark.parametrize("label, field", [("effort_low", "reasoning_effort"), ("temperature", "temperature")])
+def test_report_from_log_refuses_an_overridden_log_naming_the_field(c2_logs, label, field):
+    from icfr_agent_evals import roster
+
+    with pytest.raises(roster.RunConfigError) as raw:
+        roster.check_run_config(c2_logs[label])
+    with pytest.raises(GateError) as err:
+        report_from_log(c2_logs[label])
+    assert field in str(err.value) and str(err.value) == str(raw.value)  # the roster message, kept
+
+
+def test_report_from_log_reads_the_template_log_without_the_check(c2_logs):
+    """The template baseline has no evaluated model: check_run_config always refuses
+    it, so the reader skips it (tests/test_run_config.py pins the refusal)."""
+    from icfr_agent_evals import roster
+
+    log = c2_logs["template"]
+    with pytest.raises(roster.RunConfigError):
+        roster.check_run_config(log)
+    assert is_template_baseline_log(log) and not is_template_baseline_log(c2_logs["clean"])
+    assert require_run_config(log) is None
+    assert report_from_log(log).scored_samples == 2
+
+
+def test_run_config_false_reads_an_overridden_log(c2_logs):
+    """The opt-out exists for hand-built logs that make no model call; it is never the default."""
+    assert report_from_log(c2_logs["effort_low"], run_config=False).scored_samples == 2
+
+
+def test_require_run_config_passes_the_expected_counts(c2_logs):
+    assert require_run_config(c2_logs["clean"], expected_samples=2)["samples"] == 2
+    with pytest.raises(GateError, match="scored sample-epochs|expected"):
+        require_run_config(c2_logs["clean"], expected_samples=20)
+    with pytest.raises(GateError, match="epochs"):
+        report_from_log(c2_logs["clean"], k=1)  # k = 1 asks for a one-epoch run

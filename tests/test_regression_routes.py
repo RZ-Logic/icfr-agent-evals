@@ -125,3 +125,16 @@ def test_unknown_route_key_is_refused():
     with pytest.raises(GateError):
         route_class("something_else")
     assert route_class(SWEEP_ROUTE) == SWEEP_ROUTE and route_class(CODE_ROUTE) == CODE_ROUTE
+
+
+def test_truncated_identifier_hit_is_a_narrative_sweep_route():
+    """W4 added SweepHit kind truncated_identifier; regression reads scoring.SWEEP_KINDS,
+    so the hit files under narrative_sweep, not code_review."""
+    from icfr_agent_evals import regression, scoring
+
+    assert "truncated_identifier" in scoring.SWEEP_KINDS
+    reason = scoring.SweepHit("0xdead...beef", "truncated_identifier").reason
+    key = regression.route_key(reason)
+    assert key == f"{regression.SWEEP_ROUTE}: {reason}"
+    assert regression.route_class(key) == regression.SWEEP_ROUTE
+    assert len(regression.SWEEP_REASON_PREFIXES) == len(scoring.SWEEP_KINDS)

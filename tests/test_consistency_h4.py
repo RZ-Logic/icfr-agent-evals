@@ -333,11 +333,11 @@ def test_report_from_log_carries_model_and_split():
     records = [_record(e, _out(), "std-b", "standard") for e in range(1, 5)]
     log = SimpleNamespace(samples=records, eval=SimpleNamespace(
         config=SimpleNamespace(epochs=4), task_args={"epochs": 4, "split": "dev"}, model="mockllm/model", metadata={}))
-    report = report_from_log(log)
+    report = report_from_log(log, run_config=False)  # hand-built log, no ModelEvent
     assert (report.model, report.split) == ("mockllm/model", "dev")
     log.eval.task_args = {"epochs": 4}
     log.eval.metadata = {"split": "eval"}
-    assert report_from_log(log).split == "eval"
+    assert report_from_log(log, run_config=False).split == "eval"
 
 
 def _eval_log(n_ids=1, limit=None, sample_id=None, subset=None, header_samples=1, model="anthropic/claude-sonnet-5-5"):
@@ -351,7 +351,7 @@ def _eval_log(n_ids=1, limit=None, sample_id=None, subset=None, header_samples=1
 
 
 def test_report_from_log_records_whole_split_scope():
-    whole = report_from_log(_eval_log())
+    whole = report_from_log(_eval_log(), run_config=False)  # hand-built logs: the scope issues, not C2
     assert whole.run_scope_issues == ()
     assert h4_verdict(whole).is_h4_test
     cases = {
@@ -362,7 +362,7 @@ def test_report_from_log_records_whole_split_scope():
         "off roster": (_eval_log(model="mockllm/model"), "model mockllm/model is not one of the four roster workers"),
     }
     for name, (log, issue) in cases.items():
-        v = h4_verdict(report_from_log(log))
+        v = h4_verdict(report_from_log(log, run_config=False))
         assert not v.is_h4_test, name
         assert any(issue in i for i in v.scope_issues), (name, v.scope_issues)
 

@@ -99,7 +99,7 @@ from typing import Any, Iterable, Sequence
 
 from .casefile import CaseTruth, canonical_reference, nfkc_spaced, truth_of
 from .regression import refuse_partial_run
-from .reliability import PREREGISTERED_K, GateError
+from .reliability import PREREGISTERED_K, GateError, require_run_config
 from .roster import EVALUATED_MODELS
 from .scoring import (
     SCORE_MAX,
@@ -538,16 +538,21 @@ def _log_split(log: Any) -> str | None:
     return None if split is None else str(split)
 
 
-def report_from_log(log: Any, k: int | None = None) -> ConsistencyReport:
+def report_from_log(log: Any, k: int | None = None, *, run_config: bool = True,
+                    max_tokens_pin: int | None = None) -> ConsistencyReport:
     """Report from an EvalLog read with its samples (header_only=False). k defaults
-    to the run's configured epochs; the epochs override check matches reliability.py.
-    The report carries the run's evaluated model and split for the H4 verdict."""
+    to the run's configured epochs; the epochs override check and the run
+    configuration check (contract C2, reliability.require_run_config, on by default)
+    match reliability.report_from_log. The report carries the run's evaluated model
+    and split for the H4 verdict."""
     if log.samples is None:
         raise GateError("EvalLog has no samples; read it with header_only=False and keep sample logging on")
     ran = int(log.eval.config.epochs or 1)
     declared = (log.eval.task_args or {}).get("epochs")
     if declared is not None and int(declared) != ran:
         raise GateError(f"run epochs {ran} differ from the task argument epochs {declared}")
+    if run_config:
+        require_run_config(log, expected_epochs=PREREGISTERED_K if k is None else k, max_tokens_pin=max_tokens_pin)
     model = getattr(log.eval, "model", None)
     return consistency_report(log.samples, ran if k is None else k,
                               model=None if model is None else str(model), split=_log_split(log),

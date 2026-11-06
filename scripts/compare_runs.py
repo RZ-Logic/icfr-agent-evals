@@ -2,7 +2,7 @@
 
 Usage:
   python scripts/compare_runs.py --baseline A.eval --candidate B.eval [--candidate C.eval ...]
-                                 [--ladder R1|R2] [--json out.json]
+                                 [--ladder R1|R2] [--json out.json] [--max-tokens-pin N]
 
 Every --candidate is a run of the same gated content; they pool (section 10(d)).
 The ladder defaults to R1, the rule with the most triggers, until the A/A estimate
@@ -19,6 +19,14 @@ revision, so a mock-degraded candidate can be compared with a real baseline. Tas
 names compare by registry name without the package prefix: the CLI records
 "variance_commentary" and an eval() call "icfr_agent_evals/variance_commentary".
 
+Every log must pass the run configuration check (contract C2,
+roster.check_run_config through reliability.require_run_config) before any record
+is read: status success, no --limit or --sample-id, epochs 4, and plan.config and
+every request of the evaluated model on the section 5 pins (reasoning_effort high,
+no sampling parameter, reasoning token budget, seed or request header; max_tokens
+only at --max-tokens-pin when the owner pins it). The template baseline log is out
+of that check's scope; a template candidate is refused by the task match above.
+
 Exit codes (ratified 2026-11-03):
   0  pass: no automatic block and no sign-off case
   1  automatic block: a Holm rejection in 10(a) or a fabrication rejection in 10(b)
@@ -27,7 +35,7 @@ Exit codes (ratified 2026-11-03):
      scored samples short of the dataset's count), runs whose split, seed, subset,
      Task version or dataset content (version and hashes) differ, a candidate on
      another task or worker prompt, pooled candidates that differ in model, task,
-     revision or worker prompt, a help request,
+     revision or worker prompt, a log off the section 5 run configuration, a help request,
      a --json path that cannot be written, or any other input the gates cannot read
 """
 
@@ -52,7 +60,7 @@ from icfr_agent_evals.regression import (
     load_log,
     records_from_log,
 )
-from icfr_agent_evals.reliability import PREREGISTERED_K, GateError
+from icfr_agent_evals.reliability import PREREGISTERED_K, GateError, require_run_config
 
 EXIT_PASS, EXIT_BLOCK, EXIT_SIGNOFF, EXIT_REFUSED = 0, 1, 2, 3
 MATCHED_TASK_ARGS = ("split", "seed", "subset")
@@ -138,6 +146,15 @@ def check_matching_runs(baseline: Any, candidates: Sequence[Any], paths: Sequenc
             raise GateError(f"{path} differs from the baseline in Task version or dataset content (baseline, candidate): {diff}")
 
 
+def check_run_config(path: str, log: Any, max_tokens_pin: int | None = None) -> None:
+    """Contract C2 on one full log, naming the file in the refusal; the template
+    baseline log is skipped (require_run_config)."""
+    try:
+        require_run_config(log, expected_epochs=PREREGISTERED_K, max_tokens_pin=max_tokens_pin)
+    except GateError as e:
+        raise GateError(f"{path}: {e}") from e
+
+
 def _fmt_p(p: float | None) -> str:
     return "-" if p is None else f"{p:.4g}"
 
@@ -189,6 +206,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--candidate", required=True, action="append", help="candidate .eval log; repeat to pool re-runs")
     parser.add_argument("--ladder", default="R1", choices=LADDERS, help="review-volume ladder, section 10(c)")
     parser.add_argument("--json", dest="json_out", help="write the report as JSON to this path")
+    parser.add_argument("--max-tokens-pin", type=int, default=None,
+                        help="the owner's max_tokens pin, when one is set (default: max_tokens must be unset)")
     args = parser.parse_args(argv)
 
     # Everything runs inside the try, the --json write included, and the report
@@ -196,8 +215,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         base_log = load_log(args.baseline)
         cand_logs = [load_log(p) for p in args.candidate]
-        baseline = records_from_log(base_log)
-        candidates = [records_from_log(log) for log in cand_logs]
+        for path, log in ((args.baseline, base_log), *zip(args.candidate, cand_logs)):
+            check_run_config(path, log, args.max_tokens_pin)
+        baseline = records_from_log(base_log, run_config=False)  # checked just above
+        candidates = [records_from_log(log, run_config=False) for log in cand_logs]
         check_matching_runs(base_log, cand_logs, args.candidate)
         report = compare(baseline, candidates, k=PREREGISTERED_K, ladder=args.ladder)
         instances = fabrication_instances(candidates)

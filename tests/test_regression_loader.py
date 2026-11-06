@@ -39,6 +39,7 @@ from icfr_agent_evals.regression import (
 from icfr_agent_evals.reliability import GateError, evaluate_trial
 from icfr_agent_evals.rubric import WIRED_SCORERS
 from icfr_agent_evals.scoring import FABRICATION_REVIEW, SweepHit, check_fabrication, check_reconciling_items
+from test_reliability import c2_logs  # noqa: F401  (contract C2 mock logs: clean, overrides, template)
 
 REPO = Path(__file__).resolve().parents[1]
 SCRIPT = REPO / "scripts" / "compare_runs.py"
@@ -656,3 +657,47 @@ def test_script_refuses_another_task_as_candidate_exit_3(dev_run):
     assert proc.returncode == 3
     assert "REFUSED" in proc.stderr and "variance_commentary_template_baseline" in proc.stderr
     assert "RESULT" not in proc.stdout
+
+
+# --- Run configuration (contract C2) in records_from_log and compare_runs.py -----------
+
+def test_records_from_log_reads_a_clean_mock_pilot_log(c2_logs):
+    assert len(records_from_log(c2_logs["clean"])) == 8
+    assert len(records_from_log(c2_logs["clean"].location)) == 8
+
+
+@pytest.mark.parametrize("label, field", [("effort_low", "reasoning_effort"), ("temperature", "temperature")])
+def test_records_from_log_refuses_an_overridden_log_naming_the_field(c2_logs, label, field):
+    with pytest.raises(GateError, match=field):
+        records_from_log(c2_logs[label])
+    assert len(records_from_log(c2_logs[label], run_config=False)) == 8  # the opt-out, never the default
+
+
+def test_records_from_log_reads_the_template_log_without_the_check(c2_logs):
+    assert len(records_from_log(c2_logs["template"])) == 8
+
+
+@pytest.mark.parametrize("label, field", [("effort_low", "reasoning_effort"), ("temperature", "temperature")])
+@pytest.mark.parametrize("side", ["candidate", "baseline"])
+def test_cli_refuses_an_overridden_log_with_exit_3(c2_logs, cli, capsys, label, field, side):
+    clean, bad = c2_logs["clean"].location, c2_logs[label].location
+    base, cand = (clean, bad) if side == "candidate" else (bad, clean)
+    assert cli.main(["--baseline", base, "--candidate", cand]) == 3
+    out = capsys.readouterr()
+    assert out.out == ""
+    assert field in out.err and "run config" in out.err and bad in out.err
+
+
+def test_cli_reads_clean_mock_pilot_logs_and_refuses_the_template_as_candidate(c2_logs, cli, capsys):
+    clean, template = c2_logs["clean"].location, c2_logs["template"].location
+    assert cli.main(["--baseline", clean, "--candidate", clean]) == 0
+    capsys.readouterr()
+    assert cli.main(["--baseline", clean, "--candidate", template]) == 3  # F2-08 task match, not C2
+    err = capsys.readouterr().err
+    assert "task" in err and "run config" not in err
+
+
+def test_cli_max_tokens_pin_is_passed_to_the_check(c2_logs, cli, capsys):
+    clean = c2_logs["clean"].location
+    assert cli.main(["--baseline", clean, "--candidate", clean, "--max-tokens-pin", "4000"]) == 3
+    assert "max_tokens" in capsys.readouterr().err

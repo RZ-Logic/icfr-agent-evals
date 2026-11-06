@@ -34,6 +34,11 @@ epoch is six rows and faithfulness_anchor repeats the fabrication and reconcilin
 reasons. Classes: format_break (FM-000), sample_error, narrative_sweep and
 code_review (regression.route_key), plus fm_listed for a reason that rides with an
 FM code (the section 10(b) fabrication listing), which is not a section 10(c) route.
+
+Run configuration (contract C2): report_from_log refuses (GateError) a log whose
+recorded configuration is off the section 5 pins, through roster.check_run_config
+on the full log (require_run_config). The template baseline log is out of its scope:
+it has no evaluated model, so no ModelEvent and no reasoning_effort.
 """
 
 from __future__ import annotations
@@ -284,9 +289,40 @@ def format_fm_counts(report: ReliabilityReport) -> str:
     return "FM counts: " + "; ".join(parts)
 
 
-def report_from_log(log: Any, k: int | None = None) -> ReliabilityReport:
+# baseline.py's @task name. Its log has no evaluated model (none/none): no ModelEvent
+# and no reasoning_effort, so roster.check_run_config would always refuse it.
+TEMPLATE_BASELINE_TASK = "variance_commentary_template_baseline"
+
+
+def is_template_baseline_log(log: Any) -> bool:
+    """True for a log of the template baseline task (registry name, package prefix ignored)."""
+    task = getattr(getattr(log, "eval", None), "task", None)
+    return task is not None and str(task).rsplit("/", 1)[-1] == TEMPLATE_BASELINE_TASK
+
+
+def require_run_config(log: Any, *, expected_samples: int | None = None,
+                       expected_epochs: int | None = PREREGISTERED_K, allow_batch: bool = True,
+                       max_tokens_pin: int | None = None) -> dict | None:
+    """Contract C2 for the readers: roster.check_run_config on a full log (samples and
+    events read), its RunConfigError raised as GateError with the message kept.
+    The template baseline log is out of scope and returns None unchecked."""
+    if is_template_baseline_log(log):
+        return None
+    from .roster import RunConfigError, check_run_config  # roster stays out of the module imports
+
+    try:
+        return check_run_config(log, expected_samples=expected_samples, expected_epochs=expected_epochs,
+                                allow_batch=allow_batch, max_tokens_pin=max_tokens_pin)
+    except RunConfigError as e:
+        raise GateError(str(e)) from e
+
+
+def report_from_log(log: Any, k: int | None = None, *, run_config: bool = True,
+                    max_tokens_pin: int | None = None) -> ReliabilityReport:
     """Report from an EvalLog read with its samples (header_only=False). k
-    defaults to the run's configured epochs."""
+    defaults to the run's configured epochs. With run_config (the default) the log
+    must pass require_run_config at k epochs (PREREGISTERED_K when k is None);
+    run_config=False is for hand-built logs that make no model call."""
     if log.samples is None:
         raise GateError("EvalLog has no samples; read it with header_only=False and keep sample logging on")
     ran = int(log.eval.config.epochs or 1)
@@ -295,6 +331,8 @@ def report_from_log(log: Any, k: int | None = None) -> ReliabilityReport:
         # an --epochs override records the run's epochs in the config while
         # task_args keeps the task's own, so a gated k = 4 could silently become k = 1
         raise GateError(f"run epochs {ran} differ from the task argument epochs {declared}")
+    if run_config:
+        require_run_config(log, expected_epochs=PREREGISTERED_K if k is None else k, max_tokens_pin=max_tokens_pin)
     if k is None:
         k = ran
     return reliability_report(log.samples, k)

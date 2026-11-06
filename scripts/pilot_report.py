@@ -3,7 +3,7 @@
 Usage:
   python scripts/pilot_report.py --sonnet S.eval --haiku H.eval --template T.eval
          [--reading-b i|ii|iii|all] [--regression-baseline B.eval --regression-candidate C.eval]
-         [--json out.json] [--review-csv out.csv]
+         [--json out.json] [--review-csv out.csv] [--max-tokens-pin N]
 
 Reads the three pilot legs (pre-registration section 13, pilot row; 20 dev-split
 cases, epochs = 4) and prints, per run: sample count and epochs; content-pass^4
@@ -17,6 +17,16 @@ from the template log, difficulty check (b) from the Haiku log under all three
 readings, the McNemar block floor and the paired-t minimal detectable drop
 (inferred), and, given both regression logs, compare_runs.py's verdict on the pair.
 
+Every worker log (Sonnet, Haiku and both regression logs) must pass the run
+configuration check (contract C2): roster.check_run_config with 20 samples, epochs 4
+and batch allowed, max_tokens only at --max-tokens-pin. The template baseline log is
+out of that check's scope (no evaluated model, so no ModelEvent and no
+reasoning_effort). The Sonnet and Haiku logs must also pass
+compare_runs.check_matching_runs (same task, worker prompt, split, seed, subset and
+dataset content). Queue volume, the review CSV rows, the McNemar floor and the
+paired-t drop come from reliability.queue_volume / queue_items and
+regression.mcnemar_block_floor / paired_t_mdd.
+
 Difficulty check (b) readings (owner decision D1: all three print; the reading of
 record is chosen before the Haiku leg and passed as --reading-b):
   (i)   any trial anchor below 3, any FM code, or a missing or errored epoch;
@@ -28,7 +38,8 @@ record is chosen before the Haiku leg and passed as --reading-b):
 
 Caught (owner decision D2): compare_runs.py exits 1 on the (pilot baseline,
 regressed candidate) pair, with the rejecting tests named. Exit 2 is sign-off
-volume, not caught; exit 0 is not caught.
+volume, not caught; exit 0 is not caught. Only an exit 1 prints the word "caught";
+exit 0 and exit 2 print "MISSED (no automatic block)".
 
 The review CSV holds one row per distinct (run, sample, epoch, route key), with
 verdict, reviewer and date blank for the owner (verdict: correct_route,
@@ -38,7 +49,9 @@ Exit codes:
   0  report printed
   3  refused: a missing or unreadable file, an evaluation-split log, a log that is
      not the 20-case dev pilot at epochs = 4 (or a partial run), a log whose status
-     is not success, runs whose Task version or dataset content differ, a template
+     is not success, a worker log off the section 5 run configuration (contract C2),
+     runs whose Task version or dataset content differ, Sonnet and Haiku logs on
+     another task or worker prompt, a template
      log that is not the template baseline (or a worker log that is), a regression
      pair compare_runs.py refuses, a help request, an output path that cannot be
      written, or any other input the report cannot read
@@ -55,6 +68,7 @@ import json
 import math
 import os
 import statistics
+from functools import lru_cache
 import sys
 import tempfile
 from collections import defaultdict
@@ -68,18 +82,16 @@ from icfr_agent_evals.regression import (
     CODE_ROUTE,
     DIMENSIONS,
     FAMILY_ALPHA,
-    FORMAT_BREAK_PREFIX,
+    HOLM_M,
     SWEEP_REASON_PREFIXES,
     SWEEP_ROUTE,
-    UNSTATED_REASON,
     content_fingerprint,
-    mcnemar_one_sided,
+    mcnemar_block_floor,
+    paired_t_mdd,
     records_from_samples,
     refuse_evaluation_split,
     refuse_partial_run,
-    route_class,
-    route_key,
-    t_cdf,
+    t_ppf,
 )
 from icfr_agent_evals.reliability import GateError
 
@@ -91,16 +103,17 @@ TEMPLATE_MODEL = "none/none"
 HAIKU = next(m for m in roster.BASELINES if "haiku" in m)
 ROLE_MODELS = {"sonnet": roster.WORKER, "haiku": HAIKU, "template": TEMPLATE_MODEL}
 ANCHORS: tuple[str, ...] = (*rel.TRIAL_ANCHORS, "faithfulness_anchor")
-HOLM_M = len(DIMENSIONS) + 1  # the five DIMENSIONS and content_pass4: m = 6
-MDD_POWER = 0.80
+MDD_POWER = 0.80  # regression.paired_t_mdd's default power
 MDD_REFERENCE_SDS: tuple[float, ...] = (0.25, 0.5, 0.75, 1.0, 1.25)
 
-# Review-queue classes: a format break and a sample error are not section 10(c)
-# routes; a reason route_key maps to None rides with its FM code.
-FORMAT_BREAK = "format break"
-SAMPLE_ERROR = "sample error"
-WITH_CODE = "with FM code"
-QUEUE_CLASSES: tuple[str, ...] = (FORMAT_BREAK, SAMPLE_ERROR, SWEEP_ROUTE, CODE_ROUTE, WITH_CODE)
+# Review-queue classes (reliability.QUEUE_CLASSES): a format break and a sample error
+# are not section 10(c) routes, and fm_listed is a reason that rides with its FM code
+# (the fabrication listing beside FM-005 / FM-015), printed on its own line.
+FORMAT_BREAK = rel.QUEUE_FORMAT_BREAK
+SAMPLE_ERROR = rel.QUEUE_SAMPLE_ERROR
+FM_LISTED = rel.QUEUE_FM_LISTED
+QUEUE_CLASSES: tuple[str, ...] = rel.QUEUE_CLASSES
+QUEUE_CLASS_NOTES = {FM_LISTED: "  (rides with FM-005 / FM-015; not a section 10(c) route)"}
 REVIEW_CSV_COLUMNS: tuple[str, ...] = (
     "run_label", "log_eval_id", "sample_id", "epoch", "scorers", "route_key", "reason", "verdict", "reviewer", "date",
 )
@@ -115,13 +128,20 @@ class Refused(Exception):
 
 # --- Inputs ------------------------------------------------------------------------------
 
-def run_config_check(log: Any) -> None:
-    """Hook for roster.check_run_config (contract C2). The integration step wires it;
-    today it checks nothing and returns None."""
-    return None
+def run_config_check(log: Any, role: str, max_tokens_pin: int | None = None) -> dict | None:
+    """Contract C2: roster.check_run_config on a full worker log (20 samples, epochs 4,
+    batch allowed), its RunConfigError refused. The template role is out of scope and
+    returns None unchecked (no evaluated model: no ModelEvent, no reasoning_effort)."""
+    if role == "template":
+        return None
+    try:
+        return roster.check_run_config(log, expected_samples=PILOT_SAMPLES, expected_epochs=PILOT_K,
+                                       allow_batch=True, max_tokens_pin=max_tokens_pin)
+    except roster.RunConfigError as e:
+        raise Refused(f"{role} log: {e}") from e
 
 
-def check_pilot_log(log: Any, role: str) -> None:
+def check_pilot_log(log: Any, role: str, max_tokens_pin: int | None = None) -> None:
     """Refuses a log that is not a successful whole 20-case dev pilot run at epochs = 4,
     and a template log that is not the template baseline (or a worker log that is)."""
     if log.status != "success":
@@ -149,10 +169,10 @@ def check_pilot_log(log: Any, role: str) -> None:
     is_template = str(log.eval.task).endswith(TEMPLATE_TASK)
     if (role == "template") != is_template:
         raise Refused(f"{role} log runs task {log.eval.task!r}")
-    run_config_check(log)
+    run_config_check(log, role, max_tokens_pin)
 
 
-def load_pilot_log(path: str, role: str) -> Any:
+def load_pilot_log(path: str, role: str, max_tokens_pin: int | None = None) -> Any:
     if not Path(path).is_file():
         raise Refused(f"{role} log not found: {path}")
     from inspect_ai.log import read_eval_log
@@ -161,7 +181,7 @@ def load_pilot_log(path: str, role: str) -> Any:
         log = read_eval_log(str(path))
     except Exception as e:
         raise Refused(f"{role} log unreadable: {type(e).__name__}: {e}") from e
-    check_pilot_log(log, role)
+    check_pilot_log(log, role, max_tokens_pin)
     return log
 
 
@@ -191,10 +211,6 @@ def _bisect(f, lo: float, hi: float, target: float, iters: int = 200) -> float:
     return (lo + hi) / 2
 
 
-def t_ppf(q: float, df: float) -> float:
-    return _bisect(lambda x: t_cdf(x, df), -60.0, 60.0, q)
-
-
 def _binom_cdf(x: int, n: int, p: float) -> float:
     return math.fsum(math.comb(n, i) * p**i * (1 - p) ** (n - i) for i in range(x + 1))
 
@@ -206,21 +222,6 @@ def clopper_pearson(x: int, n: int, alpha: float = 0.05) -> tuple[float, float]:
     lo = 0.0 if x == 0 else _bisect(lambda p: 1 - _binom_cdf(x - 1, n, p), 0.0, 1.0, alpha / 2)
     hi = 1.0 if x == n else _bisect(lambda p: -_binom_cdf(x, n, p), 0.0, 1.0, -alpha / 2)
     return lo, hi
-
-
-def mcnemar_floor(better: int, rank: int = 1, m: int = HOLM_M, alpha: float = FAMILY_ALPHA) -> int:
-    """Smallest one-way discordant count w whose exact one-sided McNemar p clears the
-    Holm threshold alpha / (m - rank + 1), given `better` reversals."""
-    threshold = alpha / (m - rank + 1)
-    return next(w for w in range(1, 1000) if mcnemar_one_sided(w, better) <= threshold)
-
-
-def paired_t_mdd(sd: float, n: int = PILOT_SAMPLES, rank: int = 1, power: float = MDD_POWER,
-                 m: int = HOLM_M, alpha: float = FAMILY_ALPHA) -> float:
-    """Mean drop the one-sided paired t detects with the given power at Holm rank
-    `rank`, central-t approximation, for a per-sample difference sd."""
-    df = n - 1
-    return (t_ppf(1 - alpha / (m - rank + 1), df) + t_ppf(power, df)) * sd / math.sqrt(n)
 
 
 def noise_sd(log: Any) -> dict[str, float | None]:
@@ -363,67 +364,42 @@ def difficulty_a(log: Any) -> dict[str, Any]:
     }
 
 
-def queue_entries(log: Any) -> list[dict[str, Any]]:
-    """One entry per (sample, epoch, scorer, reason) routed to review, a sample error
-    included, each with its class and route key."""
-    out: list[dict[str, Any]] = []
-    for s in log.samples:
-        sid, ep = str(s.id), int(s.epoch)
-        if getattr(s, "error", None) is not None:
-            msg = str(getattr(s.error, "message", s.error))
-            out.append({"sample_id": sid, "epoch": ep, "scorer": rel.SAMPLE_ERROR_SCORER, "cls": SAMPLE_ERROR,
-                        "route_key": SAMPLE_ERROR, "reason": msg})
-        for name, sc in (s.scores or {}).items():
-            meta = getattr(sc, "metadata", None) or {}
-            if not meta.get("requires_human_review"):
-                continue
-            reasons = [str(r) for r in meta.get("review_reasons") or []]
-            if not reasons:
-                reasons = [UNSTATED_REASON]
-            for reason in reasons:
-                if meta.get("format_break") or reason.startswith(FORMAT_BREAK_PREFIX):
-                    cls, key = FORMAT_BREAK, FORMAT_BREAK
-                elif reason == UNSTATED_REASON:
-                    cls, key = ((WITH_CODE, f"{WITH_CODE}: {reason}") if meta.get("failure_modes")
-                                else (CODE_ROUTE, f"{CODE_ROUTE}: {reason}"))
-                else:
-                    key = route_key(reason)
-                    if key is None:
-                        cls, key = WITH_CODE, f"{WITH_CODE}: {reason}"
-                    else:
-                        cls = route_class(key)
-                out.append({"sample_id": sid, "epoch": ep, "scorer": name, "cls": cls, "route_key": key,
-                            "reason": reason})
-    return out
+def csv_route_key(item: rel.QueueItem) -> str:
+    """The CSV route key of one queue item: its section 10(c) route key, else its class
+    (format_break, sample_error), or "fm_listed: <reason>" for a reason riding with an FM code."""
+    if item.route_key is not None:
+        return item.route_key
+    if item.queue_class == FM_LISTED:
+        return f"{FM_LISTED}: {item.reason}"
+    return item.queue_class
 
 
-def queue_volume(entries: Sequence[dict[str, Any]]) -> dict[str, dict[str, int]]:
-    """Distinct (sample, epoch, reason) and distinct (sample, epoch), overall and per class."""
-    out: dict[str, dict[str, int]] = {}
-    for cls in ("all", *QUEUE_CLASSES):
-        rows = [e for e in entries if cls == "all" or e["cls"] == cls]
-        out[cls] = {
-            "sample_epoch_reason": len({(e["sample_id"], e["epoch"], e["reason"]) for e in rows}),
-            "sample_epoch": len({(e["sample_id"], e["epoch"]) for e in rows}),
-        }
-    return out
-
-
-def review_rows(entries: Sequence[dict[str, Any]], run_label: str, eval_id: str) -> list[dict[str, str]]:
-    """One CSV row per distinct (run, sample, epoch, route key); verdict, reviewer and date blank."""
+def review_rows(report: rel.ReliabilityReport, run_label: str, eval_id: str) -> list[dict[str, str]]:
+    """One CSV row per distinct (run, sample, epoch, route key) from reliability.queue_items;
+    verdict, reviewer and date blank."""
     grouped: dict[tuple[str, int, str], dict[str, list[str]]] = {}
-    for e in entries:
-        g = grouped.setdefault((e["sample_id"], e["epoch"], e["route_key"]), {"scorers": [], "reasons": []})
-        if e["scorer"] not in g["scorers"]:
-            g["scorers"].append(e["scorer"])
-        if e["reason"] not in g["reasons"]:
-            g["reasons"].append(e["reason"])
+    for item in rel.queue_items(report):
+        g = grouped.setdefault((item.sample_id, item.epoch, csv_route_key(item)), {"scorers": [], "reasons": []})
+        for scorer in item.scorers:
+            if scorer not in g["scorers"]:
+                g["scorers"].append(scorer)
+        if item.reason not in g["reasons"]:
+            g["reasons"].append(item.reason)
     return [
         {"run_label": run_label, "log_eval_id": eval_id, "sample_id": sid, "epoch": str(ep),
          "scorers": ";".join(sorted(g["scorers"])), "route_key": key, "reason": " | ".join(g["reasons"]),
          "verdict": "", "reviewer": "", "date": ""}
         for (sid, ep, key), g in sorted(grouped.items())
     ]
+
+
+def queue_payload(volume: rel.QueueVolume) -> dict[str, dict[str, int]]:
+    """Distinct (sample, epoch, reason) and distinct (sample, epoch), overall and per class
+    (the scorer-row count is never reported)."""
+    out = {"all": {"sample_epoch_reason": volume.total_items, "sample_epoch": volume.total_sample_epochs}}
+    for cls in QUEUE_CLASSES:
+        out[cls] = {"sample_epoch_reason": volume.items[cls], "sample_epoch": volume.sample_epochs[cls]}
+    return out
 
 
 def anchor_means(log: Any) -> dict[str, dict[str, float]]:
@@ -460,7 +436,7 @@ def template_margin(worker: Any, template: Any) -> dict[str, dict[str, dict[str,
 
 def consistency_summary(log: Any) -> list[str]:
     """Summary lines of consistency.format_report; the H4 line must read as a rehearsal."""
-    report = con.report_from_log(log)
+    report = con.report_from_log(log, run_config=False)  # checked in load_pilot_log (run_config_check)
     con.assert_gate(report, PILOT_SAMPLES, PILOT_K)
     lines = []
     for line in con.format_report(report).splitlines():
@@ -473,17 +449,15 @@ def consistency_summary(log: Any) -> list[str]:
     return lines
 
 
-def run_block(role: str, log: Any) -> tuple[list[str], dict[str, Any], list[dict[str, str]]]:
+def run_block(role: str, log: Any, path: str = "") -> tuple[list[str], dict[str, Any], list[dict[str, str]]]:
     """Printed lines, JSON payload and review rows for one run."""
     e = log.eval
-    meta = getattr(e, "metadata", None) or {}
-    rev = getattr(e, "revision", None)
+    cr = load_compare_runs()
     expected = ROLE_MODELS[role]
     model_note = "roster model" if e.model == expected else f"STAND-IN, not the roster model {expected}"
     lines = [f"== Run {role}: {e.model} ({model_note})",
-             f"task {e.task}, eval_id {e.eval_id}, git {getattr(rev, 'commit', None)} dirty {getattr(rev, 'dirty', None)}, "
-             f"worker_prompt_sha256 {meta.get('worker_prompt_sha256')}"]
-    r = rel.report_from_log(log)
+             cr.format_header(role, path, cr.run_header(log)) + f" | eval_id {e.eval_id}"]
+    r = rel.report_from_log(log, run_config=False)  # checked in load_pilot_log (run_config_check)
     try:
         rel.assert_gate(r, PILOT_SAMPLES, PILOT_K)
         gate = f"assert_gate OK ({PILOT_SAMPLES} samples, k = {PILOT_K})"
@@ -500,13 +474,13 @@ def run_block(role: str, log: Any) -> tuple[list[str], dict[str, Any], list[dict
     fb = sum(1 for s in log.samples if getattr(s, "error", None) is None
              and any((v.metadata or {}).get("format_break") for v in (s.scores or {}).values()))
     lines.append(f"format-break epochs {fb}/{len(log.samples)}; errored epochs {errored}/{len(log.samples)}")
-    entries = queue_entries(log)
-    vol = queue_volume(entries)
-    lines.append(f"Review queue volume: {vol['all']['sample_epoch_reason']} distinct (sample, epoch, reason), "
-                 f"{vol['all']['sample_epoch']} distinct (sample, epoch)")
+    volume = rel.queue_volume(r)
+    vol = queue_payload(volume)
+    lines.append(f"Review queue volume: {volume.total_items} distinct (sample, epoch, reason), "
+                 f"{volume.total_sample_epochs} distinct (sample, epoch)")
     for cls in QUEUE_CLASSES:
-        lines.append(f"  {cls:<16} {vol[cls]['sample_epoch_reason']} (sample, epoch, reason), "
-                     f"{vol[cls]['sample_epoch']} (sample, epoch)")
+        lines.append(f"  {cls:<16} {volume.items[cls]} (sample, epoch, reason), "
+                     f"{volume.sample_epochs[cls]} (sample, epoch){QUEUE_CLASS_NOTES.get(cls, '')}")
     if role == "template":
         lines.append(TEMPLATE_CONSISTENCY_LINE)
         cons: Any = TEMPLATE_CONSISTENCY_LINE
@@ -525,13 +499,13 @@ def run_block(role: str, log: Any) -> tuple[list[str], dict[str, Any], list[dict
         "fm_counts": r.fm_counts, "fm002_by_direction": r.fm002_by_direction, "fm008": list(r.fm008),
         "format_break_epochs": fb, "errored_epochs": errored, "queue_volume": vol, "sample_consistency": cons,
     }
-    return lines, payload, review_rows(entries, role, str(e.eval_id))
+    return lines, payload, review_rows(r, role, str(e.eval_id))
 
 
 def floors_block(sonnet: Any) -> tuple[list[str], dict[str, Any]]:
     """McNemar block floor under Holm (m = 6) and the inferred paired-t drop at n = 20."""
-    p0, p1 = mcnemar_floor(0), mcnemar_floor(1)
-    passed = sum(rel.report_from_log(sonnet).pass_k.values())
+    p0, p1 = mcnemar_block_floor(), mcnemar_block_floor(reversals=1)
+    passed = sum(rel.report_from_log(sonnet, run_config=False).pass_k.values())  # checked in load_pilot_log
     lines = ["== Regression power floors (section 10(a), Holm m = 6, rank 1 threshold "
              f"{FAMILY_ALPHA / HOLM_M:.5f})",
              f"McNemar block floor on content-pass^4: {p0} one-way discordant cases with no reversal, "
@@ -559,6 +533,7 @@ def floors_block(sonnet: Any) -> tuple[list[str], dict[str, Any]]:
                    "label": "inferred"}
 
 
+@lru_cache(maxsize=1)
 def load_compare_runs() -> Any:
     spec = importlib.util.spec_from_file_location("compare_runs", COMPARE_SCRIPT)
     mod = importlib.util.module_from_spec(spec)
@@ -566,14 +541,18 @@ def load_compare_runs() -> Any:
     return mod
 
 
-def regression_block(baseline: str, candidate: str) -> tuple[list[str], dict[str, Any]]:
+def regression_block(baseline: str, candidate: str,
+                     max_tokens_pin: int | None = None) -> tuple[list[str], dict[str, Any]]:
     """compare_runs.py on the pair; caught only on its exit 1 (an automatic block)."""
     cli = load_compare_runs()
     with tempfile.TemporaryDirectory() as tmp:
         json_out = os.path.join(tmp, "compare.json")
+        argv = ["--baseline", baseline, "--candidate", candidate, "--json", json_out]
+        if max_tokens_pin is not None:
+            argv += ["--max-tokens-pin", str(max_tokens_pin)]
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            code = cli.main(["--baseline", baseline, "--candidate", candidate, "--json", json_out])
+            code = cli.main(argv)
         if code == cli.EXIT_REFUSED:
             raise Refused(f"compare_runs.py refused the regression pair: {err.getvalue().strip()}")
         with open(json_out, encoding="utf-8") as fh:
@@ -584,13 +563,14 @@ def regression_block(baseline: str, candidate: str) -> tuple[list[str], dict[str
     if code == cli.EXIT_BLOCK:
         verdict = f"caught: compare_runs.py exit 1, automatic block by {', '.join(rejecting)}"
     elif code == cli.EXIT_SIGNOFF:
-        verdict = f"NOT caught: compare_runs.py exit 2, {len(result['signoff'])} sign-off case(s), recorded as sign-off volume"
+        verdict = (f"MISSED (no automatic block): compare_runs.py exit 2, {len(result['signoff'])} sign-off case(s), "
+                   "recorded as sign-off volume")
     else:
-        verdict = "NOT caught: compare_runs.py exit 0, no block and no sign-off case"
+        verdict = "MISSED (no automatic block): compare_runs.py exit 0, no block and no sign-off case"
     lines = ["== Deliberate regression (compare_runs.py on the pair)"]
     lines.extend("  " + x for x in out.getvalue().rstrip().splitlines())
     lines.append(f"baseline passes content-pass^4 on {base_pass} of {PILOT_SAMPLES} against the McNemar floor "
-                 f"of {mcnemar_floor(0)}")
+                 f"of {mcnemar_block_floor()}")
     lines.append("Regression verdict: " + verdict)
     return lines, {"exit_code": code, "rejecting_tests": rejecting, "caught": code == cli.EXIT_BLOCK,
                    "baseline_pass4": base_pass, "signoff_cases": len(result["signoff"]), "verdict": verdict}
@@ -628,20 +608,25 @@ def _margin_lines(label: str, margin: dict[str, Any]) -> list[str]:
 def build_report(args: argparse.Namespace) -> tuple[str, dict[str, Any], list[dict[str, str]]]:
     if (args.regression_baseline is None) != (args.regression_candidate is None):
         raise Refused("--regression-baseline and --regression-candidate go together")
+    pin = args.max_tokens_pin
     paths = {"sonnet": args.sonnet, "haiku": args.haiku, "template": args.template}
-    logs = {role: load_pilot_log(p, role) for role, p in paths.items()}
+    logs = {role: load_pilot_log(p, role, pin) for role, p in paths.items()}
     content = {"sonnet": logs["sonnet"], "haiku": logs["haiku"], "template": logs["template"]}
     if args.regression_baseline is not None:
-        content["regression-baseline"] = load_pilot_log(args.regression_baseline, "regression-baseline")
-        content["regression-candidate"] = load_pilot_log(args.regression_candidate, "regression-candidate")
+        content["regression-baseline"] = load_pilot_log(args.regression_baseline, "regression-baseline", pin)
+        content["regression-candidate"] = load_pilot_log(args.regression_candidate, "regression-candidate", pin)
     fingerprint = check_same_content(content)
+    try:  # the two worker legs run one task and worker prompt (the compare_runs F2-08 rule)
+        load_compare_runs().check_matching_runs(logs["sonnet"], [logs["haiku"]], [f"haiku log {args.haiku}"])
+    except GateError as e:
+        raise Refused(f"sonnet and haiku logs do not pair: {e}") from e
 
     lines = [f"PILOT REPORT (section 13 pilot row), dev split, subset {PILOT_SUBSET}, "
              f"{PILOT_SAMPLES} cases, epochs {PILOT_K}; dataset_sha256 {fingerprint['dataset_sha256']}"]
     payload: dict[str, Any] = {"fingerprint": fingerprint, "runs": {}, "reading_of_record": args.reading_b}
     rows: list[dict[str, str]] = []
     for role, log in logs.items():
-        block, data, run_rows = run_block(role, log)
+        block, data, run_rows = run_block(role, log, paths[role])
         data["path"] = paths[role]
         lines.extend(block)
         payload["runs"][role] = data
@@ -671,7 +656,7 @@ def build_report(args: argparse.Namespace) -> tuple[str, dict[str, Any], list[di
     payload["floors"] = floors
 
     if args.regression_baseline is not None:
-        reg_lines, reg = regression_block(args.regression_baseline, args.regression_candidate)
+        reg_lines, reg = regression_block(args.regression_baseline, args.regression_candidate, pin)
         lines.extend(reg_lines)
         payload["regression"] = reg
     else:
@@ -730,6 +715,8 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--regression-candidate", help="deliberate regression: the regressed candidate .eval log")
     p.add_argument("--json", dest="json_out", help="write the report as JSON to this path")
     p.add_argument("--review-csv", help="write the review-verdict CSV (verdicts blank) to this path")
+    p.add_argument("--max-tokens-pin", type=int, default=None,
+                   help="the owner's max_tokens pin, when one is set (default: max_tokens must be unset)")
     return p
 
 

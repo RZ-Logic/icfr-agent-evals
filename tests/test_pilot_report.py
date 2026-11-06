@@ -26,6 +26,8 @@ from inspect_ai.model import ModelOutput, ModelUsage, get_model
 
 from icfr_agent_evals import baseline
 from icfr_agent_evals import consistency as con
+from icfr_agent_evals import reliability as rel
+from icfr_agent_evals import roster
 from icfr_agent_evals.casefile import ASSETS, truth_of
 from icfr_agent_evals.dataset import build_dataset
 from icfr_agent_evals.scoring import SweepHit
@@ -104,13 +106,14 @@ def _keyed_outputs(answer_of):
     return fn
 
 
-def _run_pilot(tmp_path_factory, label: str, answer_of, *, subset="pilot", epochs=4) -> str:
+def _run_pilot(tmp_path_factory, label: str, answer_of, *, subset="pilot", epochs=4, **eval_kw) -> str:
     log = inspect_eval(
         variance_commentary(split="dev", subset=subset, epochs=epochs),
         model=get_model("mockllm/model", custom_outputs=_keyed_outputs(answer_of)),
         model_roles=ROLES,
         log_dir=_log_dir(tmp_path_factory, label),
         display="none",
+        **eval_kw,
     )[0]
     assert log.status == "success", log.error
     return log.location
@@ -120,7 +123,8 @@ def _run_pilot(tmp_path_factory, label: str, answer_of, *, subset="pilot", epoch
 def logs(tmp_path_factory):
     """sonnet: correct; haiku_fb: a format break on every epoch; haiku_settled: the
     wrong direction on every case (FM-003, a settled failure); template: the baseline;
-    nonpilot: a dev run without the subset."""
+    nonpilot: a dev run without the subset; effort_low: the correct run with an
+    eval-level reasoning_effort override (what --reasoning-effort low does)."""
     template = inspect_eval(
         baseline.variance_commentary_template_baseline(split="dev", subset="pilot"),
         log_dir=_log_dir(tmp_path_factory, "report-template"),
@@ -134,6 +138,8 @@ def logs(tmp_path_factory):
         "template": template.location,
         "nonpilot": _run_pilot(tmp_path_factory, "report-nonpilot", lambda t: _answer(t, t.direction),
                                subset=None, epochs=1),
+        "effort_low": _run_pilot(tmp_path_factory, "report-effort-low", lambda t: _answer(t, t.direction),
+                                 reasoning_effort="low"),
     }
 
 
@@ -226,9 +232,9 @@ def test_template_never_gets_sample_consistency(logs, capsys, monkeypatch):
     seen = []
     real = con.report_from_log
 
-    def spy(log, k=None):
+    def spy(log, k=None, **kw):
         seen.append(log.eval.task)
-        return real(log, k)
+        return real(log, k, **kw)
 
     monkeypatch.setattr(con, "report_from_log", spy)
     code, out, _ = _main(capsys, *_base(logs))
@@ -245,7 +251,9 @@ def test_queue_volume_counts_distinct_rows(logs, capsys):
     assert code == 0
     haiku = out.split("== Run haiku")[1].split("== Run template")[0]
     assert "Review queue volume: 80 distinct (sample, epoch, reason), 80 distinct (sample, epoch)" in haiku
-    assert "format break     80 (sample, epoch, reason), 80 (sample, epoch)" in haiku
+    assert "format_break     80 (sample, epoch, reason), 80 (sample, epoch)" in haiku
+    fm_line = next(line for line in haiku.splitlines() if line.strip().startswith(pr.FM_LISTED))
+    assert "not a section 10(c) route" in fm_line  # its own line (W5 note)
 
 
 def test_review_csv_columns_and_rows(logs, capsys, tmp_path):
@@ -293,8 +301,8 @@ def test_regression_caught_only_on_an_automatic_block(logs, capsys):
     code, out, _ = _main(capsys, *_base(logs), "--regression-baseline", logs["sonnet"],
                          "--regression-candidate", logs["sonnet"])
     assert code == 0
-    assert "Regression verdict: NOT caught: compare_runs.py exit 0" in out
-    assert "caught: compare_runs.py exit 1" not in out
+    assert "Regression verdict: MISSED (no automatic block): compare_runs.py exit 0" in out
+    assert "caught" not in out.lower()  # the word appears only on an exit 1 (contract C5)
 
 
 # --- Refusals (exit 3) --------------------------------------------------------------------
@@ -342,8 +350,60 @@ def test_argument_errors_exit_3(argv):
     assert e.value.code == pr.EXIT_REFUSED
 
 
-def test_run_config_hook_is_a_no_op_today():
-    assert pr.run_config_check(object()) is None
+def test_run_config_check_passes_a_clean_pilot_log(logs):
+    """C2: the clean 20-case pilot log passes with 20 samples x 4 epochs and effort high."""
+    summary = pr.run_config_check(read_eval_log(logs["sonnet"]), "sonnet")
+    assert summary["reasoning_effort"] == "high" and summary["scored_sample_epochs"] == 80
+
+
+def test_run_config_check_skips_the_template_log(logs):
+    """The template baseline has no evaluated model, so check_run_config always refuses
+    it (tests/test_run_config.py pins that); the template role is never checked."""
+    log = read_eval_log(logs["template"])
+    with pytest.raises(roster.RunConfigError):
+        roster.check_run_config(log)
+    assert pr.run_config_check(log, "template") is None
+
+
+@pytest.mark.parametrize("role", ["--sonnet", "--haiku"])
+def test_refuses_an_overridden_worker_log_naming_the_field(logs, capsys, role):
+    argv = dict(zip(_base(logs)[::2], _base(logs)[1::2]))
+    argv[role] = logs["effort_low"]
+    code, out, err = _main(capsys, *[x for kv in argv.items() for x in kv])
+    assert code == pr.EXIT_REFUSED and out == ""
+    assert "reasoning_effort" in err and "run config" in err
+
+
+def test_refuses_an_overridden_regression_log(logs, capsys):
+    code, out, err = _main(capsys, *_base(logs), "--regression-baseline", logs["sonnet"],
+                           "--regression-candidate", logs["effort_low"])
+    assert code == pr.EXIT_REFUSED and out == "" and "reasoning_effort" in err
+
+
+def test_max_tokens_pin_must_match_the_log(logs, capsys):
+    """A pin the runs did not apply is a mismatch (C2): the clean logs set no max_tokens."""
+    code, out, err = _main(capsys, *_base(logs), "--max-tokens-pin", "4000")
+    assert code == pr.EXIT_REFUSED and "max_tokens" in err
+
+
+def test_refuses_sonnet_and_haiku_on_another_worker_prompt(logs, capsys, tmp_path):
+    def mutate(log):
+        log.eval.metadata["worker_prompt_sha256"] = "f" * 64
+
+    bad = _rewrite(tmp_path, logs["haiku_fb"], "prompt.eval", mutate)
+    code, out, err = _main(capsys, "--sonnet", logs["sonnet"], "--haiku", bad, "--template", logs["template"])
+    assert code == pr.EXIT_REFUSED and out == "" and "worker_prompt_sha256" in err
+
+
+def test_review_csv_header_matches_the_evidence_template_byte_for_byte(logs, capsys, tmp_path):
+    """docs/evidence/pilot-TEMPLATE-review.csv is the header the owner fills in."""
+    template = (ROOT / "docs" / "evidence" / "pilot-TEMPLATE-review.csv").read_bytes()
+    assert template == (",".join(CSV_COLUMNS) + "\n").encode("utf-8")
+    path = tmp_path / "review.csv"
+    code, _, err = _main(capsys, *_base(logs), "--review-csv", path)
+    assert code == 0, err
+    raw = path.read_bytes()
+    assert raw.split(b"\n", 1)[0] + b"\n" == template
 
 
 # --- Difficulty check (b) readings, one epoch at a time -----------------------------------
@@ -437,21 +497,32 @@ def test_queue_classes_and_route_keys():
     scores["fabrication_anchor"] = _score(0, reasons=[sweep])
     scores["faithfulness_anchor"] = _score(0, reasons=[sweep])  # repeats its component's reason
     scores["reconciling_items_anchor"] = _score(1, reasons=["reconciling_items[0] type 'x' differs from 'y'"])
-    log = NS(samples=[_epoch(scores), _epoch({}, error=NS(message="boom"), epoch=2)])
-    entries = pr.queue_entries(log)
-    vol = pr.queue_volume(entries)
+    report = rel.reliability_report([_epoch(scores), _epoch({}, error=NS(message="boom"), epoch=2)], k=2)
+    vol = pr.queue_payload(rel.queue_volume(report))
     assert vol[pr.SWEEP_ROUTE] == {"sample_epoch_reason": 1, "sample_epoch": 1}
     assert vol[pr.CODE_ROUTE] == {"sample_epoch_reason": 1, "sample_epoch": 1}
     assert vol[pr.SAMPLE_ERROR] == {"sample_epoch_reason": 1, "sample_epoch": 1}
     assert vol["all"] == {"sample_epoch_reason": 3, "sample_epoch": 2}
-    rows = pr.review_rows(entries, "sonnet", "abc")
+    rows = pr.review_rows(report, "sonnet", "abc")
     assert len(rows) == 3
     sweep_row = next(r for r in rows if r["route_key"].startswith(pr.SWEEP_ROUTE))
     assert sweep_row["scorers"] == "fabrication_anchor;faithfulness_anchor"
+    assert next(r for r in rows if r["epoch"] == "2")["route_key"] == pr.SAMPLE_ERROR
+
+
+def test_fm_listed_reason_gets_its_own_route_key():
+    from icfr_agent_evals.scoring import FABRICATION_REVIEW
+
+    scores = _clean()
+    scores["fabrication_anchor"] = _score(0, codes=["FM-005"], reasons=[FABRICATION_REVIEW])
+    report = rel.reliability_report([_epoch(scores)], k=1)
+    assert pr.queue_payload(rel.queue_volume(report))[pr.FM_LISTED] == {"sample_epoch_reason": 1, "sample_epoch": 1}
+    (row,) = pr.review_rows(report, "haiku", "abc")
+    assert row["route_key"] == f"{pr.FM_LISTED}: {FABRICATION_REVIEW}"
 
 
 def test_statistics_helpers():
-    assert pr.mcnemar_floor(0) == 7 and pr.mcnemar_floor(1) == 10
+    assert pr.mcnemar_block_floor() == 7 and pr.mcnemar_block_floor(reversals=1) == 10
     assert pr.paired_t_mdd(0.5) == pytest.approx(0.390, abs=0.001)
     assert pr.paired_t_mdd(1.0) == pytest.approx(0.780, abs=0.001)
     lo, hi = pr.clopper_pearson(20, 20)

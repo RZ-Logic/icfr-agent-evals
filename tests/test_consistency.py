@@ -38,6 +38,7 @@ from icfr_agent_evals.consistency import (
 )
 from icfr_agent_evals.reliability import GateError
 from icfr_agent_evals.reliability import report_from_log as reliability_report_from_log
+from test_reliability import c2_logs  # noqa: F401  (contract C2 mock logs: clean, overrides, template)
 from icfr_agent_evals.rubric import ANCHOR_STATUS, WIRED_SCORERS, Dimension
 
 PROSE = "Here is my commentary: the reserves look fine."
@@ -308,7 +309,7 @@ def test_report_from_log_guards():
         report_from_log(_log(None))
     with pytest.raises(GateError):
         report_from_log(_log([_record(1, _out())], epochs=1, declared=4))
-    report = report_from_log(_log([_record(e, _out()) for e in range(1, 5)]))
+    report = report_from_log(_log([_record(e, _out()) for e in range(1, 5)]), run_config=False)  # hand-built log, no ModelEvent
     assert report.k == 4 and report.samples[0].agreement == 1.0
 
 
@@ -420,3 +421,21 @@ def test_huge_item_amount_does_not_crash():
     assert "1e300" in huge
     s = consistency_report([_record(e, huge) for e in range(1, 5)], k=4).samples[0]
     assert s.unanimous and not s.modal_correct
+
+
+# --- Run configuration (contract C2) in the consistency report ------------------------
+
+def test_consistency_report_reads_a_clean_mock_pilot_log(c2_logs):
+    report = report_from_log(c2_logs["clean"])
+    assert report.k == 4 and report.scored_samples == 2
+
+
+@pytest.mark.parametrize("label, field", [("effort_low", "reasoning_effort"), ("temperature", "temperature")])
+def test_consistency_report_refuses_an_overridden_log_naming_the_field(c2_logs, label, field):
+    with pytest.raises(GateError, match=field):
+        report_from_log(c2_logs[label])
+
+
+def test_consistency_report_reads_the_template_log_without_the_check(c2_logs):
+    """The reader skips C2 on the template; pilot_report never builds Sample Consistency for it (F2-09)."""
+    assert report_from_log(c2_logs["template"]).scored_samples == 2
