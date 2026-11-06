@@ -80,3 +80,30 @@ def test_out_of_vocabulary_wrong_narrative_is_a_current_clean_pass(wid, case, na
     t = _dev_truths()[case]
     passed, notes = _content_trial(_answer(t, narrative), t)
     assert passed, f"{wid} ({wrong}) is now caught: {notes}; move it out of the declared residual"
+
+
+# Direction errors stated with the true variance as the amount. "under" and
+# "underwater" are not comparison words in the locked vocabulary, so the direction
+# itself is not extracted; at d4e86ec these fired FM-001 only because the amount
+# bound to the "book" or "reserves" cue. Since the W3 fix (F3-01) a balance binding
+# equal to abs(variance) routes to review (balance_amount_equals_variance). Pinned
+# as the review route: never a pass, and no longer FM-001.
+ROUTED = [
+    ("W01", SURPLUS, "Reserves came in under book by USD 34,349.43 at month-end.", "under book on a surplus"),
+    ("W09", SURPLUS, "Reserves are underwater by USD 34,349.43.", "underwater on a surplus"),
+]
+
+
+@pytest.mark.parametrize("wid, case, narrative, wrong", ROUTED, ids=[r[0] for r in ROUTED])
+def test_direction_idiom_with_the_variance_amount_routes_to_review(wid, case, narrative, wrong):
+    t = _dev_truths()[case]
+    passed, notes = _content_trial(_answer(t, narrative), t)
+    assert not passed, f"{wid} ({wrong}) became a clean pass"
+    assert any(n.startswith("correctness:balance_amount_equals_variance") for n in notes), notes
+    assert not any(n.startswith("correctness:FM-") for n in notes), notes
+
+
+def test_direction_idiom_with_a_wrong_amount_keeps_fm001():
+    t = _dev_truths()[SURPLUS]
+    passed, notes = _content_trial(_answer(t, "Reserves came in under book by USD 30,000.00 at month-end."), t)
+    assert not passed and "correctness:FM-001" in notes, notes
