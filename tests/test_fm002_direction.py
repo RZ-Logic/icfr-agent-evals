@@ -94,13 +94,23 @@ def test_structured_value_outside_the_enum_is_unordered():
 
 @pytest.mark.parametrize("band, direction", [
     ("M-3", "overstated"), ("Band M3", "overstated"), ("m 1", "understated"), ("band 1", "understated"),
-    ("materiality tier 3", "overstated"), ("M-2", BAND_ERROR_UNORDERED), ("M3 or M1", BAND_ERROR_UNORDERED),
+    ("materiality tier 3", "overstated"), ("M3 or M1", BAND_ERROR_UNORDERED),
 ])
 def test_structured_label_form_outside_the_enum_takes_the_band_it_names(band, direction):
     # a label form the narrative reads orders the direction; the score is unchanged
     r = check_correctness(_with(band=band), TRUTH)
     assert r.points == 2 and r.failure_modes == ("FM-002",)
     assert r.details["band_error"] == r.details[FM002_DIRECTION_KEY] == direction
+
+
+@pytest.mark.parametrize("band", ["M-2", "Band M2", "m 2", "M2 (reportable)"])
+def test_structured_label_form_of_the_true_band_routes_to_review(band):
+    # F3-07 under D17: the true band in a label form is off contract, not FM-002.
+    # ("M-2", unordered) sat in the parametrization above before the fix round.
+    r = check_correctness(_with(band=band), TRUTH)
+    assert r.points == 2 and r.failure_modes == ()
+    assert r.details["band_error"] is None and r.details[FM002_DIRECTION_KEY] is None
+    assert any(x.startswith("off_contract_value: materiality_band") for x in r.review_reasons)
 
 
 def test_no_fm002_records_no_direction():

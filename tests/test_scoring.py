@@ -48,10 +48,13 @@ def test_correctness_wrong_magnitude():
     assert r.points == 2 and r.failure_modes == ("FM-001",)
 
 
-def test_correctness_signed_magnitude_is_wrong():
-    """The field is the absolute value; a signed figure is not within $1 of |v|."""
+def test_correctness_signed_magnitude_routes_to_review():
+    """The field is the absolute value. A signed figure equal to the true shortfall is
+    off contract: review, not FM-001, and the point stays withheld (F3-07, D17).
+    Before the fix round this test asserted FM-001, the defect."""
     r = check_correctness({**GOOD, "variance_amount_usd": -120_000.0}, TRUTH)
-    assert "FM-001" in r.failure_modes
+    assert "FM-001" not in r.failure_modes and r.points == 2
+    assert any(x.startswith("off_contract_value: variance_amount_usd") for x in r.review_reasons)
 
 
 def test_correctness_wrong_direction():
@@ -110,7 +113,7 @@ def test_fm016_on_asset_mismatch_every_asset(asset):
     assert r.points == 0 and "FM-016" in r.failure_modes
 
 
-@pytest.mark.parametrize("period", ["2025-10", "2024-12", "N/A", "December 2025", "2025-13"])
+@pytest.mark.parametrize("period", ["2025-10", "2024-12", "N/A", "November 2025", "2025-13"])
 def test_fm016_on_period_mismatch(period):
     r = check_correctness({**GOOD, "period": period}, TRUTH)
     assert r.points == 0 and "FM-016" in r.failure_modes
