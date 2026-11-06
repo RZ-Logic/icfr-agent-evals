@@ -4,14 +4,17 @@
 CONTEXT.md
 
 # --- Eval run outputs -------------------------------------------------------------
-# Ignore run logs by default; keep the directory and the two committed CI
-# baselines (pre-registration section 10). The re-allows must follow *.eval.
+# Ignore run logs by default; keep the directory, the two committed CI baselines
+# (pre-registration section 10) and the pilot logs copied into runs/pilot-<date>/
+# as evidence (docs/evidence/PILOT-RUNBOOK.md). The re-allows must follow *.eval.
 runs/*
 !runs/.gitkeep
 logs/
 *.eval
 !runs/baseline-phase-1.eval
 !runs/baseline-phase-2.eval
+!runs/pilot-*/
+!runs/pilot-*/**/*.eval
 
 # --- Python -----------------------------------------------------------------------
 __pycache__/
