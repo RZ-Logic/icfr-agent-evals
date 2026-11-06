@@ -276,7 +276,7 @@ def test_correctness_metadata_and_report_by_direction(tmp_path):
     assert {e: s.metadata[FM002_DIRECTION_KEY] for e, s in by_epoch.items()} == {
         1: None, 2: "overstated", 3: "understated", 4: "mixed",
     }
-    rep = report_from_log(log)
+    rep = report_from_log(log, run_config=False)  # a hand-built Task that makes no model call (band_by_epoch)
     assert rep.fm_counts["FM-002"] == 3
     assert rep.fm002_by_direction == {"mixed": 1, "overstated": 1, "understated": 1}
     records = sorted(regression.records_from_samples(log.samples), key=lambda r: r.epoch)
