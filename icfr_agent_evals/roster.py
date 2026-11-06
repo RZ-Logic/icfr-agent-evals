@@ -71,6 +71,12 @@ GRADER_STEPS: tuple[int, ...] = (1, 2)
 
 # One effort setting for each Anthropic model in the roster, whatever role it holds.
 REASONING_EFFORT = "high"
+# Section 5 Reasoning: without an owner pin, Inspect sends max_tokens 48,000 to a Claude
+# model at effort high (32,000 plus 16,000) and records that value in every ModelEvent's
+# config, while plan.config leaves it unset (no --max-tokens flag). The run-config check
+# accepts exactly this value in the evaluated model's events when no pin is given; the
+# Sonnet pilot leg of 2026-11-06 was refused before this rule existed.
+DEFAULT_MAX_TOKENS = 48_000
 
 OFFLINE_PROVIDER = "mockllm"
 
@@ -414,11 +420,13 @@ def _generate_fields(config: Any) -> dict[str, Any]:
 
 
 def _check_generate(where: str, fields: Mapping[str, Any], *, evaluated: bool, allow_batch: bool,
-                    max_tokens_pin: int | None) -> None:
+                    max_tokens_pin: int | None, provider_default: bool = False) -> None:
     """Raise RunConfigError on the first field of one GenerateConfig off the pins.
 
     evaluated: True for plan.config and the evaluated model's events, which must carry
-    reasoning_effort == REASONING_EFFORT (and max_tokens equal to a given pin)."""
+    reasoning_effort == REASONING_EFFORT (and max_tokens equal to a given pin).
+    provider_default: True for a ModelEvent of the evaluated model, where Inspect records
+    the max_tokens it sent; with no pin, DEFAULT_MAX_TOKENS is the one accepted value."""
     if evaluated and fields.get("reasoning_effort") != REASONING_EFFORT:
         raise RunConfigError(
             f"run config: {where} has reasoning_effort={fields.get('reasoning_effort')!r}, "
@@ -432,10 +440,17 @@ def _check_generate(where: str, fields: Mapping[str, Any], *, evaluated: bool, a
             f"and only {list(RUN_CONFIG_OPERATIONAL)} may be set besides reasoning_effort"
         )
     if "max_tokens" in fields:
-        if max_tokens_pin is None or fields["max_tokens"] != max_tokens_pin:
+        value = fields["max_tokens"]
+        if max_tokens_pin is not None:
+            if value != max_tokens_pin:
+                raise RunConfigError(
+                    f"run config: {where} sets max_tokens={value!r}; the max_tokens pin is {max_tokens_pin!r}"
+                )
+        elif not (provider_default and value == DEFAULT_MAX_TOKENS):
             raise RunConfigError(
-                f"run config: {where} sets max_tokens={fields['max_tokens']!r}; "
-                f"the max_tokens pin is {max_tokens_pin!r}"
+                f"run config: {where} sets max_tokens={value!r}; the max_tokens pin is None and "
+                f"the only value accepted without a pin is the documented default {DEFAULT_MAX_TOKENS} "
+                f"in the evaluated model's events (a --max-tokens flag sets plan.config)"
             )
     elif evaluated and max_tokens_pin is not None:
         raise RunConfigError(
@@ -506,6 +521,7 @@ def check_run_config(log: Any, *, expected_samples: int | None = None, expected_
     if samples is None:
         raise RunConfigError("run config: the log has no samples; read it in full, not header_only")
     evaluated_events = 0
+    effective_max_tokens: set[int | None] = set()
     for sample in samples:
         for event in sample.events or ():
             if getattr(event, "event", None) != "model":
@@ -516,11 +532,17 @@ def check_run_config(log: Any, *, expected_samples: int | None = None, expected_
             if role is None:
                 evaluated_events += 1
                 _check_generate(where, fields, evaluated=True, allow_batch=allow_batch,
-                                max_tokens_pin=max_tokens_pin)
+                                max_tokens_pin=max_tokens_pin, provider_default=True)
+                effective_max_tokens.add(fields.get("max_tokens"))
             elif fields.get("extra_headers"):
                 raise RunConfigError(f"run config: {where} sets extra_headers; no roster run sets them")
     if evaluated_events == 0:
         raise RunConfigError("run config: no ModelEvent of the evaluated model; what the provider was sent is unknown")
+    if len(effective_max_tokens) > 1:
+        raise RunConfigError(
+            f"run config: the evaluated model's events carry more than one max_tokens value "
+            f"{sorted(effective_max_tokens, key=lambda v: (v is None, v))}; one run sends one value"
+        )
 
     scored = {(s.id, s.epoch) for s in samples if s.error is None and s.scores}
     if expected_samples is not None:
@@ -540,6 +562,7 @@ def check_run_config(log: Any, *, expected_samples: int | None = None, expected_
         "evaluated_model_events": evaluated_events,
         "reasoning_effort": plan.get("reasoning_effort"),
         "max_tokens": plan.get("max_tokens"),
+        "max_tokens_effective": next(iter(effective_max_tokens)),
         "batch": plan.get("batch"),
         "operational": {k: plan[k] for k in RUN_CONFIG_OPERATIONAL if k in plan},
         "retry_on_error": getattr(eval_config, "retry_on_error", None),

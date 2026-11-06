@@ -102,6 +102,44 @@ def test_each_override_is_refused_with_the_field_named(name, override_runs):
         check_run_config(override_runs[name], expected_samples=PILOT_CASES, expected_epochs=_task_epochs(name))
 
 
+def _with_event_max_tokens(log, value, *, only_first=False):
+    """A copy of a log whose evaluated-model events record max_tokens=value, the way Inspect
+    records the value it sent to a Claude model (plan.config stays unset)."""
+    log = log.model_copy(deep=True)
+    for i, s in enumerate(log.samples):
+        if only_first and i > 0:
+            break
+        for ev in s.events:
+            if getattr(ev, "event", None) == "model" and ev.role is None:
+                ev.config.max_tokens = value
+    return log
+
+
+def test_provider_default_max_tokens_in_events_passes_without_a_pin(clean_run):
+    """Sonnet pilot leg 2026-11-06: Inspect records max_tokens=48000 in every evaluated event
+    while plan.config leaves it unset; with no pin that is the run the spec describes."""
+    log = _with_event_max_tokens(clean_run, roster.DEFAULT_MAX_TOKENS)
+    summary = check_run_config(log, expected_samples=PILOT_CASES)
+    assert summary["max_tokens"] is None
+    assert summary["max_tokens_effective"] == roster.DEFAULT_MAX_TOKENS == 48000
+    assert check_run_config(clean_run, expected_samples=PILOT_CASES)["max_tokens_effective"] is None
+    # a pin equal to the default still needs the --max-tokens flag in plan.config
+    with pytest.raises(RunConfigError, match="leaves max_tokens unset"):
+        check_run_config(log, max_tokens_pin=roster.DEFAULT_MAX_TOKENS)
+
+
+def test_any_other_event_max_tokens_refuses_without_a_pin(clean_run):
+    log = _with_event_max_tokens(clean_run, 16000)
+    with pytest.raises(RunConfigError, match="max_tokens=16000.*documented default 48000"):
+        check_run_config(log, expected_samples=PILOT_CASES)
+
+
+def test_mixed_event_max_tokens_refuses(clean_run):
+    log = _with_event_max_tokens(clean_run, roster.DEFAULT_MAX_TOKENS, only_first=True)
+    with pytest.raises(RunConfigError, match="more than one max_tokens value"):
+        check_run_config(log, expected_samples=PILOT_CASES)
+
+
 def test_max_tokens_passes_only_when_it_equals_the_owner_pin(override_runs, clean_run):
     log = override_runs["max_tokens"]
     assert check_run_config(log, expected_samples=PILOT_CASES, expected_epochs=1, max_tokens_pin=100)["max_tokens"] == 100

@@ -771,7 +771,8 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--json", dest="json_out", help="write the report as JSON to this path")
     p.add_argument("--review-csv", help="write the review-verdict CSV (verdicts blank) to this path")
     p.add_argument("--max-tokens-pin", type=int, default=None,
-                   help="the owner's max_tokens pin, when one is set (default: max_tokens must be unset)")
+                   help="the owner's max_tokens pin, when one is set (default: no --max-tokens flag; the evaluated "
+                             "model's events may carry Inspect's documented default 48,000)")
     return p
 
 

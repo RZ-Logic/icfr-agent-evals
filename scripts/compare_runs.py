@@ -207,7 +207,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--ladder", default="R1", choices=LADDERS, help="review-volume ladder, section 10(c)")
     parser.add_argument("--json", dest="json_out", help="write the report as JSON to this path")
     parser.add_argument("--max-tokens-pin", type=int, default=None,
-                        help="the owner's max_tokens pin, when one is set (default: max_tokens must be unset)")
+                        help="the owner's max_tokens pin, when one is set (default: no --max-tokens flag; the evaluated "
+                             "model's events may carry Inspect's documented default 48,000)")
     args = parser.parse_args(argv)
 
     # Everything runs inside the try, the --json write included, and the report
