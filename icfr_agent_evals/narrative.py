@@ -1099,10 +1099,14 @@ def _item_effect_fit(toks: list[_Tok], i: int, ctx: _Context) -> dict | None:
     before the amount governs it, with no amount, reference, comma or "up" between,
     and "by", "(" or the verb itself right before the amount. The subject is the
     nearest reference before the verb, or the only reference in the clause:
-    - the subject is cited, eligible and its amount equals the figure: ok;
-    - two or more references, all cited and eligible, sum to the figure: ok when the
-      clause also states each item's own amount or has an aggregate word, review
-      otherwise (the sum may be standing in for one item's amount; OpenAI R1);
+    - the subject is cited, eligible and its amount equals the figure: review,
+      item_effect_unverified (the narrowing patch of 2026-11-06 made this a route:
+      the match is unsigned and checks neither direction nor side);
+    - two or more references, all cited and eligible, sum to the figure: review,
+      item_effect_sum_unverified when the clause also states each item's own amount
+      or has an aggregate word (the unsigned sum ignores netting), and
+      item_amount_equals_clause_sum otherwise (the sum may be standing in for one
+      item's amount; OpenAI R1);
     - no reference in the clause and the figure equals one cited eligible item's
       amount: review (the item is described, not named).
     Without an effect verb, a bracketed amount after a reference it describes
@@ -1135,7 +1139,9 @@ def _item_effect_fit(toks: list[_Tok], i: int, ctx: _Context) -> dict | None:
                 effect = item_effect_usd(it)
                 if (amt.data["negative"] and effect > 0) or (amt.data["positive"] and effect < 0):
                     return {"verdict": "review", "reason": "amount_sign_disagrees", "reference": it.reference}
-                return {"verdict": "ok", "role": "item", "resolution": "item_effect", "reference": it.reference,
+                # narrowing patch (2026-11-06): an unsigned match on the item's amount checks
+                # neither the verb's direction nor the balance named, so the figure routes
+                return {"verdict": "review", "reason": "item_effect_unverified", "reference": it.reference,
                         "expected": abs(it.amount_usd)}
         items = []
         for k in refs:
@@ -1152,7 +1158,8 @@ def _item_effect_fit(toks: list[_Tok], i: int, ctx: _Context) -> dict | None:
                 each = all(any(_near(v, n.amount_usd) for v in stated) for n in items)
                 clause_text = ctx.text[toks[0].start:toks[-1].end]
                 if each or _AGGREGATE_CUE_RE.search(clause_text):
-                    return {"verdict": "ok", "role": "item", "resolution": "item_effect_sum", "expected": total,
+                    # narrowing patch (2026-11-06): the unsigned sum ignores netting, so it routes
+                    return {"verdict": "review", "reason": "item_effect_sum_unverified", "expected": total,
                             "references": [n.reference for n in items]}
                 return {"verdict": "review", "reason": "item_amount_equals_clause_sum", "expected": total}
         if not refs:
