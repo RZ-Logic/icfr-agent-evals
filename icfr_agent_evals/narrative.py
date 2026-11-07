@@ -657,6 +657,29 @@ _REFUSED_NEG_TAIL_RE = re.compile(rf" (?:not|never)(?![A-Za-z0-9])| (?:been |bei
 _REFUSED_DOUBLE_RE = re.compile(rf"^ (?:be |been |being )?{_REFUSED_WORDS}", _I)
 
 
+def _remainder_stated(toks: list[_Tok], start: int) -> bool:
+    """True when toks[start:] holds an amount bound to an unexplained cue: the cue right
+    after the amount over linking tokens ("$0.00 unexplained"), or right before it over
+    linking tokens with no cue following the amount ("the unexplained remainder is
+    $0.00"; "the unexplained balance being the $25,000.00 surplus" does not count, the
+    amount after it is the surplus). Aggregate step, second narrowing (R4.md)."""
+    for k in range(start, len(toks)):
+        if toks[k].kind != "amount":
+            continue
+        m = k + 1
+        while m < len(toks) and _is_link(toks[m]):
+            m += 1
+        if m < len(toks) and toks[m].kind == "cue" and toks[m].role == "unexplained":
+            return True
+        p = k - 1
+        while p >= start and _is_link(toks[p]):
+            p -= 1
+        if (p >= start and toks[p].kind == "cue" and toks[p].role == "unexplained"
+                and not (m < len(toks) and toks[m].kind == "cue")):
+            return True
+    return False
+
+
 def _resolve_role(clause: _Clause, i: int, ctx: "_Context") -> dict:
     """Bind the amount at toks[i] to a role from cue words in its clause.
 
@@ -791,6 +814,16 @@ def _resolve_role(clause: _Clause, i: int, ctx: "_Context") -> dict:
                     if not (m < len(toks) and toks[m].kind == "amount"):
                         out.update(route_reason="aggregate_total_role_cue_follows", cue_after=t.text)
                     break
+            # Aggregate step, second narrowing (2026-11-06, R4.md): an aggregate word and
+            # an item subject alone never pass the figure. The binding passes only when
+            # the same clause also states the remainder as an amount bound to an
+            # unexplained cue ("leaving $0.00 unexplained", "the unexplained remainder is
+            # $0.00"), which the cue rules then check against the truth; otherwise the
+            # figure routes, so a contradiction placed before the aggregate word, in the
+            # next clause, behind a second figure or in a word outside the cue list is
+            # read by a person rather than passed.
+            if "route_reason" not in out and not _remainder_stated(toks, i + 1):
+                out.update(route_reason="aggregate_total_unconfirmed")
             return out
 
     # "$X of the shortfall" is a part of the variance, not the variance: that cue

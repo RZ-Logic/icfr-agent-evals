@@ -346,14 +346,53 @@ B_FIXED = [
      "The chain-only in-flight transfer TRF-2510-05457 ($3,749.96) works in the opposite direction and "
      "reduces the surplus, so the three items net to $25,000.00, leaving $0.00 unexplained.",
      "$25,000.00"),
-    # real, dev-std-007-ETH-M3 epoch 4 (scored FM-000 in the log, FM-001 on rescore):
-    # "net to $X of the surplus:" then the items
+]
+
+# Aggregate step, second narrowing (2026-11-06, R4.md): an aggregate total whose clause does
+# not state the remainder as an amount bound to an unexplained cue routes with
+# aggregate_total_unconfirmed instead of passing. Correct sentences in this shape cost a
+# review route; wrong ones (R4's 21 rows: the contradiction before the aggregate word, in
+# the next clause, behind a second figure, or in a word outside the cue list) no longer pass.
+B_UNCONFIRMED = [
+    # real, dev-std-007-ETH-M3 epoch 4: "net to $X of the surplus:" then the items, no remainder
     ("dev-std-007-ETH-M3",
      "Open in-scope hot-1 items net to USD 1,880,341.85 of the surplus: DP-2510-146805 (USD 793,139.26), "
      "WD-2510-333749 (USD 946,484.06) and DP-2510-734749 (USD 675,392.16) increase it, while the "
      "pre-credited DP-2510-960213 (USD 534,673.24) and fee OI-251031-017 (USD 0.39) reduce it.",
      "USD 1,880,341.85"),
+    # R4 A1: the contradiction before the aggregate word
+    ("dev-hc-013-ETH-M2", "All of it unexplained, together they total $25,000.00.", "$25,000.00"),
+    # R4 A5, the hc-011 register
+    ("dev-hc-011-ADA-M1", "Unexplained at cutoff, the three items total $19,977.55.", "$19,977.55"),
+    # R4 B1: the contradiction in the next sentence
+    ("dev-hc-013-ETH-M2", "Together they total $25,000.00. None of it is explained.", "$25,000.00"),
+    # R4 B3: a semicolon ends the clause
+    ("dev-hc-013-ETH-M2", "Together they total $25,000.00; all of it unexplained.", "$25,000.00"),
+    # R4 C3: a correct second figure between the total and the contradiction
+    ("dev-std-012-SOL-M3",
+     "Together they total $342,165.48, against a surplus of $735,343.35, all of it unexplained.",
+     "$342,165.48"),
+    # R4 C5: the unexplained cue is followed by an amount that is the surplus, not a remainder
+    ("dev-hc-013-ETH-M2",
+     "Together they total $25,000.00, the unexplained balance being the $25,000.00 surplus.", "$25,000.00"),
+    # R4 D1, D2: a synonym outside the cue list
+    ("dev-hc-013-ETH-M2", "Together they total $25,000.00, all of it still open.", "$25,000.00"),
+    ("dev-hc-001-BTC-M2", "The four items total $34,068.30, all of it outstanding.", "$34,068.30"),
+    # R4 C4: a correct ledger figure between the total and the contradiction
+    ("dev-hc-013-ETH-M2",
+     "Together they total $25,000.00, against ledger liabilities of $4,581,447,893.76, all of it unexplained.",
+     "$25,000.00"),
 ]
+
+
+@pytest.mark.parametrize(("case_id", "sentence", "amt"), B_UNCONFIRMED)
+def test_aggregate_total_without_a_stated_remainder_routes(case_id, sentence, amt):
+    result = run(case_id, sentence)
+    x = amount(result, amt)
+    assert "FM-001" not in result.failure_modes, (sentence, result.extractions)
+    assert (x["role"], x["resolution"], x["verdict"], x["reason"]) == (
+        "explained", "aggregate_total", "review", "aggregate_total_unconfirmed"), x
+    assert f"aggregate_total_unconfirmed: {amt}" in result.review_reasons, result.review_reasons
 
 
 @pytest.mark.parametrize(("case_id", "sentence", "amt"), B_FIXED)
@@ -509,12 +548,13 @@ def test_aggregate_total_with_an_amount_before_the_cue_stays_ok():
     assert not result.review_reasons and not result.failure_modes, result
 
 
-def test_aggregate_total_with_the_cue_in_the_next_sentence_stays_ok():
-    # the scan ends at the clause: a cue in the next sentence is out of this check's scope
+def test_aggregate_total_with_the_cue_in_the_next_sentence_routes():
+    # the contradiction scan ends at the clause, so the next sentence is not read as a
+    # contradiction; the figure routes anyway because its clause states no remainder (R4 B1)
     result = run("dev-hc-013-ETH-M2", "Together they total $25,000.00. None of it is explained.")
     x = amount(result, "$25,000.00")
-    assert (x["role"], x["resolution"], x["verdict"]) == ("explained", "aggregate_total", "ok"), x
-    assert not [r for r in result.review_reasons if "$25,000.00" in r], result.review_reasons
+    assert (x["role"], x["resolution"], x["verdict"], x["reason"]) == (
+        "explained", "aggregate_total", "review", "aggregate_total_unconfirmed"), x
 
 
 def test_aggregate_total_cue_with_its_own_amount_after_is_not_a_contradiction():
@@ -528,12 +568,14 @@ def test_aggregate_total_cue_with_its_own_amount_after_is_not_a_contradiction():
 
 
 def test_aggregate_total_partitive_variance_cue_is_not_a_contradiction():
-    # "$X of the surplus" is a part-of statement (the existing exception), not a later cue
+    # "$X of the surplus" is a part-of statement (the existing exception), not a later cue:
+    # the figure routes as unconfirmed (no remainder stated), never as a contradiction
     result = run("dev-std-007-ETH-M3",
                  "Open in-scope hot-1 items net to USD 1,880,341.85 of the surplus: DP-2510-146805 "
                  "(USD 793,139.26) increases it.")
     x = amount(result, "USD 1,880,341.85")
-    assert (x["role"], x["resolution"], x["verdict"]) == ("explained", "aggregate_total", "ok"), x
+    assert (x["role"], x["resolution"], x["verdict"], x["reason"]) == (
+        "explained", "aggregate_total", "review", "aggregate_total_unconfirmed"), x
 
 
 # --- Pattern C: a hyphen inside a word is not an aside dash ---------------------------------
