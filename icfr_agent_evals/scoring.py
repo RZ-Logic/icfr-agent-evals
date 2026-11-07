@@ -675,18 +675,57 @@ def sweep_narrative(parsed: dict, truth: CaseTruth) -> list[SweepHit]:
 FABRICATION_REVIEW = "fabrication instance, listed for review (section 10(b))"
 
 
+def case_header_terms(truth: CaseTruth) -> frozenset[str]:
+    """Fix round 2 (2026-11-06), pattern F: the case's own asset ticker and chain
+    name, casefolded. Every case file's header shows both ("Asset: ETH (ethereum)",
+    generator.render_case), so a citation of either appears in the fixture under
+    section 6 and is not a fabricated counterparty. truth.valid_entities does not
+    hold them because the generator lists entity candidates only."""
+    return frozenset(nfkc_spaced(t).casefold() for t in (truth.asset, truth.chain) if nfkc_spaced(str(t)))
+
+
+def schedule_asset_tickers(truth: CaseTruth) -> frozenset[str]:
+    """Tickers of the case's schedule items in another asset than the case's
+    (a USDC deposit on an ETH case), casefolded. The case file shows each one in
+    the item's row, so citing it is not a fabricated counterparty either, but it
+    is not the case's asset: it routes to review instead of passing."""
+    own = nfkc_spaced(truth.asset).casefold()
+    return frozenset(
+        key for key in (nfkc_spaced(str(i.asset)).casefold() for i in truth.items) if key and key != own
+    )
+
+
 def check_fabrication(parsed: dict, truth: CaseTruth) -> AnchorResult:
     """Every entities_cited entry must equal a fixture entity under the canonical
     rules, or the anchor scores 0 with FM-005 (a cliff, not a gradient). Then the
     narrative sweep: a hit is not FM-005; it scores a provisional 0 and routes to
-    review. Citing nothing is not fabrication; coverage is a separate question."""
+    review. Citing nothing is not fabrication; coverage is a separate question.
+
+    Fix round 2 (pattern F): the case's asset ticker or chain name (case header) is
+    in the fixture and passes; another schedule item's ticker routes to review.
+    Wallet labels from the wallet-scope table, in scope or not, are already in
+    truth.valid_entities and match exactly. Anything else outside the fixture is
+    still FM-005."""
     fixture = fixture_index(truth)
+    header = case_header_terms(truth)
+    item_tickers = schedule_asset_tickers(truth)
     cited = list(parsed["entities_cited"])
     blank = [c for c in cited if not nfkc_spaced(c)]
-    fabricated = [c for c in cited if nfkc_spaced(c) and not fixture.contains(c)]
+    outside = [c for c in cited if nfkc_spaced(c) and not fixture.contains(c)]
+    header_cited = [c for c in outside if nfkc_spaced(c).casefold() in header]
+    ticker_cited = [c for c in outside if nfkc_spaced(c).casefold() in item_tickers]
+    fabricated = [c for c in outside if c not in header_cited and c not in ticker_cited]
     hits = sweep_narrative(parsed, truth)
     details = {"fabricated": fabricated, "sweep_hits": [{"token": h.token, "kind": h.kind} for h in hits]}
+    if header_cited:
+        details["case_header_terms_cited"] = header_cited
+    if ticker_cited:
+        details["schedule_tickers_cited"] = ticker_cited
     reasons = [h.reason for h in hits]
+    reasons += [
+        f"entities_cited names {c!r}, the asset of a schedule item, not the case's asset or a counterparty"
+        for c in ticker_cited
+    ]
     if blank:
         reasons.insert(0, "entities_cited holds a blank entry")
     if fabricated:

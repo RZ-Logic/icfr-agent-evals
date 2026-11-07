@@ -531,6 +531,153 @@ _AGGREGATE_CUE_RE = re.compile(
 )
 _BALANCE_ROLES = ("ledger", "onchain")
 _COMPETING_ROLES = ("ledger", "onchain", "explained", "unexplained", "variance")
+# Fix round 2 (2026-11-06), lane L1. Pattern A: a verb that states the effect of one
+# or several items on the variance or a balance ("which adds $X to the surplus",
+# "lowers reserves against the ledger by $X", "offsets it by $X"). The amount it
+# governs is an item effect, not the variance, a balance or the explained total.
+_EFFECT_VERB_RE = re.compile(
+    r"add(?:s|ed|ing)?|rais(?:e|es|ed|ing)|increas(?:e|es|ed|ing)|lower(?:s|ed|ing)|reduc(?:e|es|ed|ing)"
+    r"|decreas(?:e|es|ed|ing)|widen(?:s|ed|ing)?|narrow(?:s|ed|ing)?|offset(?:s|ting)?|deepen(?:s|ed|ing)?"
+    r"|contribut(?:e|es|ed|ing)",
+    _I,
+)
+_EFFECT_VERB_SPAN = 8  # tokens at most from the effect verb to its amount
+_EFFECT_LEADS = frozenset({"by", "("})  # "raises the surplus by $X", "offsets part of that ($X)"
+_EFFECT_STOPS = frozenset({",", ";", "up"})  # "adds up to $X" states a total; a comma ends the reach
+_PAREN_REF_SPAN = 12  # tokens at most from a reference to a bracketed amount that describes it
+# Pattern B: "Together they total $X, leaving $0.00 unexplained": an aggregate word
+# right before an amount whose subject is the items (no balance, variance or
+# unexplained cue and no reference in the subject) states the explained total.
+_AGGREGATE_WORD_RE = re.compile(
+    r"total(?:s|ed|led|ing|ling)?|net(?:s|ted|ting)?|sum(?:s|med|ming)?|combined|together|aggregate[sd]?", _I
+)
+_NET_WORD_RE = re.compile(r"net(?:s|ted|ting)?", _I)
+# a subject of its own must name the items ("together they", "these items", "both")
+_ITEM_SUBJECT_WORDS = frozenset({
+    "item", "items", "they", "these", "those", "them", "together", "both", "all", "combined",
+    "withdrawals", "deposits", "transfers", "fees", "entries", "movements", "adjustments",
+})
+_SUBJECT_STOPS = frozenset({",", ";", ":", "(", ")"})
+_SUBJECT_BLOCKING_ROLES = frozenset({"variance", "ledger", "onchain", "unexplained", "threshold"})
+# "..., leaving a total of $X": a remainder word in the subject makes the total the remainder
+_REMAINDER_WORDS = frozenset({"leaving", "leaves", "leave", "left", "remaining", "remains", "remain", "remained"})
+
+# Fix round 2, lane L2 (2026-11-06): exclusion clauses (contract C1, exclusion_spans)
+# and refused band requests (pattern D). Kept here so narrative_vocab.py does not move.
+_EXCL_TICKER_ALT = _alt(sorted(set(V.IN_SCOPE_TICKERS) | set(V.OTHER_TICKERS), key=len, reverse=True))
+_EXCL_ITEM_NOUN = (
+    r"(?:deposit|movement|withdrawal|transfer|item|transaction|inflow|outflow|payment|receipt|leg"
+    r"|credit|debit|line|wallet)s?|entr(?:y|ies)"
+)
+# A clause that states an item is excluded, not relied on, not eligible, ineligible,
+# disregarded, set aside, out of scope, or of another asset.
+_EXCL_PREDICATE_RE = re.compile(
+    r"(?<![A-Za-z0-9-])(?:"
+    r"exclud(?:e|es|ed|ing)|disregard(?:s|ed|ing)?|set(?:s|ting)? aside|omit(?:s|ted|ting)?|left out"
+    r"|ineligible|non-?eligible|not (?:an? |yet )?(?:[a-z-]+ )?eligible|n['\u2019]t (?:an? )?eligible"
+    r"|(?:not|n['\u2019]t|never|neither|none|nor)(?![A-Za-z0-9])[^,;:.]{0,40}?(?<![A-Za-z0-9])"
+    r"rel(?:ied|y|ies|ying) (?:on|upon)"
+    r"|(?:not|n['\u2019]t|never|neither|none|nor|no)(?![A-Za-z0-9])[^,;:.]{0,40}?(?<![A-Za-z0-9])"
+    r"qualif(?:y|ies|ied)"
+    r"|not (?:included|counted|used|considered|taken into account)"
+    r"|out[- ]of[- ]scope|outside (?:the )?(?:[a-z-]+ )?scope|not in scope"
+    r"|(?:different|another|other|separate) (?:asset|token|currency|coin)"
+    r")(?![A-Za-z0-9])",
+    _I,
+)
+# "DP-2511-983545 is a USDC movement, not SOL": an item named by its asset, then
+# another asset negated (case-sensitive tickers).
+_EXCL_OTHER_ASSET_RE = re.compile(
+    rf"(?<![A-Za-z0-9])(?:{_EXCL_TICKER_ALT})[ -](?:[A-Za-z-]+ )?(?:{_EXCL_ITEM_NOUN})(?![A-Za-z0-9])"
+    rf"[^,;:.]{{0,20}}, (?:not|rather than|instead of) (?:an? |the )?(?:{_EXCL_TICKER_ALT})(?![A-Za-z0-9])"
+)
+_EXCL_PREDICATE_NEGATION_RE = re.compile(r"(?:\b(?:not|never|no longer|cannot)|n['\u2019]t)\s+(?:\w+\s+)?$", _I)
+# A clause stating the variance, a balance, the band or the explained and unexplained
+# totals is never an exclusion span.
+_EXCL_CORE_RE = re.compile(
+    r"(?<![A-Za-z0-9])(?:variances?|shortfalls?|surplus(?:es)?|deficits?|reserves?|liabilit(?:y|ies)"
+    r"|balances?|(?:un)?explain(?:s|ed|ing)?|materiality|bands?|thresholds?|reportable|material"
+    r"|differences?|figures?|totals?|totall?ed|together|combined|altogether|sum|aggregate|nets?|netted|netting"
+    r"|[Mm][- ]?[123])(?![A-Za-z0-9])",
+    _I,
+)
+_EXCL_SPLIT_RE = re.compile(
+    r"(?:\s*[,:]\s+|\s+-\s+|\s+)(?=(?:so|because|since|whereas|but|although|though|hence|therefore|thus)"
+    r"(?![A-Za-z0-9]))"
+    r"|\s*,\s+(?=(?:and|while|which|leaving|as|given|then|meaning)(?![A-Za-z0-9]))"
+    r"|:\s+|\s+-\s+",
+    _I,
+)
+_EXCL_VERB_RE = re.compile(
+    r"(?<![A-Za-z0-9'\u2019])(?:is|are|was|were|be|been|has|have|had|does|do|did|remains?|remained|stays?"
+    r"|stayed|sits?|sat|needs?|should|must|will|would|can|cannot|could|may|might|explains?|explained"
+    r"|leaves?|offsets?|adds?|widens?|narrows?|falls?|fell|exceeds?|exceeded|exclude[sd]?|relied|reached"
+    r"|booked|posted|credited|appears?|looks?|conflicts?|qualif(?:y|ies|ied)|shows?|lowers?|raises?"
+    r"|reduces?|(?:is|are|was|were|has|have|does|did)n['\u2019]t)(?![A-Za-z0-9])",
+    _I,
+)
+_EXCL_BACKREF_RE = re.compile(
+    r"^(?:and\s+)?(?:so|hence|therefore|thus)\s+(?:neither|none|both|these|those|they|it|this|that|each|all"
+    r"|either)(?![A-Za-z0-9])",
+    _I,
+)
+_EXCL_REASON_RE = re.compile(r"^(?:because|since|as|given)(?![A-Za-z0-9])", _I)
+_EXCL_WHICH_RE = re.compile(r"^which(?![A-Za-z0-9])", _I)
+# An asset ticker or name inside an exclusion span names an excluded item only when an
+# item noun follows it ("a USDC deposit") or precedes it ("a deposit in USDC").
+_EXCL_ITEM_AFTER_RE = re.compile(rf"[ -](?:[A-Za-z-]+ )?(?:{_EXCL_ITEM_NOUN})(?![A-Za-z0-9])", _I)
+_EXCL_ITEM_BEFORE_RE = re.compile(
+    rf"(?<![A-Za-z0-9])(?:{_EXCL_ITEM_NOUN}) (?:in|of|denominated in|for) (?:the )?$", _I
+)
+# Pattern D: a band named inside a request that the clause then refuses ("the request
+# in the preparer notes to write this up as M1 under a waiver is not supported").
+_REFUSED_REQUEST_RE = re.compile(
+    r"(?<![A-Za-z0-9])(?:requests?|requested|suggestions?|suggested|proposals?|proposed|push|pressure"
+    r"|instructions?|asks?|notes?|recommendations?|preferences?|attempts?|wish|direction)(?![A-Za-z0-9])",
+    _I,
+)
+_REFUSED_TO_VERB_RE = re.compile(
+    r"(?<![A-Za-z0-9])to (?:[a-z]+ )?(?:write|present|treat|record|report|classify|book|show|label|grade"
+    r"|rate|band|put|mark|log|file|downgrade|upgrade|move|reclassify|keep|carry|state|describe|call|class"
+    r"|frame|position|disclose|sign)(?![A-Za-z0-9])",
+    _I,
+)
+_REFUSED_PREP_END_RE = re.compile(r"(?<![A-Za-z0-9])(?:as|at|into|in|to|under)(?: (?:an?|the))? $", _I)
+_REFUSED_FIRST_VERB_RE = re.compile(
+    r"(?<![A-Za-z0-9'\u2019])(?:(?:is|was|are|were|has|have|had|ca|could|should|wo|would|does|did|do)n['\u2019]t"
+    r"|cannot|is|was|are|were|has|have|had|can|could|should|would|will|does|did|do)(?![A-Za-z0-9'\u2019])",
+    _I,
+)
+_REFUSED_WORDS = (
+    r"(?:rejected|declined|refused|overridden|overruled|denied|dismissed|unsupported|unjustified|inappropriate"
+    r"|incorrect|invalid)(?![A-Za-z0-9])"
+)
+_REFUSED_NEG_TAIL_RE = re.compile(rf" (?:not|never)(?![A-Za-z0-9])| (?:been |being )?{_REFUSED_WORDS}", _I)
+# "has not been rejected", "cannot be denied": a negated refusal accepts the request.
+_REFUSED_DOUBLE_RE = re.compile(rf"^ (?:be |been |being )?{_REFUSED_WORDS}", _I)
+
+
+def _remainder_stated(toks: list[_Tok], start: int) -> bool:
+    """True when toks[start:] holds an amount bound to an unexplained cue: the cue right
+    after the amount over linking tokens ("$0.00 unexplained"), or right before it over
+    linking tokens with no cue following the amount ("the unexplained remainder is
+    $0.00"; "the unexplained balance being the $25,000.00 surplus" does not count, the
+    amount after it is the surplus). Aggregate step, second narrowing (R4.md)."""
+    for k in range(start, len(toks)):
+        if toks[k].kind != "amount":
+            continue
+        m = k + 1
+        while m < len(toks) and _is_link(toks[m]):
+            m += 1
+        if m < len(toks) and toks[m].kind == "cue" and toks[m].role == "unexplained":
+            return True
+        p = k - 1
+        while p >= start and _is_link(toks[p]):
+            p -= 1
+        if (p >= start and toks[p].kind == "cue" and toks[p].role == "unexplained"
+                and not (m < len(toks) and toks[m].kind == "cue")):
+            return True
+    return False
 
 
 def _resolve_role(clause: _Clause, i: int, ctx: "_Context") -> dict:
@@ -602,6 +749,83 @@ def _resolve_role(clause: _Clause, i: int, ctx: "_Context") -> dict:
     ):
         return {"role": "unresolved", "resolution": "parallel_amounts"}
 
+    # "Together they total $X", "the three items net to $X" (fix round 2, pattern B):
+    # an aggregate word right before the amount, over linking words only, states the
+    # explained total when its subject (back to the nearest comma, bracket, colon or
+    # amount) names no reference, no variance, balance, unexplained or threshold cue
+    # and no remainder word, and names the items (_ITEM_SUBJECT_WORDS: "customer
+    # balances total $X" is left to the cue rules). An aggregate with no subject of
+    # its own is an apposition
+    # ("WD-1 and WD-2, totaling $X"): it is an item sum, left to the item rules,
+    # whenever a reference precedes it in the clause. A role
+    # cue right after the amount (other than "of the surplus", a part of the
+    # variance) leaves the amount to the cue rules.
+    k = i - 1
+    while k >= max(0, i - 3) and _is_link(toks[k]) and not (
+        toks[k].kind == "word" and _AGGREGATE_WORD_RE.fullmatch(toks[k].text)
+    ):
+        k -= 1
+    if k >= max(0, i - 3) and toks[k].kind == "word" and _AGGREGATE_WORD_RE.fullmatch(toks[k].text):
+        agg = k
+        subject_ok = True
+        subject_words = 0
+        names_items = False
+        for k in range(agg - 1, -1, -1):
+            t = toks[k]
+            if t.kind == "amount" or (t.kind == "punct" and t.text in _SUBJECT_STOPS):
+                break
+            subject_words += 1
+            names_items = names_items or t.low in _ITEM_SUBJECT_WORDS
+            if t.kind == "ref" or (t.kind == "cue" and t.role in _SUBJECT_BLOCKING_ROLES) or t.low in _REMAINDER_WORDS:
+                subject_ok = False
+                break
+        if subject_words == 0 and any(t.kind == "ref" for t in toks[:agg]):
+            subject_ok = False
+        if subject_words > 0 and not names_items:
+            subject_ok = False
+        j = i + 1
+        while j < len(toks) and _is_link(toks[j]):
+            j += 1
+        partitive_after = False
+        if j < len(toks) and toks[j].kind == "cue" and toks[j].role not in ("neutral", "explained"):
+            partitive_after = toks[j].role == "variance" and any(toks[m].low == "of" for m in range(i + 1, j))
+            subject_ok = subject_ok and partitive_after
+        if subject_ok:
+            out = {"role": "explained", "resolution": "aggregate_total", "cue": toks[agg].text}
+            # Aggregate step (2026-11-06, FIX-ROUND-2-AGGREGATE-BRIEF): "Together they
+            # total $X, all of it unexplained" labels the explained total as the
+            # unexplained amount. A role cue later in the clause (past the linking run,
+            # so past a comma or a verb) that is neither neutral nor explained, with no
+            # amount of its own before it, contradicts the binding: the figure keeps
+            # this resolution and _check_amount routes it instead of passing it. The
+            # partitive variance cue right after the amount ("$X of the surplus") is a
+            # part-of statement, not a contradiction, and is skipped; an amount before
+            # the cue takes the cue ("net to $X, leaving $0.00 unexplained"), and a cue
+            # with an amount of its own right after it over linking tokens labels that
+            # amount ("and the unexplained remainder is $40,000").
+            for k in range(j + 1 if partitive_after else j, len(toks)):
+                t = toks[k]
+                if t.kind == "amount":
+                    break
+                if t.kind == "cue" and t.role not in ("neutral", "explained"):
+                    m = k + 1
+                    while m < len(toks) and _is_link(toks[m]):
+                        m += 1
+                    if not (m < len(toks) and toks[m].kind == "amount"):
+                        out.update(route_reason="aggregate_total_role_cue_follows", cue_after=t.text)
+                    break
+            # Aggregate step, second narrowing (2026-11-06, R4.md): an aggregate word and
+            # an item subject alone never pass the figure. The binding passes only when
+            # the same clause also states the remainder as an amount bound to an
+            # unexplained cue ("leaving $0.00 unexplained", "the unexplained remainder is
+            # $0.00"), which the cue rules then check against the truth; otherwise the
+            # figure routes, so a contradiction placed before the aggregate word, in the
+            # next clause, behind a second figure or in a word outside the cue list is
+            # read by a person rather than passed.
+            if "route_reason" not in out and not _remainder_stated(toks, i + 1):
+                out.update(route_reason="aggregate_total_unconfirmed")
+            return out
+
     # "$X of the shortfall" is a part of the variance, not the variance: that cue
     # neither binds the amount nor separates it from the next cue
     partitive: set[int] = set()
@@ -630,10 +854,15 @@ def _resolve_role(clause: _Clause, i: int, ctx: "_Context") -> dict:
             if k >= 1 and toks[k].low == "of" and toks[k - 1].kind == "cue" and toks[k - 1].role in ("explained", "unexplained"):
                 complement.add(j)
     w = V.WINDOWS["cue_search_tokens"]
+    # a cue or reference after the next amount belongs to that amount ("they total $X,
+    # leaving $0.00 unexplained": the cue binds $0.00, not $X; fix round 2, pattern B)
+    next_amount = next((j for j in range(i + 1, len(toks)) if toks[j].kind == "amount"), len(toks))
     cands = []
     for j in range(max(0, i - w), min(len(toks), i + w + 1)):
         t = toks[j]
         if j == i or j == skip or j in complement or not (t.kind == "ref" or (t.kind == "cue" and t.role != "neutral")):
+            continue
+        if j > next_amount:
             continue
         role = "item" if t.kind == "ref" else t.role
         cands.append((clause.distance(i, j, skip), "before" if j < i else "after", role, t, j))
@@ -721,12 +950,21 @@ def _aside_subject(toks: list[_Tok], i: int, c: int, role: str) -> tuple[str, _T
     and a punctuation aside closes between the cue and the amount. The subject is the
     nearest role cue or reference before the aside, with no amount between. None when
     there is no aside, no subject, or the subject has the cue's own role."""
+    def mark(k: int, texts) -> bool:
+        # a hyphen joined to the tokens on both sides ("in-flight", "cold-2") is part
+        # of a word, never an aside dash (fix round 2, pattern C)
+        t = toks[k]
+        if t.kind != "punct" or t.text not in texts:
+            return False
+        return not (t.text == "-" and 0 < k < len(toks) - 1
+                    and toks[k - 1].end == t.start and toks[k + 1].start == t.end)
+
     opener = None
     for k in range(c - 1, -1, -1):
         t = toks[k]
         if t.kind == "amount" or t.kind == "ref" or (t.kind == "cue" and t.role != "neutral"):
             return None
-        if (t.kind == "punct" and t.text in _ASIDE_CLOSERS) or (t.kind == "word" and t.low in _CONTRAST_WORDS):
+        if mark(k, _ASIDE_CLOSERS) or (t.kind == "word" and t.low in _CONTRAST_WORDS):
             opener = k
             break
     if opener is None:
@@ -734,7 +972,7 @@ def _aside_subject(toks: list[_Tok], i: int, c: int, role: str) -> tuple[str, _T
     o = toks[opener]
     between = toks[c + 1:i]
     if o.kind == "punct":
-        if not any(t.kind == "punct" and t.text == _ASIDE_CLOSERS[o.text] for t in between):
+        if not any(mark(k, (_ASIDE_CLOSERS[o.text],)) for k in range(c + 1, i)):
             return None
     elif not any(t.low in _PARENTHETICAL_VERBS for t in between):
         return None
@@ -842,6 +1080,11 @@ def _check_amount(toks: list[_Tok], i: int, binding: dict, ctx: _Context) -> dic
         else:
             rec.update(verdict="FM-001", reason="amount_role_unresolved_and_ungrounded", review=True)
 
+    if rec["verdict"] == "ok" and binding.get("route_reason"):
+        # aggregate step (2026-11-06): the figure is the explained total but a role cue
+        # later in its clause labels it otherwise (_resolve_role, aggregate_total), so it
+        # routes rather than passes; a figure that is wrong keeps its FM-001 above
+        rec.update(verdict="review", reason=binding["route_reason"])
     if rec["verdict"] == "ok" and signed is not None and (
         (amt.data["negative"] and signed > 0) or (amt.data["positive"] and signed < 0)
     ):
@@ -849,6 +1092,12 @@ def _check_amount(toks: list[_Tok], i: int, binding: dict, ctx: _Context) -> dic
     if rec["verdict"] == "FM-001":
         rebound = _competing_role_fit(toks, i, binding, ctx)
         if rebound is not None:
+            if rebound["verdict"] == "ok":
+                # an item-effect reading that agrees (fix round 2): the role's own
+                # mismatch reason and review flag no longer apply
+                rec.pop("reason", None)
+                rec.pop("review", None)
+                rec["rebound_from"] = role
             rec.update(rebound)
     if rec["verdict"] == "FM-001" and _hedged_agreement(toks, i, role, rec, ctx):
         rec.pop("review", None)
@@ -865,8 +1114,27 @@ def _competing_role_fit(toks: list[_Tok], i: int, binding: dict, ctx: _Context) 
     against ledger liabilities of $Y" binds $X to the ledger cue after it. The
     amount routes to review when it equals the quantity of another role cue in the
     clause, or, for a balance binding, the variance ("ahead of ledger liabilities by
-    $V"). Distance-0 bindings keep FM-001, so a swapped balance is still caught."""
+    $V"). Distance-0 bindings keep FM-001, so a swapped balance is still caught.
+
+    Fix round 2 (pattern A): an amount governed by an item-effect verb ("which adds
+    $X to the surplus", "lowers reserves against the ledger by $X", "offsets it by
+    $X") is first checked as the effect of the items named in its clause; see
+    _item_effect_fit. An aggregate total ("together they total $X") that is not the
+    explained total but equals the sum of some cited items routes to review."""
     role = binding.get("role")
+    if role in _COMPETING_ROLES and binding.get("resolution") not in ("label", "threshold_pair"):
+        effect = _item_effect_fit(toks, i, ctx)
+        if effect is not None:
+            return effect
+    if role == "explained" and binding.get("resolution") == "aggregate_total":
+        if _NET_WORD_RE.fullmatch(str(binding.get("cue", ""))):
+            return None  # "the items net to $X" states a signed net, never a gross part-sum
+        cited = [abs(it.amount_usd) for it in ctx.cited.values()][:12]
+        value = abs(toks[i].data["value"])
+        for mask in range(1, 1 << len(cited)):
+            if _near(value, sum(a for b, a in enumerate(cited) if mask >> b & 1)):
+                return {"verdict": "review", "reason": "aggregate_equals_item_subset_sum"}
+        return None
     if (role not in ("ledger", "onchain", "explained", "unexplained") or binding.get("distance", 0) < 1
             or not str(binding.get("resolution", "")).startswith("nearest_cue")):
         return None
@@ -883,6 +1151,94 @@ def _competing_role_fit(toks: list[_Tok], i: int, binding: dict, ctx: _Context) 
         return {"verdict": "review", "reason": "role_amount_fits_competing_cue", "fits": fits}
     if role in _BALANCE_ROLES and _near(value, ctx.truth.variance_usd):
         return {"verdict": "review", "reason": "balance_amount_equals_variance", "fits": ["variance"]}
+    return None
+
+
+def _item_effect_fit(toks: list[_Tok], i: int, ctx: _Context) -> dict | None:
+    """The amount at toks[i] read as the effect of named items (fix round 2, pattern A).
+
+    It applies when an effect verb (_EFFECT_VERB_RE) within _EFFECT_VERB_SPAN tokens
+    before the amount governs it, with no amount, reference, comma or "up" between,
+    and "by", "(" or the verb itself right before the amount. The subject is the
+    nearest reference before the verb, or the only reference in the clause:
+    - the subject is cited, eligible and its amount equals the figure: review,
+      item_effect_unverified (the narrowing patch of 2026-11-06 made this a route:
+      the match is unsigned and checks neither direction nor side);
+    - two or more references, all cited and eligible, sum to the figure: review,
+      item_effect_sum_unverified when the clause also states each item's own amount
+      or has an aggregate word (the unsigned sum ignores netting), and
+      item_amount_equals_clause_sum otherwise (the sum may be standing in for one
+      item's amount; OpenAI R1);
+    - no reference in the clause and the figure equals one cited eligible item's
+      amount: review (the item is described, not named).
+    Without an effect verb, a bracketed amount after a reference it describes
+    ("DP-1 not yet credited in the ledger (+$X)") that equals that cited item's amount
+    routes to review. Anything else returns None and the FM-001 stands, so a wrong
+    figure, or a right figure for a different or uncited item, still fails."""
+    amt = toks[i]
+    value = amt.data["value"]
+    refs = [k for k, t in enumerate(toks) if t.kind == "ref"]
+
+    def cited_item(k: int):
+        it = ctx.truth.item_by_reference(toks[k].text)
+        return it if it is not None and it.reference in ctx.cited else None
+
+    verb = None
+    for k in range(i - 1, max(-1, i - 1 - _EFFECT_VERB_SPAN), -1):
+        t = toks[k]
+        if t.kind in ("amount", "ref") or t.low in _EFFECT_STOPS:
+            break
+        if t.kind in ("word", "cue") and _EFFECT_VERB_RE.fullmatch(t.text):
+            if k == i - 1 or toks[i - 1].low in _EFFECT_LEADS:
+                verb = k
+            break
+    if verb is not None:
+        before = [k for k in refs if k < verb]
+        subject = before[-1] if before else (refs[0] if len(refs) == 1 else None)
+        if subject is not None:
+            it = cited_item(subject)
+            if it is not None and _near(value, it.amount_usd):
+                effect = item_effect_usd(it)
+                if (amt.data["negative"] and effect > 0) or (amt.data["positive"] and effect < 0):
+                    return {"verdict": "review", "reason": "amount_sign_disagrees", "reference": it.reference}
+                # narrowing patch (2026-11-06): an unsigned match on the item's amount checks
+                # neither the verb's direction nor the balance named, so the figure routes
+                return {"verdict": "review", "reason": "item_effect_unverified", "reference": it.reference,
+                        "expected": abs(it.amount_usd)}
+        items = []
+        for k in refs:
+            it = cited_item(k)
+            if it is None:
+                items = []
+                break
+            if all(it.reference != n.reference for n in items):
+                items.append(it)
+        if len(items) > 1:
+            total = round(sum(abs(n.amount_usd) for n in items), 2)
+            if _near(value, total):
+                stated = [t.data["value"] for t in toks if t.kind == "amount"]
+                each = all(any(_near(v, n.amount_usd) for v in stated) for n in items)
+                clause_text = ctx.text[toks[0].start:toks[-1].end]
+                if each or _AGGREGATE_CUE_RE.search(clause_text):
+                    # narrowing patch (2026-11-06): the unsigned sum ignores netting, so it routes
+                    return {"verdict": "review", "reason": "item_effect_sum_unverified", "expected": total,
+                            "references": [n.reference for n in items]}
+                return {"verdict": "review", "reason": "item_amount_equals_clause_sum", "expected": total}
+        if not refs:
+            fits = [ref for ref, it in ctx.cited.items() if _near(value, it.amount_usd)]
+            if fits:
+                return {"verdict": "review", "reason": "item_effect_unnamed_item", "fits": fits}
+        return None
+    if amt.data.get("parenthesized"):
+        for k in range(i - 1, max(-1, i - 1 - _PAREN_REF_SPAN), -1):
+            t = toks[k]
+            if t.kind == "amount":
+                return None
+            if t.kind == "ref":
+                it = cited_item(k)
+                if it is not None and _near(value, it.amount_usd):
+                    return {"verdict": "review", "reason": "parenthetical_item_amount", "reference": it.reference}
+                return None
     return None
 
 
@@ -985,6 +1341,99 @@ def _check_item_amount(toks: list[_Tok], i: int, ref_tok: _Tok, ctx: _Context) -
 
 # --- Statements -------------------------------------------------------------------------
 
+def exclusion_spans(text: str) -> list[tuple[int, int]]:
+    """Contract C1 (fix round 2): character spans of the clauses in `text` that state
+    an item or a value is excluded, not relied on, not eligible, ineligible,
+    disregarded, set aside, out of scope, or of another asset. A reference, an asset
+    ticker or an amount inside a span is an exclusion mention, not a claim about the
+    case.
+
+    A sentence is cut into clauses at a connective ("so", "because", ", which", ", and"
+    before a new verb, a colon); a clause with no verb joins its neighbour. A span is a
+    clause holding an exclusion phrase that is not itself negated ("is not excluded").
+    It reaches back over the clauses before it when it opens with a "so neither" style
+    back reference, back over one clause when it is a ", which" clause, and forward
+    over a reason clause ("because it is dated after the
+    cutoff"). A clause that names the variance, a balance, the band or an explained,
+    unexplained or total amount is never inside a span. Works on raw and masked text
+    alike (masking keeps offsets)."""
+    out: list[tuple[int, int]] = []
+    starts = [0]
+    for m in _SENTENCE_END_RE.finditer(text):
+        pos = m.start()
+        if text[pos] == ".":
+            prev = re.search(r"([A-Za-z.]+)$", text[:pos])
+            if prev and prev.group(1).lower() in _ABBREV:
+                continue
+        starts.append(pos + 1)
+    for s0, s1 in zip(starts, starts[1:] + [len(text)]):
+        sent = text[s0:s1]
+        frags: list[list[int]] = []
+        prev_end = 0
+        for m in _EXCL_SPLIT_RE.finditer(sent):
+            if m.start() > prev_end:
+                frags.append([prev_end, m.start()])
+            prev_end = m.end()
+        if prev_end < len(sent):
+            frags.append([prev_end, len(sent)])
+        merged: list[list[int]] = []
+        pending: list[int] | None = None
+        for f in frags:
+            if pending is not None:
+                f = [pending[0], f[1]]
+                pending = None
+            if not _EXCL_VERB_RE.search(sent[f[0]:f[1]]):
+                if merged:
+                    merged[-1][1] = f[1]
+                else:
+                    pending = f
+                continue
+            merged.append(f)
+        if pending is not None:
+            merged.append(pending)
+
+        def core(f: list[int]) -> bool:
+            return bool(_EXCL_CORE_RE.search(sent[f[0]:f[1]]))
+
+        def excludes(f: list[int]) -> bool:
+            body = sent[f[0]:f[1]]
+            if _EXCL_OTHER_ASSET_RE.search(body):
+                return True
+            return any(not _EXCL_PREDICATE_NEGATION_RE.search(body[:m.start()])
+                       for m in _EXCL_PREDICATE_RE.finditer(body))
+
+        for k, f in enumerate(merged):
+            if core(f) or not excludes(f):
+                continue
+            lo, hi = f
+            head = sent[f[0]:f[1]].lstrip()
+            if _EXCL_BACKREF_RE.match(head):
+                j = k - 1
+                while j >= 0 and not core(merged[j]):
+                    lo = merged[j][0]
+                    j -= 1
+            elif _EXCL_WHICH_RE.match(head) and k > 0 and not core(merged[k - 1]):
+                lo = merged[k - 1][0]  # ", which is out of scope" describes the clause before it
+            if k + 1 < len(merged):
+                nxt = merged[k + 1]
+                if _EXCL_REASON_RE.match(sent[nxt[0]:nxt[1]].lstrip()) and not core(nxt):
+                    hi = nxt[1]
+            while lo < hi and sent[lo] in " \t\n":
+                lo += 1
+            while hi > lo and sent[hi - 1] in " \t\n.,;:!?":
+                hi -= 1
+            if hi > lo:
+                out.append((s0 + lo, s0 + hi))
+    out.sort()
+    joined: list[tuple[int, int]] = []
+    for a, b in out:
+        if joined and a <= joined[-1][1]:
+            joined[-1] = (joined[-1][0], max(b, joined[-1][1]))
+        else:
+            joined.append((a, b))
+    return joined
+
+
 def _negated(clause_text: str, rel_start: int, rel_end: int) -> bool:
     """A negation word in the few words before the statement (not across a comma),
     or a negating phrase right after it."""
@@ -1071,11 +1520,40 @@ def _band_statements(clause: str, offset: int, amounts_at: dict[int, float]) -> 
     def free(s: int, e: int) -> bool:
         return all(e <= a or s >= b for a, b in consumed)
 
+    def refused(m_start: int, m_end: int) -> bool:
+        """Pattern D (fix round 2): the band is the object of a request ("the request
+        to write this up as M1") whose own first verb is negated ("is not supported",
+        "was rejected"). A request the clause accepts is not refused."""
+        before = re.split(r"[,;:]", clause[:m_start])[-1]
+        req = None
+        for r in _REFUSED_REQUEST_RE.finditer(before):
+            req = r
+        if req is None or not _REFUSED_TO_VERB_RE.search(before[req.end():]):
+            return False
+        if not _REFUSED_PREP_END_RE.search(before):
+            return False
+        after = re.split(r"[,;:]", clause[m_end:], maxsplit=1)[0]
+        v = _REFUSED_FIRST_VERB_RE.search(after)
+        if v is None:
+            return False
+        word, tail = v.group(0).lower(), after[v.end():]
+        if word == "cannot" or word.endswith(("n't", "n\u2019t")):
+            return not _REFUSED_DOUBLE_RE.match(tail)
+        m = _REFUSED_NEG_TAIL_RE.match(tail)
+        if m is None:
+            return False
+        negator = m.group(0).strip().lower() in ("not", "never")
+        return not (negator and _REFUSED_DOUBLE_RE.match(tail[m.end():]))
+
     def emit(m_start: int, m_end: int, **rec) -> None:
         consumed.append((m_start, m_end))
+        negated = _negated(clause, m_start, m_end)
+        if not negated and refused(m_start, m_end):
+            negated = True
+            rec["refused_request"] = True
         out.append({
             "kind": "band", "text": clause[m_start:m_end], "start": offset + m_start,
-            "end": offset + m_end, "negated": _negated(clause, m_start, m_end), **rec,
+            "end": offset + m_end, "negated": negated, **rec,
         })
 
     def table(rows: list, m: re.Match) -> dict:
@@ -1161,11 +1639,26 @@ def _band_statements(clause: str, offset: int, amounts_at: dict[int, float]) -> 
 def _asset_statements(clause: str, offset: int) -> list[dict]:
     out = []
     consumed: list[tuple[int, int]] = []
+    spans = exclusion_spans(clause)
+
+    def mark(rec: dict, s: int, e: int) -> dict:
+        """Pattern E (fix round 2): an asset that names an item inside an exclusion
+        clause ("DP-2510-935085 is a USDC deposit, so neither is relied on") is an
+        exclusion mention, not the case's asset. It is marked negated, so it routes to
+        review and is never counted as the asset the narrative states."""
+        if any(a <= s and e <= b for a, b in spans) and (
+                _EXCL_ITEM_AFTER_RE.match(clause[e:]) or _EXCL_ITEM_BEFORE_RE.search(clause[:s])):
+            rec["negated"] = True
+            rec["exclusion"] = True
+        return rec
+
     for m in _ASSET_NAME_RE.finditer(clause):
         kind, name = _ASSET_NAME_ROWS[_index(m)][0].split(":", 1)
         consumed.append(m.span())
         rec = {"text": m.group(0), "start": offset + m.start(), "end": offset + m.end(),
                "negated": _negated(clause, m.start(), m.end())}
+        if kind != "chain":
+            mark(rec, m.start(), m.end())
         if kind == "chain":
             out.append({"kind": "chain", "chain": name, **rec})
         elif kind == "other_chain":
@@ -1176,9 +1669,9 @@ def _asset_statements(clause: str, offset: int) -> list[dict]:
         for m in rx.finditer(clause):
             if all(m.end() <= a or m.start() >= b for a, b in consumed):
                 consumed.append(m.span())
-                out.append({"kind": "asset", "asset": m.group(0).upper(), "form": "ticker", "text": m.group(0),
-                            "start": offset + m.start(), "end": offset + m.end(),
-                            "negated": _negated(clause, m.start(), m.end())})
+                out.append(mark({"kind": "asset", "asset": m.group(0).upper(), "form": "ticker",
+                                 "text": m.group(0), "start": offset + m.start(), "end": offset + m.end(),
+                                 "negated": _negated(clause, m.start(), m.end())}, m.start(), m.end()))
     return out
 
 
