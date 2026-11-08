@@ -81,38 +81,41 @@ def test_dev_truth_matches_the_devset_cases():
 
 # --- Pattern A: item effects ------------------------------------------------------------
 # (case, sentence, amount text, expected verdict, expected resolution or reason)
+# fix round 3 (2026-11-07): the rows marked "ok" with item_effect_proven_sum or
+# item_effect_proven_item were "review" in round 2; lane N1's P2 and P3 pass-proofs
+# (direction lexicon, cited eligible items, truth effect sign) now prove them.
 A_FIXED = [
     # real, dev-hc-013-ETH-M2 epoch 1: two named items, "which adds $X to the surplus"
     ("dev-hc-013-ETH-M2",
      "Hot 1 withdrawals WD-2510-571069 ($11,295.51) and WD-2510-818869 ($17,454.45) were booked in the "
      "ledger before cutoff but reached the chain only on 11/01, which adds $28,749.96 to the surplus.",
-     "$28,749.96", "review", "item_effect_sum_unverified"),
+     "$28,749.96", "ok", "item_effect_proven_sum"),
     # real, dev-hc-013-ETH-M2 epoch 2: "which raises the surplus by $X"
     ("dev-hc-013-ETH-M2",
      "Two Hot 1 customer withdrawals were booked in the ledger before cutoff but reached the chain only "
      "after it (WD-2510-571069 at $11,295.51 and WD-2510-818869 at $17,454.45), which raises the surplus "
      "by $28,749.96.",
-     "$28,749.96", "review", "item_effect_sum_unverified"),
+     "$28,749.96", "ok", "item_effect_proven_sum"),
     # paraphrase
     ("dev-hc-013-ETH-M2",
      "Withdrawals WD-2510-571069 ($11,295.51) and WD-2510-818869 ($17,454.45), ledger-booked before "
      "cutoff and on chain after it, jointly increase the surplus by $28,749.96.",
-     "$28,749.96", "review", "item_effect_sum_unverified"),
+     "$28,749.96", "ok", "item_effect_proven_sum"),
     # real, dev-std-007-ETH-M3 epoch 3: the items follow a colon
     ("dev-std-007-ETH-M3",
      "Open hot-1 items at cutoff increase the surplus by USD 2,415,015.48: chain-only deposits "
      "DP-2510-146805 (USD 793,139.26) and DP-2510-734749 (USD 675,392.16), and ledger-only withdrawal "
      "WD-2510-333749 (USD 946,484.06).",
-     "USD 2,415,015.48", "review", "item_effect_sum_unverified"),
+     "USD 2,415,015.48", "ok", "item_effect_proven_sum"),
     # real, dev-std-005-ETH-M2 epoch 1: one named item, bound to the reserves cue
     ("dev-std-005-ETH-M2",
      "DP-2511-648193 (Hot 2) was credited in the ledger at 23:52 on 11/30 but reached the chain at 00:10 "
      "on 12/1, which lowers reserves against the ledger by USD 256,238.97.",
-     "USD 256,238.97", "review", "item_effect_unverified"),
+     "USD 256,238.97", "ok", "item_effect_proven_item"),
     ("dev-std-005-ETH-M2",
      "DP-2511-893641 (Hot 1) was on chain at 23:47 on 11/30 but posted to the ledger at 00:00 on 12/1, "
      "which raises reserves against the ledger by USD 52,300.36.",
-     "USD 52,300.36", "review", "item_effect_unverified"),
+     "USD 52,300.36", "ok", "item_effect_proven_item"),
     # real, dev-std-005-ETH-M2 epoch 4: "which offsets that by", bound to the explained cue
     ("dev-std-005-ETH-M2",
      "DP-2511-893641 (Hot 1) was on chain at 23:47 on 11/30 but posted in the ledger at 00:00 on 12/1, "
@@ -122,7 +125,7 @@ A_FIXED = [
     ("dev-std-005-ETH-M2",
      "DP-2511-648193, ledger-credited on 11/30 and settled on chain on 12/1, reduces on-chain reserves "
      "relative to the ledger by USD 256,238.97.",
-     "USD 256,238.97", "review", "item_effect_unverified"),
+     "USD 256,238.97", "ok", "item_effect_proven_item"),
     # real, dev-std-012-SOL-M3 epoch 4: "offsets it by $X"
     ("dev-std-012-SOL-M3",
      "DP-2512-052149 is a ledger-only deposit that offsets it by $91,877.40, so the net explained amount "
@@ -133,7 +136,7 @@ A_FIXED = [
      "Two eligible hot-1 items were open at cutoff: DP-2512-493757 was on chain only and adds $434,042.88 "
      "to the surplus, while DP-2512-052149 was ledger only (credited 23:48 on Dec 31, on chain after "
      "cutoff) and offsets it by $91,877.40.",
-     "$91,877.40", "review", "item_effect_unverified"),
+     "$91,877.40", "ok", "item_effect_proven_item"),
     # paraphrase
     ("dev-std-012-SOL-M3",
      "The ledger-only deposit DP-2512-052149 offsets that by $91,877.40.",
@@ -301,12 +304,16 @@ def test_item_effect_review_reaches_the_scorer_review_reasons():
     # narrative check's review_reasons become the correctness anchor's review route
     from icfr_agent_evals.scoring import check_correctness
 
+    # fix round 3 (2026-11-07): the round-2 sentence here ("which lowers reserves
+    # against the ledger by USD 256,238.97") is now proven ok by lane N1's P2 rule, so
+    # the route path is checked with a correct sentence that still routes ("offsets
+    # that by", an anaphor the P2 proof does not resolve without a previous sentence).
     case_id = "dev-std-005-ETH-M2"
-    sentence = ("DP-2511-648193 (Hot 2) was credited in the ledger at 23:52 on 11/30 but reached the chain at "
-                "00:10 on 12/1, which lowers reserves against the ledger by USD 256,238.97.")
+    sentence = ("DP-2511-893641 (Hot 1) was on chain at 23:47 on 11/30 but posted in the ledger at 00:00 on "
+                "12/1, which offsets that by USD 52,300.36.")
     result = check_correctness(answer(case_id, sentence), TRUTH[case_id])
     assert result.failure_modes == (), result.review_reasons
-    assert "item_effect_unverified: USD 256,238.97" in result.review_reasons, result.review_reasons
+    assert "item_effect_unverified: USD 52,300.36" in result.review_reasons, result.review_reasons
 
 
 # R1's correct overfit probes that involve an item effect (P7, P9) and the aggregate
