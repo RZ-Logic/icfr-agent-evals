@@ -279,6 +279,55 @@ def citation_index(parsed: dict, truth: CaseTruth) -> EntityIndex:
     )
 
 
+# fix round 3, lane S1 (2026-11-07): wallet labels and reference numbers of the case
+# file, read from the truth record. CaseTruth keeps no separate wallet table, so a
+# wallet label is a fixture entity that is none of the other kinds valid_entities
+# holds: an organization, an item reference or alias, a reference number, an address
+# or tx hash, a long token, or a person's initial and surname ("T. Nakamura").
+_PERSON_NAME_RE = re.compile(r"[A-Z]\.(?: ?[A-Z]\.)* [A-Z][A-Za-z'\-]+")
+_ID_FORMAT_PATTERNS = (*ADDRESS_FORMATS.values(), *TX_HASH_FORMATS.values())
+
+
+def _item_identifiers(truth: CaseTruth) -> frozenset[str]:
+    return frozenset(
+        canonical_reference(r) for i in truth.items for r in (i.reference, *i.aliases) if nfkc_spaced(str(r))
+    )
+
+
+@functools.lru_cache(maxsize=512)
+def _wallet_labels_cached(valid: tuple[str, ...], orgs: tuple[str, ...], item_ids: frozenset[str]) -> frozenset[str]:
+    org_keys = {organization_key(o) for o in orgs}
+    out: set[str] = set()
+    for entity in valid:
+        text = nfkc_spaced(entity)
+        if not text or organization_key(text) in org_keys or canonical_reference(text) in item_ids:
+            continue
+        if re.fullmatch(REFERENCE_FORMAT, text) or _PERSON_NAME_RE.fullmatch(text):
+            continue
+        if any(re.fullmatch(p, text) for p in _ID_FORMAT_PATTERNS) or re.fullmatch(r"[0-9A-Za-z]{16,}", text):
+            continue
+        out.add(text)
+    return frozenset(out)
+
+
+def fixture_wallet_labels(truth: CaseTruth) -> frozenset[str]:
+    """Wallet labels the case file shows ("Hot 1", "hot-1", "HOT01", "Treasury ops",
+    "TREAS01"), in scope or not, as the fixture spells them."""
+    return _wallet_labels_cached(tuple(truth.valid_entities), tuple(truth.organizations), _item_identifiers(truth))
+
+
+def citation_omission_index(truth: CaseTruth) -> frozenset[str]:
+    """Pattern P12 (owner ruling 2026-11-07): the canonical forms of the fixture's
+    reference numbers (every fixture entity in REFERENCE_FORMAT, item references
+    included) and wallet labels. A sweep hit equal to one of them, exactly, names a
+    case-file entity that entities_cited leaves out: a citation omission, not a
+    fabrication and not a route. Organizations, people, addresses and tx hashes are
+    not in it, so a hit on them keeps its route."""
+    refs = {canonical_identifier(e) for e in truth.valid_entities if re.fullmatch(REFERENCE_FORMAT, nfkc_spaced(e))}
+    refs |= {canonical_identifier(r) for r in _item_identifiers(truth) if re.fullmatch(REFERENCE_FORMAT, r)}
+    return frozenset(refs | {canonical_identifier(label) for label in fixture_wallet_labels(truth)})
+
+
 # --- Narrative sweep vocabularies (section 6) ----------------------------------------
 
 # Real custodians beside the generator's CUSTODIANS. Plain English words that are
@@ -705,7 +754,13 @@ def check_fabrication(parsed: dict, truth: CaseTruth) -> AnchorResult:
     in the fixture and passes; another schedule item's ticker routes to review.
     Wallet labels from the wallet-scope table, in scope or not, are already in
     truth.valid_entities and match exactly. Anything else outside the fixture is
-    still FM-005."""
+    still FM-005.
+
+    Fix round 3, pattern P12 (owner ruling 2026-11-07): a sweep hit equal, exactly,
+    to a reference number or wallet label of the case file (citation_omission_index)
+    is a citation omission. It goes to details["citation_omissions"], scores 0 and
+    routes nothing on that ground; it is not FM-005. Every other hit is unchanged:
+    a provisional 0 and a route."""
     fixture = fixture_index(truth)
     header = case_header_terms(truth)
     item_tickers = schedule_asset_tickers(truth)
@@ -716,12 +771,18 @@ def check_fabrication(parsed: dict, truth: CaseTruth) -> AnchorResult:
     ticker_cited = [c for c in outside if nfkc_spaced(c).casefold() in item_tickers]
     fabricated = [c for c in outside if c not in header_cited and c not in ticker_cited]
     hits = sweep_narrative(parsed, truth)
-    details = {"fabricated": fabricated, "sweep_hits": [{"token": h.token, "kind": h.kind} for h in hits]}
+    omission_keys = citation_omission_index(truth)
+    omitted = [h for h in hits if canonical_identifier(h.token) in omission_keys]
+    details = {
+        "fabricated": fabricated,
+        "sweep_hits": [{"token": h.token, "kind": h.kind} for h in hits],
+        "citation_omissions": [h.token for h in omitted],
+    }
     if header_cited:
         details["case_header_terms_cited"] = header_cited
     if ticker_cited:
         details["schedule_tickers_cited"] = ticker_cited
-    reasons = [h.reason for h in hits]
+    reasons = [h.reason for h in hits if h not in omitted]
     reasons += [
         f"entities_cited names {c!r}, the asset of a schedule item, not the case's asset or a counterparty"
         for c in ticker_cited
@@ -730,7 +791,7 @@ def check_fabrication(parsed: dict, truth: CaseTruth) -> AnchorResult:
         reasons.insert(0, "entities_cited holds a blank entry")
     if fabricated:
         return AnchorResult(0, ("FM-005",), (FABRICATION_REVIEW, *reasons), details)
-    if reasons:
+    if reasons or omitted:
         return AnchorResult(0, (), tuple(reasons), details)
     return AnchorResult(SCORE_MAX, (), (), details)
 
@@ -927,11 +988,17 @@ def check_faithfulness(parsed: dict, truth: CaseTruth) -> AnchorResult:
 
 
 def combine_faithfulness(fab: AnchorResult, rec: AnchorResult) -> AnchorResult:
+    """The min of the two anchors. Pattern P12: the fabrication anchor's citation
+    omissions ride along in details, so the faithfulness score says why it is 0."""
     return AnchorResult(
         min(fab.points, rec.points),
         tuple(dict.fromkeys(fab.failure_modes + rec.failure_modes)),
         tuple(dict.fromkeys(fab.review_reasons + rec.review_reasons)),
-        {"fabrication": fab.points, "reconciling_items": rec.points},
+        {
+            "fabrication": fab.points,
+            "reconciling_items": rec.points,
+            "citation_omissions": list(fab.details.get("citation_omissions", [])),
+        },
     )
 
 

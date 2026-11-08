@@ -680,6 +680,17 @@ def _remainder_stated(toks: list[_Tok], start: int) -> bool:
     return False
 
 
+# fix round 3, lane N1 (2026-11-07): pass-proof for portion figures (pattern P1 of
+# fixround3/FIX-ROUND-3-BRIEF.md). A route clears only when code binds the figure to
+# its portion and checks it against the truth record. Anything else keeps the round-2
+# route. Kept here so narrative_vocab.py (and vocab_sha256) does not move. RV
+# (2026-11-07) reverted lane N1's P2 to P5 proofs after the R1 red team.
+_N1_NEGATION_RE = re.compile(
+    r"(?<![A-Za-z0-9])(?:not|no|never|none|neither|nor|without|cannot)(?![A-Za-z0-9])|n['’]t(?![A-Za-z0-9])", _I
+)
+_N1_EXPLAIN_CUE_RE = re.compile(r"explain(?:s|ed|ing)?|reconciled|accounts?\s+for|accounted\s+for", _I)
+
+
 def _resolve_role(clause: _Clause, i: int, ctx: "_Context") -> dict:
     """Bind the amount at toks[i] to a role from cue words in its clause.
 
@@ -901,6 +912,14 @@ def _resolve_role(clause: _Clause, i: int, ctx: "_Context") -> dict:
     out = {"role": role, "resolution": f"nearest_cue_{side}", "cue": cue.text, "distance": d}
     if role == "item":
         out["ref_token"] = cue
+    # fix round 3, lane N1 (P1): "Explained variance is $0.00" names the explained
+    # portion with a variance cue headed by an explained or unexplained cue right before
+    # it. The role stays the variance; _check_amount may prove the portion instead.
+    if (role == "variance" and side == "before" and ci >= 1 and toks[ci - 1].kind == "cue"
+            and (toks[ci - 1].role == "unexplained" or _N1_EXPLAIN_CUE_RE.fullmatch(toks[ci - 1].text))
+            and not ctx.text[toks[ci - 1].end:cue.start].strip()):
+        out["portion"] = toks[ci - 1].role
+        out["portion_cue_end"] = cue.end
     return out
 
 
@@ -1036,11 +1055,41 @@ def _check_amount(toks: list[_Tok], i: int, binding: dict, ctx: _Context) -> dic
     rec = {"verdict": "ok"}
     signed: float | None = None  # the signed quantity a negative amount must agree with
 
+    def portion_proven() -> bool:
+        """P1 (fix round 3, lane N1): "Explained variance is $0.00, so the full $X is
+        unexplained". The figure bound by the explained (or unexplained) cue heading
+        the variance cue equals that portion, from the cited items and in the truth
+        record; no negation stands between the cue and the figure; and another figure
+        in the clause, bound by the cue rules to the other portion, equals the other
+        portion. Otherwise the variance binding and its route stand."""
+        portion = binding.get("portion")
+        if portion is None or amt.data["negative"] or amt.data["positive"] or amt.data["bare"]:
+            return False
+        other = "unexplained" if portion == "explained" else "explained"
+        mine = {"explained": (ctx.explained, truth.explained_usd), "unexplained": (ctx.unexplained, truth.unexplained_usd)}
+        if not all(_near(value, q) for q in mine[portion]):
+            return False
+        if _N1_NEGATION_RE.search(ctx.text[binding["portion_cue_end"]:amt.start]):
+            return False
+        clause = _Clause.of(toks)
+        for j, t in enumerate(toks):
+            if j == i or t.kind != "amount" or t.data["negative"] or t.data["positive"] or t.data["bare"]:
+                continue
+            b = _resolve_role(clause, j, ctx)
+            if b.get("role") == other and not b.get("route_reason") and all(
+                    _near(t.data["value"], q) for q in mine[other]):
+                return True
+        return False
+
     if role == "variance":
         target = truth.variance_usd
         rec["expected"] = abs(target)
         if _near(value, target):
             signed = target
+        elif portion_proven():
+            rec.update(resolution="portion_compound", expected=abs(ctx.explained if binding["portion"] == "explained"
+                                                                    else ctx.unexplained), portion=binding["portion"])
+            signed = None
         else:
             fits = [k for k, q in ctx.quantities().items() if k != "variance" and _near(value, q)]
             if fits:
@@ -1340,6 +1389,67 @@ def _check_item_amount(toks: list[_Tok], i: int, ref_tok: _Tok, ctx: _Context) -
 
 
 # --- Statements -------------------------------------------------------------------------
+
+# fix round 3, lane N2 (2026-11-07). Kept here so narrative_vocab.py (and vocab_sha256)
+# does not move. P1 (split side) adds a pass-proof to the statement verdicts in _check.
+# RV (2026-11-07) reverted lane N2's P6, P7, P8 (C1 widening) and P9 rules after the
+# R1 red team.
+
+
+# P1 split side: "Explained variance" read as a noun phrase that labels the figure after
+# its copula ("Explained variance is $0.00"), not as "X explained the variance".
+_N2_PORTION_LABEL_RE = re.compile(r"^explained (?:variance|shortfall|surplus|deficit|difference)$", _I)
+_N2_LABEL_LEAD_RE = re.compile(r"(?:^|(?<![A-Za-z0-9])(?:the|net|total|and|so|thus|therefore|hence)|[,:])\s*$", _I)
+_N2_LABEL_COPULA_RE = re.compile(
+    r"\s+(?:is|was|stands at|comes to|totals?|equals|of)\s+(?:(?:therefore|thus|only|just|so|now|then)\s+)?", _I
+)
+_N2_UNEXPLAINED_AFTER_RE = re.compile(
+    r"\s+(?:(?:is|was|are|were|remains?|remained|stays?|stayed)\s+(?:(?:still|therefore|thus|also|then)\s+)?)?"
+    r"(?:unexplained|unreconciled|unaccounted for)(?![A-Za-z0-9])",
+    _I,
+)
+_N2_UNEXPLAINED_BEFORE_RE = re.compile(
+    r"(?<![A-Za-z0-9])(?:unexplained|unreconciled)(?: (?:portion|amount|remainder|balance|variance|figure|difference))?"
+    r" (?:is|was|of|stands at|remains|comes to)\s+(?:(?:therefore|thus|only|just|now|then)\s+)?$",
+    _I,
+)
+
+
+def _n2_clause_of(pos: int, clause_starts: list[int], clause_ends: list[int]) -> int:
+    return bisect.bisect_right(clause_starts, pos) - 1
+
+
+def _n2_split_label_proof(c: dict, text: str, toks: list, clause_starts: list[int], clause_ends: list[int],
+                          ctx: "_Context", truth: CaseTruth) -> bool:
+    """P1 split side pass-proof: the attribution match is the label "Explained variance"
+    at the head of its clause, its copula binds the amount right after it, that amount
+    equals the explained portion of the truth and of the model's cited items, and
+    another amount in the same clause bound to an unexplained cue ("the full $X is
+    unexplained", "the unexplained portion is $X") equals the unexplained portion of
+    both. Anything short of that returns False and the claim is judged as before."""
+    if c["scope"] != "attribution" or c["negated"] or not _N2_PORTION_LABEL_RE.match(c["text"]):
+        return False
+    ci = _n2_clause_of(c["start"], clause_starts, clause_ends)
+    cs, ce = clause_starts[ci], clause_ends[ci]
+    if not _N2_LABEL_LEAD_RE.search(text[cs:c["start"]]):
+        return False
+    cop = _N2_LABEL_COPULA_RE.match(text, c["end"])
+    if cop is None:
+        return False
+    amounts = [t for t in toks if t.kind == "amount" and cs <= t.start < ce]
+    labelled = next((t for t in amounts if t.start == cop.end()), None)
+    if labelled is None or labelled.data.get("bare"):
+        return False
+    if not (_near(labelled.data["value"], truth.explained_usd) and _near(labelled.data["value"], ctx.explained)):
+        return False
+    for t in amounts:
+        if t is labelled or t.data.get("bare"):
+            continue
+        if _N2_UNEXPLAINED_AFTER_RE.match(text, t.end) or _N2_UNEXPLAINED_BEFORE_RE.search(text[cs:t.start]):
+            if _near(t.data["value"], truth.unexplained_usd) and _near(t.data["value"], ctx.unexplained):
+                return True
+    return False
+
 
 def exclusion_spans(text: str) -> list[tuple[int, int]]:
     """Contract C1 (fix round 2): character spans of the clauses in `text` that state
@@ -1846,6 +1956,14 @@ def _check(text: str, parsed: dict, truth: CaseTruth) -> NarrativeResult:
         target = ctx.explained if c["role"] == "explained" else ctx.unexplained
         c["expected"] = abs(target)
         settled = abs(target) <= USD_TOLERANCE
+        # fix round 3 (P1 split side): "Explained variance is $0.00, so the full $X is
+        # unexplained" labels a figure; it states no split of its own
+        # and the figure it labels and the paired figure equal the truth's portions;
+        # otherwise the claim is judged as before
+        if _n2_split_label_proof(c, text, toks, clause_starts, clause_ends, ctx, truth):
+            c["verdict"] = "ok"
+            c["resolution"] = "portion_label"
+            continue
         if c["negated"] and c["scope"] == "attribution":
             c["verdict"] = "ignored"  # "WD-1 does not explain the shortfall" states no split
         elif c["negated"]:
