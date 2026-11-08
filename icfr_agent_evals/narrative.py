@@ -680,77 +680,15 @@ def _remainder_stated(toks: list[_Tok], start: int) -> bool:
     return False
 
 
-# fix round 3, lane N1 (2026-11-07): pass-proofs for item effects, portion figures and
-# net explained totals (patterns P1 to P5 of fixround3/FIX-ROUND-3-BRIEF.md). A route
-# clears only when code binds the figure to its item(s) or portion, checks it against
-# the truth record, and checks the direction the phrase states in the frame of on-chain
-# minus ledger. Anything else keeps the round-2 route. Kept here so narrative_vocab.py
-# (and vocab_sha256) does not move.
-# Effect verbs by polarity: a positive verb moves its object up, a negative one down.
-_N1_POS_VERB = (
-    r"add(?:s|ed|ing)?|contribut(?:e|es|ed|ing)|rais(?:e|es|ed|ing)|increas(?:e|es|ed|ing)"
-    r"|widen(?:s|ed|ing)?|deepen(?:s|ed|ing)?|enlarg(?:e|es|ed|ing)"
-)
-_N1_NEG_VERB = (
-    r"lower(?:s|ed|ing)?|reduc(?:e|es|ed|ing)|decreas(?:e|es|ed|ing)|narrow(?:s|ed|ing)?"
-    r"|offset(?:s|ting)?|shrink(?:s|ing)?|trim(?:s|med|ming)?"
-)
-_N1_POS_VERB_RE = re.compile(rf"(?:{_N1_POS_VERB})", _I)
-_N1_ADD_VERB_RE = re.compile(r"add(?:s|ed|ing)?|contribut(?:e|es|ed|ing)", _I)
-# The object an effect verb moves, signed in the frame of on-chain minus ledger: the
-# surplus +1, the shortfall or deficit -1, reserves against the ledger +1. An anaphor
-# ("it", "that") takes the sign of its antecedent; a ledger-side object ("lowers ledger
-# liabilities") and a resulting position ("raises reserves above the ledger") are not
-# in the lexicon, so they keep their route.
-_N1_OBJ = (
-    r"(?:the\s+)?(?P<var>surplus|shortfall|deficit)"
-    r"|(?P<res>(?:the\s+)?(?:on[- ]?chain\s+)?reserves\s+(?:against|relative\s+to|versus|vs\.?)\s+(?:the\s+)?ledger"
-    r"(?:\s+liabilities)?)"
-    r"|(?P<ana>it|that|this)"
-)
-_N1_VERB = rf"(?P<verb>{_N1_POS_VERB}|{_N1_NEG_VERB})"
-# "raises the surplus by $X", "offsets it by $X", "adds to the surplus by $X"
-_N1_BY_RE = re.compile(rf"(?<![A-Za-z0-9-]){_N1_VERB}\s+(?P<to>to\s+)?(?:{_N1_OBJ})\s+by\s*$", _I)
-# "offsets part of that ($X)"
-_N1_PAREN_RE = re.compile(rf"(?<![A-Za-z0-9-]){_N1_VERB}\s+(?:part\s+of\s+)?(?:{_N1_OBJ})\s*\(\s*$", _I)
-# "adds $X to the surplus"
-_N1_ADD_BEFORE_RE = re.compile(r"(?<![A-Za-z0-9-])(?P<verb>add(?:s|ed|ing)?|contribut(?:e|es|ed|ing))\s+$", _I)
-_N1_ADD_AFTER_RE = re.compile(rf"\s+to\s+(?:{_N1_OBJ})(?![A-Za-z0-9])", _I)
-# "puts reserves $X below the ledger" (one item only)
-_N1_PUTS_BEFORE_RE = re.compile(
-    r"(?<![A-Za-z0-9-])(?P<verb>put(?:s|ting)?)\s+(?:the\s+)?(?:on[- ]?chain\s+)?reserves\s+$", _I
-)
-_N1_PUTS_AFTER_RE = re.compile(r"\s+(?P<cmp>above|below|ahead\s+of|behind)\s+(?:the\s+)?ledger(?![A-Za-z0-9])", _I)
-# A clause splits into segments at a colon before a space, a semicolon, or a comma
-# before "while", "whereas" or "but"; an item named in another segment is not the
-# subject of the effect ("DP-1 adds $A to the surplus, while DP-2 offsets it by $B").
-_N1_SEGMENT_BREAK_RE = re.compile(r":(?=\s)|;|,\s+(?:while|whereas|but)(?![A-Za-z0-9])", _I)
-_N1_VERB_NEGATED_RE = re.compile(
-    r"(?:(?<![A-Za-z0-9])(?:not|never|cannot|neither|nor|no\s+longer)|n['’]t)(?:\s+[A-Za-z]+){0,2}\s*$", _I
-)
-_N1_MODAL_RE = re.compile(r"(?<![A-Za-z0-9])(?:would|could|might|may|should|if|unless|whether)(?![A-Za-z0-9])", _I)
+# fix round 3, lane N1 (2026-11-07): pass-proof for portion figures (pattern P1 of
+# fixround3/FIX-ROUND-3-BRIEF.md). A route clears only when code binds the figure to
+# its portion and checks it against the truth record. Anything else keeps the round-2
+# route. Kept here so narrative_vocab.py (and vocab_sha256) does not move. RV
+# (2026-11-07) reverted lane N1's P2 to P5 proofs after the R1 red team.
 _N1_NEGATION_RE = re.compile(
     r"(?<![A-Za-z0-9])(?:not|no|never|none|neither|nor|without|cannot)(?![A-Za-z0-9])|n['’]t(?![A-Za-z0-9])", _I
 )
-_N1_DISTRIBUTIVE_RE = re.compile(r"(?<![A-Za-z0-9])(?:each|apiece|respectively|per|every)(?![A-Za-z0-9])", _I)
-# A contrast in the subject ("unlike DP-1, the other deposit adds $X") may move the
-# effect off the named item, so it proves nothing.
-_N1_CONTRAST_RE = re.compile(
-    r"(?<![A-Za-z0-9])(?:unlike|except|excluding|besides|apart\s+from|other\s+than|rather\s+than|instead\s+of"
-    r"|versus|vs|opposed|another|other|compared\s+(?:with|to)|alongside|along\s+with|together\s+with|as\s+well\s+as"
-    r"|like)(?![A-Za-z0-9])",
-    _I,
-)
-# An item noun in the subject must agree with the item's flow or type.
-_N1_KIND_RES: tuple = (
-    (re.compile(r"(?<![A-Za-z0-9])(?:deposits?|inflows?|receipts?)(?![A-Za-z0-9])", _I), lambda it: it.flow == "inflow"),
-    (re.compile(r"(?<![A-Za-z0-9])(?:withdrawals?|outflows?|payouts?)(?![A-Za-z0-9])", _I),
-     lambda it: it.flow == "outflow"),
-    (re.compile(r"(?<![A-Za-z0-9])fees?(?![A-Za-z0-9])", _I), lambda it: it.type == "fee"),
-)
 _N1_EXPLAIN_CUE_RE = re.compile(r"explain(?:s|ed|ing)?|reconciled|accounts?\s+for|accounted\s+for", _I)
-# review reasons a pass-proof may clear in _check_amount (the figure fits an item)
-_N1_PROOF_REASONS = frozenset({"variance_amount_fits_other_role", "amount_role_unresolved"})
 
 
 def _resolve_role(clause: _Clause, i: int, ctx: "_Context") -> dict:
@@ -1191,16 +1129,6 @@ def _check_amount(toks: list[_Tok], i: int, binding: dict, ctx: _Context) -> dic
         else:
             rec.update(verdict="FM-001", reason="amount_role_unresolved_and_ungrounded", review=True)
 
-    if (rec["verdict"] == "review" and rec.get("reason") in _N1_PROOF_REASONS
-            and binding.get("resolution") not in ("label", "threshold_pair", "parallel_list")):
-        # fix round 3, lane N1 (P2, P3, P5): a figure that fits an item clears its route
-        # only when _item_effect_fit proves the item(s) and the direction phrase
-        fit = _item_effect_fit(toks, i, ctx)
-        if fit is not None and fit["verdict"] == "ok":
-            for k in ("reason", "fits", "review"):
-                rec.pop(k, None)
-            rec.update(fit, rebound_from=role)
-
     if rec["verdict"] == "ok" and binding.get("route_reason"):
         # aggregate step (2026-11-06): the figure is the explained total but a role cue
         # later in its clause labels it otherwise (_resolve_role, aggregate_total), so it
@@ -1295,13 +1223,7 @@ def _item_effect_fit(toks: list[_Tok], i: int, ctx: _Context) -> dict | None:
     Without an effect verb, a bracketed amount after a reference it describes
     ("DP-1 not yet credited in the ledger (+$X)") that equals that cited item's amount
     routes to review. Anything else returns None and the FM-001 stands, so a wrong
-    figure, or a right figure for a different or uncited item, still fails.
-
-    Fix round 3 (2026-11-07, lane N1): before those routes, effect_proof (P2 for a
-    named item, P3) may return verdict ok, but only when the figure is bound to
-    its item(s) and the direction phrase's sign matches every item's truth effect; a
-    proof that does not hold falls through to the round-2 routes unchanged. It is also
-    called by _check_amount for a figure routed as fitting an item."""
+    figure, or a right figure for a different or uncited item, still fails."""
     amt = toks[i]
     value = amt.data["value"]
     refs = [k for k, t in enumerate(toks) if t.kind == "ref"]
@@ -1309,146 +1231,6 @@ def _item_effect_fit(toks: list[_Tok], i: int, ctx: _Context) -> dict | None:
     def cited_item(k: int):
         it = ctx.truth.item_by_reference(toks[k].text)
         return it if it is not None and it.reference in ctx.cited else None
-
-    # --- fix round 3, lane N1: pass-proofs (P2, P3, P5) ---------------------------------
-    text = ctx.text
-    c0, c1 = toks[0].start, toks[-1].end
-
-    def sign_of(x: float) -> int:
-        return 1 if x > USD_TOLERANCE else (-1 if x < -USD_TOLERANCE else 0)
-
-    def previous_start() -> int:
-        """Offset where the sentence (or semicolon clause) before this clause starts."""
-        ends = []
-        for m in _SENTENCE_END_RE.finditer(text, 0, c0):
-            prev = re.search(r"([A-Za-z.]+)$", text[:m.start()]) if text[m.start()] == "." else None
-            if prev is None or prev.group(1).lower() not in _ABBREV:
-                ends.append(m.start() + 1)
-        return ends[-2] if len(ends) >= 2 else 0
-
-    def antecedent_sign(verb_start: int, exclude: set) -> int | None:
-        """The sign of "it" or "that": every variance word and item reference from the
-        start of the previous sentence up to the verb (the subject items excluded) must
-        carry one sign, the surplus +1, the shortfall or deficit -1, the variance its
-        truth sign, an item its truth effect. None when there is no candidate, the
-        candidates disagree, or a reference is not in the fixture."""
-        region = text[previous_start():verb_start]
-        signs: set[int] = set()
-        for m in re.finditer(r"(?<![A-Za-z0-9])(?:(?P<p>surplus(?:es)?)|(?P<n>shortfalls?|deficits?)|(?P<v>variances?))"
-                             r"(?![A-Za-z0-9])", region, _I):
-            signs.add(1 if m.group("p") else (-1 if m.group("n") else sign_of(ctx.truth.variance_usd)))
-        for m in _REF_RE.finditer(region):
-            it = ctx.truth.item_by_reference(m.group(0))
-            if it is None:
-                return None
-            if it.reference not in exclude:
-                signs.add(sign_of(item_effect_usd(it)))
-        return signs.pop() if len(signs) == 1 and 0 not in signs else None
-
-    def object_sign(m: re.Match, verb_start: int, exclude: set) -> int | None:
-        if m.group("var"):
-            return 1 if m.group("var").lower() == "surplus" else -1
-        if m.group("res"):
-            return 1
-        return antecedent_sign(verb_start, exclude)
-
-    def kinds_agree(span_text: str, it) -> bool:
-        return all(ok(it) for rx, ok in _N1_KIND_RES if rx.search(span_text))
-
-    def proven(mode: str, items: list, sign: int) -> dict:
-        total = round(sum(abs(it.amount_usd) for it in items), 2)
-        return {"verdict": "ok", "resolution": f"item_effect_proven_{mode}", "expected": total,
-                "references": [it.reference for it in items], "effect_sign": "+" if sign > 0 else "-"}
-
-    def effect_proof() -> dict | None:
-        """P2 and P3: an effect phrase from the closed lexicon (_N1_BY_RE, _N1_PAREN_RE,
-        "adds $X to", "puts reserves $X below the ledger") governs the figure. P2: the
-        figure equals the amount of the one reference in its segment, named before the
-        verb;
-        P3: it equals the sum of every reference in the clause, all named before the verb
-        in its segment or all listed after a colon that follows it, with no negation or
-        distributive word in the clause. Every item is cited and eligible, its truth
-        effect carries one sign, and that sign is the phrase's (verb polarity times the
-        object's sign). A negated, hypothetical or excluding segment proves nothing."""
-        if amt.data["negative"] or amt.data["positive"] or amt.data["bare"] or amt.data.get("half_unit"):
-            return None
-        before, after = text[c0:amt.start], text[amt.end:c1]
-        puts = False
-        m = _N1_BY_RE.search(before) or _N1_PAREN_RE.search(before)
-        if m is not None:
-            if m.groupdict().get("to") and not _N1_ADD_VERB_RE.fullmatch(m.group("verb")):
-                return None
-            polarity = 1 if _N1_POS_VERB_RE.fullmatch(m.group("verb")) else -1
-            verb_start, objm = c0 + m.start("verb"), m
-        else:
-            mb, ma = _N1_ADD_BEFORE_RE.search(before), _N1_ADD_AFTER_RE.match(after)
-            if mb is not None and ma is not None:
-                polarity, verb_start, objm = 1, c0 + mb.start("verb"), ma
-            else:
-                mb, ma = _N1_PUTS_BEFORE_RE.search(before), _N1_PUTS_AFTER_RE.match(after)
-                if mb is None or ma is None:
-                    return None
-                puts, verb_start, objm = True, c0 + mb.start("verb"), None
-                polarity = 1 if ma.group("cmp").lower() in ("above", "ahead of") else -1
-        seg_s, seg_e = c0, c1
-        for b in _N1_SEGMENT_BREAK_RE.finditer(text, c0, c1):
-            if b.end() <= amt.start:
-                seg_s = b.end()
-            elif b.start() >= amt.end:
-                seg_e = b.start()
-                break
-        if verb_start < seg_s:
-            return None
-        head = text[seg_s:verb_start]
-        if (_N1_VERB_NEGATED_RE.search(head) or _N1_MODAL_RE.search(text[seg_s:amt.start])
-                or _EXCL_PREDICATE_RE.search(text[seg_s:seg_e])):
-            return None
-        seg_refs = [k for k in refs if seg_s <= toks[k].start < seg_e]
-        if len(seg_refs) == 1 and toks[seg_refs[0]].start < verb_start:
-            it = cited_item(seg_refs[0])
-            if (it is None or not _near(value, it.amount_usd) or not kinds_agree(head, it)
-                    or _N1_CONTRAST_RE.search(head)):
-                return None
-            mode, items = "item", [it]
-        elif len(refs) >= 2 and not puts:
-            clause_text = text[c0:c1]
-            if (_N1_NEGATION_RE.search(clause_text) or _N1_DISTRIBUTIVE_RE.search(clause_text)
-                    or _N1_CONTRAST_RE.search(clause_text)):
-                return None
-            before_verb = all(seg_s <= toks[k].start < verb_start for k in refs)
-            after_colon = (seg_e < c1 and text[seg_e] == ":" and all(toks[k].start > seg_e for k in refs)
-                           and any(t.kind in ("word", "cue") and t.low in _ITEM_SUBJECT_WORDS
-                                   for t in toks if seg_s <= t.start < verb_start))
-            if not (before_verb or after_colon):
-                return None
-            items = []
-            for k in refs:
-                it = cited_item(k)
-                if it is None:
-                    return None
-                if all(it.reference != n.reference for n in items):
-                    items.append(it)
-            if len(items) < 2 or not _near(value, round(sum(abs(n.amount_usd) for n in items), 2)):
-                return None
-            mode = "sum"
-        else:
-            return None
-        signs = {sign_of(item_effect_usd(n)) for n in items}
-        if len(signs) != 1 or 0 in signs:
-            return None
-        if puts:
-            sign = polarity
-        else:
-            obj = object_sign(objm, verb_start, {n.reference for n in items})
-            if obj is None:
-                return None
-            sign = polarity * obj
-        return proven(mode, items, sign) if sign in signs else None
-
-    proof = effect_proof()
-    if proof is not None:
-        return proof
-    # --- end of the fix round 3 pass-proofs ----------------------------------------------
 
     verb = None
     for k in range(i - 1, max(-1, i - 1 - _EFFECT_VERB_SPAN), -1):
@@ -1609,70 +1391,11 @@ def _check_item_amount(toks: list[_Tok], i: int, ref_tok: _Tok, ctx: _Context) -
 # --- Statements -------------------------------------------------------------------------
 
 # fix round 3, lane N2 (2026-11-07). Kept here so narrative_vocab.py (and vocab_sha256)
-# does not move. P8 widens exclusion_spans (contract C1) to whole coordinated lists;
-# P1 (split side) adds a pass-proof to the statement verdicts in _check.
-#
-# P8: exclusion predicates the round-2 list missed: "cannot be relied on", "no open
-# item is eligible". "Is cleared" and "dated after the cutoff" are not predicates of
-# their own: a fragment joins clauses at " and " ("WD-1 is dated after the cutoff and
-# DP-2 is a USDC deposit"), so such a predicate would cover the other item too. They
-# are covered as members of a list under an exclusion head (below).
-_N2_PREDICATE_RE = re.compile(
-    r"(?<![A-Za-z0-9-])(?:"
-    r"cannot(?![A-Za-z0-9])[^,;:.]{0,40}?(?<![A-Za-z0-9])rel(?:ied|y) (?:on|upon)"
-    r"|(?:no|none)(?![A-Za-z0-9])[^,;:.]{0,40}?(?<![A-Za-z0-9])(?:is|are|was|were|be) eligible"
-    r")(?![A-Za-z0-9])",
-    _I,
-)
-# A predicate that states exclusion in positive form ("excluded", "out of scope") is
-# negated by a quantifier on its subject ("no item is excluded", "none of the items
-# were disregarded"). "and", "but" and "or" end the subject, so "DP-1 has no amount
-# and is excluded" stays an exclusion.
-_N2_POSITIVE_PREDICATE_RE = re.compile(
-    r"^(?:exclud|disregard|set|omit|left|out|outside|different|another|other|separate|is|are|was|were|been"
-    r"|already|cleared|dated)",
-    _I,
-)
-_N2_QUANTIFIER_NEGATION_RE = re.compile(
-    r"(?<![A-Za-z0-9])(?:no|none(?: of (?:the|these|those))?|nothing|neither)\s+"
-    r"(?:(?!(?:and|but|or)(?![A-Za-z0-9]))[A-Za-z-]+\s+){0,3}?"
-    r"(?:(?:is|are|was|were|has been|have been|had been|gets?|got)\s+(?:also\s+|then\s+)?)?$",
-    _I,
-)
-# A reliance or explaining verb in a list member: a member that states one, not
-# negated, is never widened into an exclusion span.
-_N2_RELIANCE_RE = re.compile(
-    r"(?<![A-Za-z0-9])(?:explain(?:s|ed|ing)?|accounts? for|accounted for|accounting for|offset(?:s|ting)?"
-    r"|reconcil(?:es|ed)|rel(?:y|ies|ied|ying) (?:on|upon)|drives?|drove|driven|caus(?:es|ed)|due to"
-    r"|attributable|attributed|makes? up|made up|comprises?|ties? out|covers?|covered|clos(?:es|ed) the"
-    r"|clears the|resolv(?:es|ed)|contribut(?:es|ed)|add(?:s|ed)|widen(?:s|ed)|narrow(?:s|ed)|reduc(?:es|ed)"
-    r"|lower(?:s|ed)|rais(?:es|ed)|increas(?:es|ed)|decreas(?:es|ed)|included|counted|used|qualif(?:y|ies|ied)"
-    r"|(?<!in)eligible)(?![A-Za-z0-9])",
-    _I,
-)
-_N2_MEMBER_NEGATOR_RE = re.compile(
-    r"(?<![A-Za-z0-9])(?:not|never|no|neither|nor|none|cannot|without)(?![A-Za-z0-9])|n['\u2019]t(?![A-Za-z0-9])",
-    _I,
-)
-# A consequence clause between an exclusion head and its colon list ("No open item
-# qualifies, so $0.00 is explained and the full $X is unexplained: DP-1 is cleared,
-# ..."). It may be skipped only when it names no item, reference or pronoun.
-_N2_CONSEQUENCE_RE = re.compile(r"^\s*(?:so|hence|therefore|thus)(?![A-Za-z0-9])", _I)
-_N2_ITEM_WORD_RE = re.compile(
-    rf"(?<![A-Za-z0-9])(?:{_EXCL_ITEM_NOUN}|it|its|they|them|these|those|this|that|both|each|all|either"
-    r"|neither|none|one|two|three|four|five)(?![A-Za-z0-9])|\ue001",
-    _I,
-)
-# A universal exclusion head that opens a run of item sentences ("None of the listed or
-# noted items qualifies as a reconciling item. JE-1 is a suspense clearing entry. ...").
-_N2_UNIVERSAL_HEAD_RE = re.compile(
-    r"^\s*(?:none of (?:the )?(?:[A-Za-z-]+ ){0,4}?(?:items?|entr(?:y|ies)|schedule|movements?|transactions?)"
-    r"|no (?:[A-Za-z-]+ ){0,3}?(?:items?|entr(?:y|ies)|movements?|transactions?))"
-    r" (?:qualif(?:y|ies)|is eligible|are eligible|(?:can|could|may) be relied (?:on|upon)"
-    r"|(?:is|are|was|were) relied (?:on|upon))(?![A-Za-z0-9])",
-    _I,
-)
-_N2_COLON_RE = re.compile(r":\s+")
+# does not move. P1 (split side) adds a pass-proof to the statement verdicts in _check.
+# RV (2026-11-07) reverted lane N2's P6, P7, P8 (C1 widening) and P9 rules after the
+# R1 red team.
+
+
 # P1 split side: "Explained variance" read as a noun phrase that labels the figure after
 # its copula ("Explained variance is $0.00"), not as "X explained the variance".
 _N2_PORTION_LABEL_RE = re.compile(r"^explained (?:variance|shortfall|surplus|deficit|difference)$", _I)
@@ -1728,47 +1451,6 @@ def _n2_split_label_proof(c: dict, text: str, toks: list, clause_starts: list[in
     return False
 
 
-def _n2_excludes(body: str) -> bool:
-    """True when `body` holds an exclusion phrase that is not itself negated: the round-2
-    predicates and other-asset form, or a round-3 predicate (_N2_PREDICATE_RE). A
-    positive-form predicate whose subject carries a negating quantifier ("no item is
-    excluded") does not count."""
-    if _EXCL_OTHER_ASSET_RE.search(body):
-        return True
-    for rx in (_EXCL_PREDICATE_RE, _N2_PREDICATE_RE):
-        for m in rx.finditer(body):
-            before = body[:m.start()]
-            if _EXCL_PREDICATE_NEGATION_RE.search(before):
-                continue
-            if _N2_POSITIVE_PREDICATE_RE.match(m.group(0)) and _N2_QUANTIFIER_NEGATION_RE.search(
-                    before.rsplit(",", 1)[-1]):
-                continue
-            return True
-    return False
-
-
-def _n2_reliance_affirmed(body: str) -> bool:
-    """True when a reliance or explaining verb in `body` is not negated by a negator in
-    the four words before it, within its comma-free stretch."""
-    for m in _N2_RELIANCE_RE.finditer(body):
-        before = body[:m.start()].rsplit(",", 1)[-1]
-        words = before.split()[-4:]
-        if not _N2_MEMBER_NEGATOR_RE.search(" ".join(words)):
-            return True
-    return False
-
-
-def _n2_member_ok(body: str) -> bool:
-    """A coordinated-list member may join an exclusion span: it names no variance,
-    balance, band or explained or unexplained total and states no reliance."""
-    return not _EXCL_CORE_RE.search(body) and not _n2_reliance_affirmed(body)
-
-
-def _n2_starts_with_reference(body: str) -> bool:
-    head = body.lstrip()
-    return head.startswith(_MASK_OTHER) or bool(_REF_RE.match(head))
-
-
 def exclusion_spans(text: str) -> list[tuple[int, int]]:
     """Contract C1 (fix round 2): character spans of the clauses in `text` that state
     an item or a value is excluded, not relied on, not eligible, ineligible,
@@ -1784,23 +1466,7 @@ def exclusion_spans(text: str) -> list[tuple[int, int]]:
     over a reason clause ("because it is dated after the
     cutoff"). A clause that names the variance, a balance, the band or an explained,
     unexplained or total amount is never inside a span. Works on raw and masked text
-    alike (masking keeps offsets).
-
-    Fix round 3 (P8) widens a span to a whole coordinated list in two shapes, and only
-    when every member names no variance, balance, band or total (_EXCL_CORE_RE) and
-    states no reliance (_n2_reliance_affirmed):
-    - a colon list after an exclusion head ("None of the open items qualify as
-      reconciling items: A is a manual adjustment, B sits in the out-of-scope wallet,
-      and C was cleared on both sides"; "I did not rely on the other two schedule
-      entries: A ..., and B ..."). The head is the clause right before the colon, or the
-      clause before a consequence clause that names no item ("..., so $0.00 is
-      explained and the full $X is unexplained: ..."); the consequence clause itself is
-      never covered;
-    - a run of sentences that each open with a reference, right after a sentence that
-      opens with a universal exclusion head ("None of the listed or noted items
-      qualifies as a reconciling item. JE-1 is a suspense clearing entry. WD-2 sits on
-      the out-of-scope wallet."). The run ends at the first sentence that does not open
-      with a reference or fails the member test."""
+    alike (masking keeps offsets)."""
     out: list[tuple[int, int]] = []
     starts = [0]
     for m in _SENTENCE_END_RE.finditer(text):
@@ -1810,19 +1476,8 @@ def exclusion_spans(text: str) -> list[tuple[int, int]]:
             if prev and prev.group(1).lower() in _ABBREV:
                 continue
         starts.append(pos + 1)
-    run_open = False  # a universal exclusion head opened a run of item sentences
     for s0, s1 in zip(starts, starts[1:] + [len(text)]):
         sent = text[s0:s1]
-        if run_open:
-            body = sent.rstrip(" \t\n.,;:!?")
-            if _n2_starts_with_reference(body) and _n2_member_ok(body):
-                lo = len(body) - len(body.lstrip())
-                if len(body) > lo:
-                    out.append((s0 + lo, s0 + len(body)))
-                continue
-            run_open = False
-        if _N2_UNIVERSAL_HEAD_RE.match(sent):
-            run_open = True
         frags: list[list[int]] = []
         prev_end = 0
         for m in _EXCL_SPLIT_RE.finditer(sent):
@@ -1851,30 +1506,11 @@ def exclusion_spans(text: str) -> list[tuple[int, int]]:
             return bool(_EXCL_CORE_RE.search(sent[f[0]:f[1]]))
 
         def excludes(f: list[int]) -> bool:
-            return _n2_excludes(sent[f[0]:f[1]])
-
-        # fix round 3 (P8): a colon list after an exclusion head is one span
-        colons = list(_N2_COLON_RE.finditer(sent))
-        for n, cm in enumerate(colons):
-            list_end = colons[n + 1].start() if n + 1 < len(colons) else len(sent)
-            heads = [f for f in merged if f[1] <= cm.start()]
-            members = [f for f in merged if f[0] >= cm.end() and f[1] <= list_end]
-            while heads and _N2_CONSEQUENCE_RE.match(sent[heads[-1][0]:heads[-1][1]]) and not (
-                    _N2_ITEM_WORD_RE.search(sent[heads[-1][0]:heads[-1][1]])
-                    or _REF_RE.search(sent[heads[-1][0]:heads[-1][1]])):
-                heads.pop()
-            if not heads or not members or not excludes(heads[-1]):
-                continue
-            head_text = sent[heads[-1][0]:heads[-1][1]]
-            if core(heads[-1]) and not _N2_UNIVERSAL_HEAD_RE.match(head_text):
-                continue  # "The variance is excluded from M2: ..." heads no item list
-            if not all(_n2_member_ok(sent[f[0]:f[1]]) for f in members):
-                continue
-            lo, hi = cm.end(), members[-1][1]
-            while hi > lo and sent[hi - 1] in " \t\n.,;:!?":
-                hi -= 1
-            if hi > lo:
-                out.append((s0 + lo, s0 + hi))
+            body = sent[f[0]:f[1]]
+            if _EXCL_OTHER_ASSET_RE.search(body):
+                return True
+            return any(not _EXCL_PREDICATE_NEGATION_RE.search(body[:m.start()])
+                       for m in _EXCL_PREDICATE_RE.finditer(body))
 
         for k, f in enumerate(merged):
             if core(f) or not excludes(f):

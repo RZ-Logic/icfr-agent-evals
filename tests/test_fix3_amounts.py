@@ -1,7 +1,7 @@
 """Fix round 3 (2026-11-07), lane N1: amount pass-proofs (patterns P1 amount side, P2,
 P3, P4 and P5 of pilot-logs-2026-11-06/fixround3/FIX-ROUND-3-BRIEF.md). RV (2026-11-07)
-reverted P4, P5 and the unnamed-item branch of P2 after the R1 red team, with their
-tests; the P4 and P5 descriptions below are kept for the record.
+reverted P2, P3, P4 and P5 after the R1 red team, with their tests; P1 and its tests
+stay. The P2 to P5 descriptions below are kept for the record.
 
 A route on an amount clears only when code proves the figure and its direction
 against the truth record. Every rule is tested with the real Sonnet sentence (quoted
@@ -167,206 +167,10 @@ def test_p1_wrong_explained_figure_fires_fm001():
     assert "FM-001" in result.failure_modes
 
 
-# --- P2: one item's amount beside a direction phrase ------------------------------------------
-S022 = ("DP-2511-648193 (Hot 2) was credited in the ledger at 23:52 on 11/30 but reached the chain at 00:10 on "
-        "12/1, which lowers reserves against the ledger by USD 256,238.97.")
-S023 = ("DP-2511-893641 (Hot 1) was on chain at 23:47 on 11/30 but posted to the ledger at 00:00 on 12/1, which "
-        "raises reserves against the ledger by USD 52,300.36.")
-S028 = ("Two eligible hot-1 items were open at cutoff: DP-2512-493757 was on chain only and adds $434,042.88 to "
-        "the surplus, while DP-2512-052149 was ledger only (credited 23:48 on Dec 31, on chain after cutoff) and "
-        "offsets it by $91,877.40.")
-S061 = ("DP-2511-648193 (Hot 2) was credited in the ledger at 23:52 on 11/30 but reached the chain at 00:10 on "
-        "12/1, which puts reserves USD 256,238.97 below the ledger.")
-S062 = ("DP-2511-893641 (Hot 1) was on chain at 23:47 on 11/30 but posted in the ledger at 00:00 on 12/1, which "
-        "puts reserves USD 52,300.36 above the ledger.")
-S119 = "The DP-2512-493757 deposit, on chain but not yet credited in the ledger, adds $434,042.88 to the surplus."
-S120 = ("The DP-2512-052149 deposit, ledger-only at cutoff, offsets it by $91,877.40, so the net explained portion "
-        "is $342,165.48.")
-S138 = ("DP-2511-893641 (Hot 1) was on chain at 23:47 on 11/30 but posted in the ledger at 00:00 on 12/1, which "
-        "offsets that by USD 52,300.36.")
-S145 = "DP-2512-493757 is a chain-only deposit that adds $434,042.88 to the surplus."
-S146 = ("DP-2512-052149 is a ledger-only deposit that offsets it by $91,877.40, so the net explained amount is "
-        "$342,165.48.")
-
-P2_REAL = [
-    ("S022", "dev-std-005-ETH-M2", S022, "USD 256,238.97"),
-    ("S023", "dev-std-005-ETH-M2", S023, "USD 52,300.36"),
-    ("S028", "dev-std-012-SOL-M3", S028, "$434,042.88"),
-    ("S029", "dev-std-012-SOL-M3", S028, "$91,877.40"),  # "it" resolves inside the same sentence
-    ("S061", "dev-std-005-ETH-M2", S061, "USD 256,238.97"),
-    ("S062", "dev-std-005-ETH-M2", S062, "USD 52,300.36"),
-    ("S119", "dev-std-012-SOL-M3", S119, "$434,042.88"),
-    ("S120", "dev-std-012-SOL-M3", S119 + " " + S120, "$91,877.40"),  # "it": the previous sentence
-    ("S138", "dev-std-005-ETH-M2", S022 + " " + S138, "USD 52,300.36"),
-    ("S145", "dev-std-012-SOL-M3", S145, "$434,042.88"),
-    ("S146", "dev-std-012-SOL-M3", S145 + " " + S146, "$91,877.40"),
-]
-P2_PARAPHRASE = [
-    ("p2-relative", "dev-std-005-ETH-M2",
-     "DP-2511-648193, ledger-credited on 11/30 and settled on chain on 12/1, reduces on-chain reserves relative "
-     "to the ledger by USD 256,238.97.", "USD 256,238.97"),
-    ("p2-british", "dev-std-005-ETH-M2",
-     "DP-2511-893641, received on chain before cut-off but posted to the ledger afterwards, raises reserves "
-     "relative to the ledger by USD 52,300.36.", "USD 52,300.36"),
-    ("p2-terse", "dev-std-012-SOL-M3", "Chain-only deposit DP-2512-493757 contributes $434,042.88 to the surplus.",
-     "$434,042.88"),
-    ("p2-anaphor-variance", "dev-std-012-SOL-M3",
-     "The surplus is $735,343.35. DP-2512-052149, booked in the ledger only, reduces it by $91,877.40.",
-     "$91,877.40"),
-]
-P2_TWINS = [
-    # the direction word flipped, one twin per real sentence
-    ("p2-twin-S022-flip", "dev-std-005-ETH-M2", S022.replace("lowers", "raises"), "USD 256,238.97"),
-    ("p2-twin-S023-flip", "dev-std-005-ETH-M2", S023.replace("raises", "lowers"), "USD 52,300.36"),
-    ("p2-twin-S028-flip", "dev-std-012-SOL-M3", S028.replace("to the surplus", "to the shortfall"), "$434,042.88"),
-    ("p2-twin-S029-flip", "dev-std-012-SOL-M3", S028.replace("offsets it", "widens it"), "$91,877.40"),
-    ("p2-twin-S061-flip", "dev-std-005-ETH-M2", S061.replace("below the ledger", "above the ledger"),
-     "USD 256,238.97"),
-    ("p2-twin-S062-flip", "dev-std-005-ETH-M2", S062.replace("above the ledger", "below the ledger"),
-     "USD 52,300.36"),
-    ("p2-twin-S119-flip", "dev-std-012-SOL-M3", S119.replace("adds", "lowers").replace(" to the surplus.",
-                                                                                      " from the surplus."),
-     "$434,042.88"),
-    ("p2-twin-S120-flip", "dev-std-012-SOL-M3", S119 + " " + S120.replace("offsets it", "deepens it"),
-     "$91,877.40"),
-    ("p2-twin-S138-flip", "dev-std-005-ETH-M2", S022 + " " + S138.replace("offsets that", "widens that"),
-     "USD 52,300.36"),
-    ("p2-twin-S145-flip", "dev-std-012-SOL-M3", S145.replace("to the surplus", "to the deficit"), "$434,042.88"),
-    ("p2-twin-S146-flip", "dev-std-012-SOL-M3", S145 + " " + S146.replace("offsets it", "adds to it"),
-     "$91,877.40"),
-    # the wrong amount for the named item, and the other item's amount
-    ("p2-twin-amount", "dev-std-005-ETH-M2", S022.replace("256,238.97", "256,283.97"), "USD 256,283.97"),
-    ("p2-twin-other-item", "dev-std-012-SOL-M3", S145.replace("$434,042.88", "$91,877.40"), "$91,877.40"),
-    # the item noun disagrees with the item (DP-2512-493757 is a deposit)
-    ("p2-twin-kind", "dev-std-012-SOL-M3", S119.replace("deposit", "withdrawal"), "$434,042.88"),
-    # a contrast moves the effect off the named item
-    ("p2-twin-contrast", "dev-std-012-SOL-M3",
-     "Unlike DP-2512-493757, the other deposit adds $434,042.88 to the surplus.", "$434,042.88"),
-    # negated and hypothetical effects
-    ("p2-twin-negated", "dev-std-012-SOL-M3", "DP-2512-493757 does not add $434,042.88 to the surplus.",
-     "$434,042.88"),
-    ("p2-twin-hypothetical", "dev-std-012-SOL-M3",
-     "DP-2512-493757 would add $434,042.88 to the surplus if it were credited.", "$434,042.88"),
-    # an excluded item
-    ("p2-twin-excluded", "dev-std-012-SOL-M3",
-     "DP-2512-493757, which is excluded, adds $434,042.88 to the surplus.", "$434,042.88"),
-    # a ledger-side object and a resulting position are not in the lexicon
-    ("p2-twin-ledger-side", "dev-std-005-ETH-M2",
-     S023.replace("raises reserves against the ledger", "lowers ledger liabilities"), "USD 52,300.36"),
-    ("p2-twin-position", "dev-std-005-ETH-M2",
-     S023.replace("raises reserves against the ledger", "raises reserves above the ledger"), "USD 52,300.36"),
-    # the item is not cited by the answer
-    ("p2-twin-uncited", "dev-std-012-SOL-M3", S145, "$434,042.88", ["DP-2512-052149"]),
-    # "it" whose antecedents disagree in sign (the surplus and a surplus-reducing item)
-    ("p2-twin-anaphor-mixed", "dev-std-012-SOL-M3",
-     "The surplus is partly offset by DP-2512-052149. DP-2512-493757, recorded on chain only at the cutoff, adds "
-     "to it by $434,042.88.", "$434,042.88"),
-]
-
-
-@pytest.mark.parametrize(("row", "case_id", "sentence", "amt"), P2_REAL + P2_PARAPHRASE,
-                         ids=[r[0] for r in P2_REAL + P2_PARAPHRASE])
-def test_p2_item_effect_is_proven(row, case_id, sentence, amt):
-    x = assert_proven(run(case_id, sentence), amt)
-    assert x["resolution"] == "item_effect_proven_item", x
-
-
-@pytest.mark.parametrize("row", P2_TWINS, ids=[r[0] for r in P2_TWINS])
-def test_p2_planted_error_is_not_passed(row):
-    _id, case_id, sentence, amt, *refs = row
-    assert_not_passed(run(case_id, sentence, refs[0] if refs else None), amt)
-
-
-def test_p2_wrong_item_amount_still_fires_fm001():
-    result = run("dev-std-005-ETH-M2", S022.replace("256,238.97", "256,283.97"))
-    assert amount(result, "USD 256,283.97")["verdict"] == "FM-001"
-
-
-def test_p2_anaphor_without_antecedent_keeps_its_route():
-    # a correct sentence, but "it" has nothing to resolve to, so the direction is unproven
-    result = run("dev-std-012-SOL-M3", "DP-2512-052149 offsets it by $91,877.40.")
-    assert amount(result, "$91,877.40")["verdict"] == "review"
-
-
-def test_p2_proof_reaches_the_scorer():
-    from icfr_agent_evals.scoring import check_correctness
-
-    result = check_correctness(answer("dev-std-005-ETH-M2", S022), TRUTH["dev-std-005-ETH-M2"])
-    assert result.failure_modes == (), result
-    assert not [r for r in result.review_reasons if "256,238.97" in r], result.review_reasons
-
-
-# --- P3: a sum of named items beside a direction phrase ---------------------------------------
-S012 = ("Hot 1 withdrawals WD-2510-571069 ($11,295.51) and WD-2510-818869 ($17,454.45) were booked in the ledger "
-        "before cutoff but reached the chain only on 11/01, which adds $28,749.96 to the surplus.")
-S053 = ("Two Hot 1 customer withdrawals were booked in the ledger before cutoff but reached the chain only after it "
-        "(WD-2510-571069 at $11,295.51 and WD-2510-818869 at $17,454.45), which raises the surplus by $28,749.96.")
-S133 = ("Two Hot 1 withdrawals were booked in the ledger before cutoff but reached the chain only on 11/01 "
-        "(WD-2510-571069 at $11,295.51 and WD-2510-818869 at $17,454.45), which adds $28,749.96 to the surplus.")
-S110 = ("Open hot-1 items at cutoff increase the surplus by USD 2,415,015.48: chain-only deposits DP-2510-146805 "
-        "(USD 793,139.26) and DP-2510-734749 (USD 675,392.16), and ledger-only withdrawal WD-2510-333749 "
-        "(USD 946,484.06).")
-P3_REAL = [
-    ("S012", "dev-hc-013-ETH-M2", S012, "$28,749.96"),
-    ("S053", "dev-hc-013-ETH-M2", S053, "$28,749.96"),
-    ("S133", "dev-hc-013-ETH-M2", S133, "$28,749.96"),
-    ("S110", "dev-std-007-ETH-M3", S110, "USD 2,415,015.48"),
-]
-P3_PARAPHRASE = [
-    ("p3-jointly", "dev-hc-013-ETH-M2",
-     "Withdrawals WD-2510-571069 ($11,295.51) and WD-2510-818869 ($17,454.45), ledger-booked before cutoff and on "
-     "chain after it, jointly increase the surplus by $28,749.96.", "$28,749.96"),
-    ("p3-terse", "dev-hc-013-ETH-M2", "WD-2510-571069 and WD-2510-818869 add $28,749.96 to the surplus.",
-     "$28,749.96"),
-    ("p3-colon-list", "dev-std-007-ETH-M3",
-     "The chain-only and ledger-only items raise the surplus by USD 2,415,015.48: DP-2510-146805, DP-2510-734749 "
-     "and WD-2510-333749.", "USD 2,415,015.48"),
-]
-P3_TWINS = [
-    ("p3-twin-S012-flip", "dev-hc-013-ETH-M2", S012.replace("adds $28,749.96 to the surplus",
-                                                            "lowers the surplus by $28,749.96"), "$28,749.96"),
-    ("p3-twin-S053-flip", "dev-hc-013-ETH-M2", S053.replace("raises", "reduces"), "$28,749.96"),
-    ("p3-twin-S133-flip", "dev-hc-013-ETH-M2", S133.replace("to the surplus", "to the shortfall"), "$28,749.96"),
-    ("p3-twin-S110-flip", "dev-std-007-ETH-M3", S110.replace("increase", "decrease"), "USD 2,415,015.48"),
-    # a wrong sum
-    ("p3-twin-sum", "dev-hc-013-ETH-M2", S012.replace("$28,749.96", "$28,794.96"), "$28,794.96"),
-    # a distributive word: each item does not add the whole sum
-    ("p3-twin-each", "dev-hc-013-ETH-M2", "WD-2510-571069 and WD-2510-818869 each add $28,749.96 to the surplus.",
-     "$28,749.96"),
-    # a negation in the clause
-    ("p3-twin-negated", "dev-hc-013-ETH-M2",
-     "WD-2510-571069 and WD-2510-818869, though neither is relied on, add $28,749.96 to the surplus.",
-     "$28,749.96"),
-    # items of opposite signs summed gross
-    ("p3-twin-mixed-sign", "dev-hc-013-ETH-M2",
-     "WD-2510-571069, WD-2510-818869 and TRF-2510-05457 add $32,499.92 to the surplus.", "$32,499.92"),
-    # a reference before the verb that is not in the listed sum
-    ("p3-twin-extra-ref", "dev-std-007-ETH-M3",
-     S110.replace("Open hot-1 items at cutoff", "Open hot-1 items other than DP-2510-960213"), "USD 2,415,015.48"),
-    # one item of the sum is not cited
-    ("p3-twin-uncited", "dev-hc-013-ETH-M2", S012, "$28,749.96", ["WD-2510-571069", "TRF-2510-05457"]),
-    # the sum attributed to one item while the other is named after the verb
-    ("p3-twin-as-does", "dev-hc-013-ETH-M2",
-     "WD-2510-571069 adds $28,749.96 to the surplus, as does WD-2510-818869.", "$28,749.96"),
-]
-
-
-@pytest.mark.parametrize(("row", "case_id", "sentence", "amt"), P3_REAL + P3_PARAPHRASE,
-                         ids=[r[0] for r in P3_REAL + P3_PARAPHRASE])
-def test_p3_item_sum_effect_is_proven(row, case_id, sentence, amt):
-    x = assert_proven(run(case_id, sentence), amt)
-    assert x["resolution"] == "item_effect_proven_sum", x
-
-
-@pytest.mark.parametrize("row", P3_TWINS, ids=[r[0] for r in P3_TWINS])
-def test_p3_planted_error_is_not_passed(row):
-    _id, case_id, sentence, amt, *refs = row
-    assert_not_passed(run(case_id, sentence, refs[0] if refs else None), amt)
-
-
 # --- The full development narratives ------------------------------------------------------------
 # Full Sonnet narratives of epochs whose amount routes this lane clears (copied from the
-# devset), with the references and amounts each epoch cited. After the fix no amount in
+# devset), with the references and amounts each epoch cited. RV (2026-11-07) removed the
+# epochs that needed the reverted P2 to P5 rules; the two P1 epochs stay. After the fix no amount in
 # them routes or fails; their other routes (band, asset, split) belong to other lanes.
 FULL_NARRATIVES = {
     'dev-hc-008-USDC-M3#3': (
@@ -381,18 +185,6 @@ FULL_NARRATIVES = {
             "still open in the preparer's notes and the workpaper not yet reviewed."
         ),
     ),
-    'dev-hc-013-ETH-M2#1': (
-        [('WD-2510-571069', 11295.51), ('WD-2510-818869', 17454.45), ('TRF-2510-05457', 3749.96)],
-        (
-            'On-chain reserves of $4,581,472,893.76 exceed ledger liabilities of $4,581,447,893.76 by $25,000.00,'
-            ' a surplus that sits exactly on the M2 floor. Hot 1 withdrawals WD-2510-571069 ($11,295.51) and '
-            'WD-2510-818869 ($17,454.45) were booked in the ledger before cutoff but reached the chain only on '
-            '11/01, which adds $28,749.96 to the surplus. The chain-only in-flight transfer TRF-2510-05457 '
-            '($3,749.96, Hot 1 to Vault 1) offsets part of that, so the eligible items explain $25,000.00 net and'
-            ' nothing is left unexplained. The preparer should confirm that TRF-2510-05457 is not an internal '
-            'transfer between in-scope wallets, because that would change the net explained amount.'
-        ),
-    ),
     'dev-std-004-SOL-M1#1': (
         [],
         (
@@ -402,66 +194,6 @@ FULL_NARRATIVES = {
             'scope staking-rewards wallet. WD-2512-786753 was booked and broadcast after the cutoff. '
             'DP-2511-983545 is a USDC movement, not SOL. Explained variance is $0.00, so the full $4,316.25 is '
             'unexplained and remains with the open ops ticket; the workpaper has not been reviewed.'
-        ),
-    ),
-    'dev-std-005-ETH-M2#1': (
-        [('DP-2511-648193', 256238.97), ('DP-2511-893641', 52300.36)],
-        (
-            'On-chain reserves of USD 962,469,395.58 are USD 203,938.61 below ledger liabilities of USD '
-            '962,673,334.19, a shortfall in the M2 (reportable) band. Two timing differences open at cutoff '
-            'explain all of it. DP-2511-648193 (Hot 2) was credited in the ledger at 23:52 on 11/30 but reached '
-            'the chain at 00:10 on 12/1, which lowers reserves against the ledger by USD 256,238.97. '
-            'DP-2511-893641 (Hot 1) was on chain at 23:47 on 11/30 but posted to the ledger at 00:00 on 12/1, '
-            'which raises reserves against the ledger by USD 52,300.36. The net effect is USD 203,938.61, so the '
-            'explained portion is USD 203,938.61 and the unexplained portion is USD 0.00. Items dated after '
-            'cutoff, the cleared item and out-of-scope wallets were not relied on.'
-        ),
-    ),
-    'dev-std-005-ETH-M2#4': (
-        [('DP-2511-648193', -256238.97), ('DP-2511-893641', 52300.36)],
-        (
-            'On-chain reserves of USD 962,469,395.58 are below ledger liabilities of USD 962,673,334.19, a '
-            'shortfall of USD 203,938.61 (M2, reportable). Two timing items open at cutoff explain all of it. '
-            'DP-2511-648193 (Hot 2) was credited in the ledger at 23:52 on 11/30 but reached the chain at 00:10 '
-            'on 12/1, which lowers reserves against the ledger by USD 256,238.97. DP-2511-893641 (Hot 1) was on '
-            'chain at 23:47 on 11/30 but posted in the ledger at 00:00 on 12/1, which offsets that by USD '
-            '52,300.36. The net explained is USD 203,938.61, leaving USD 0.00 unexplained; WD-2512-191517 is '
-            'dated after cutoff and is not relied on, and the root cause field is still open.'
-        ),
-    ),
-    'dev-std-007-ETH-M3#3': (
-        [('DP-2510-146805', 793139.26), ('WD-2510-333749', 946484.06), ('DP-2510-734749', 675392.16), ('DP-2510-960213', 534673.24), ('OI-251031-017', 0.39)],
-        (
-            'On-chain reserves of USD 4,962,055,958.42 exceed ledger liabilities of USD 4,958,074,328.97, a '
-            'surplus of USD 3,981,629.45 (M3, material-risk). Open hot-1 items at cutoff increase the surplus by '
-            'USD 2,415,015.48: chain-only deposits DP-2510-146805 (USD 793,139.26) and DP-2510-734749 (USD '
-            '675,392.16), and ledger-only withdrawal WD-2510-333749 (USD 946,484.06). They are offset by USD '
-            '534,673.24 for DP-2510-960213, which was pre-credited in the ledger with no funds received, and by '
-            'USD 0.39 for sweep fee OI-251031-017, which is booked on-chain only. Net, these items explain USD '
-            '1,880,341.85, leaving USD 2,101,287.60 of the surplus unexplained and still to be investigated.'
-        ),
-    ),
-    'dev-std-012-SOL-M3#1': (
-        [('DP-2512-493757', 434042.88), ('DP-2512-052149', -91877.4)],
-        (
-            'On-chain reserves of $707,486,534.45 exceed ledger liabilities of $706,751,191.10 by a surplus of '
-            '$735,343.35, which is M3 (material-risk). Two eligible hot-1 items were open at cutoff: '
-            'DP-2512-493757 was on chain only and adds $434,042.88 to the surplus, while DP-2512-052149 was '
-            'ledger only (credited 23:48 on Dec 31, on chain after cutoff) and offsets it by $91,877.40. Net, '
-            'they explain $342,165.48, leaving $393,177.87 of the surplus unexplained and with no root cause yet.'
-            ' I excluded the USDC movement (different asset), the Jan 1 deposit DP-2601-539265 (dated after '
-            'cutoff), the suspense entry JE-25-12-5145 (suspense), the already-cleared DP-2512-310317, and the '
-            'out-of-scope treasury-ops and staking-rewards wallets.'
-        ),
-    ),
-    'dev-std-012-SOL-M3#4': (
-        [('DP-2512-493757', 434042.88), ('DP-2512-052149', -91877.4)],
-        (
-            'On-chain reserves of $707,486,534.45 exceed ledger liabilities of $706,751,191.10, a surplus of '
-            '$735,343.35 (M3, material-risk). Two open items on hot-1 are eligible. DP-2512-493757 is a chain-'
-            'only deposit that adds $434,042.88 to the surplus. DP-2512-052149 is a ledger-only deposit that '
-            'offsets it by $91,877.40, so the net explained amount is $342,165.48. This leaves $393,177.87 '
-            'unexplained, and the root cause is still open and needs investigation before review.'
         ),
     ),
 }
