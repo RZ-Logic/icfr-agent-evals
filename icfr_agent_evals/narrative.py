@@ -680,6 +680,101 @@ def _remainder_stated(toks: list[_Tok], start: int) -> bool:
     return False
 
 
+# fix round 3, lane N1 (2026-11-07): pass-proofs for item effects, portion figures and
+# net explained totals (patterns P1 to P5 of fixround3/FIX-ROUND-3-BRIEF.md). A route
+# clears only when code binds the figure to its item(s) or portion, checks it against
+# the truth record, and checks the direction the phrase states in the frame of on-chain
+# minus ledger. Anything else keeps the round-2 route. Kept here so narrative_vocab.py
+# (and vocab_sha256) does not move.
+# Effect verbs by polarity: a positive verb moves its object up, a negative one down.
+_N1_POS_VERB = (
+    r"add(?:s|ed|ing)?|contribut(?:e|es|ed|ing)|rais(?:e|es|ed|ing)|increas(?:e|es|ed|ing)"
+    r"|widen(?:s|ed|ing)?|deepen(?:s|ed|ing)?|enlarg(?:e|es|ed|ing)"
+)
+_N1_NEG_VERB = (
+    r"lower(?:s|ed|ing)?|reduc(?:e|es|ed|ing)|decreas(?:e|es|ed|ing)|narrow(?:s|ed|ing)?"
+    r"|offset(?:s|ting)?|shrink(?:s|ing)?|trim(?:s|med|ming)?"
+)
+_N1_POS_VERB_RE = re.compile(rf"(?:{_N1_POS_VERB})", _I)
+_N1_ADD_VERB_RE = re.compile(r"add(?:s|ed|ing)?|contribut(?:e|es|ed|ing)", _I)
+# The object an effect verb moves, signed in the frame of on-chain minus ledger: the
+# surplus +1, the shortfall or deficit -1, reserves against the ledger +1. An anaphor
+# ("it", "that") takes the sign of its antecedent; a ledger-side object ("lowers ledger
+# liabilities") and a resulting position ("raises reserves above the ledger") are not
+# in the lexicon, so they keep their route.
+_N1_OBJ = (
+    r"(?:the\s+)?(?P<var>surplus|shortfall|deficit)"
+    r"|(?P<res>(?:the\s+)?(?:on[- ]?chain\s+)?reserves\s+(?:against|relative\s+to|versus|vs\.?)\s+(?:the\s+)?ledger"
+    r"(?:\s+liabilities)?)"
+    r"|(?P<ana>it|that|this)"
+)
+_N1_VERB = rf"(?P<verb>{_N1_POS_VERB}|{_N1_NEG_VERB})"
+# "raises the surplus by $X", "offsets it by $X", "adds to the surplus by $X"
+_N1_BY_RE = re.compile(rf"(?<![A-Za-z0-9-]){_N1_VERB}\s+(?P<to>to\s+)?(?:{_N1_OBJ})\s+by\s*$", _I)
+# "offsets part of that ($X)"
+_N1_PAREN_RE = re.compile(rf"(?<![A-Za-z0-9-]){_N1_VERB}\s+(?:part\s+of\s+)?(?:{_N1_OBJ})\s*\(\s*$", _I)
+# "adds $X to the surplus"
+_N1_ADD_BEFORE_RE = re.compile(r"(?<![A-Za-z0-9-])(?P<verb>add(?:s|ed|ing)?|contribut(?:e|es|ed|ing))\s+$", _I)
+_N1_ADD_AFTER_RE = re.compile(rf"\s+to\s+(?:{_N1_OBJ})(?![A-Za-z0-9])", _I)
+# "puts reserves $X below the ledger" (one item only)
+_N1_PUTS_BEFORE_RE = re.compile(
+    r"(?<![A-Za-z0-9-])(?P<verb>put(?:s|ting)?)\s+(?:the\s+)?(?:on[- ]?chain\s+)?reserves\s+$", _I
+)
+_N1_PUTS_AFTER_RE = re.compile(r"\s+(?P<cmp>above|below|ahead\s+of|behind)\s+(?:the\s+)?ledger(?![A-Za-z0-9])", _I)
+# A clause splits into segments at a colon before a space, a semicolon, or a comma
+# before "while", "whereas" or "but"; an item named in another segment is not the
+# subject of the effect ("DP-1 adds $A to the surplus, while DP-2 offsets it by $B").
+_N1_SEGMENT_BREAK_RE = re.compile(r":(?=\s)|;|,\s+(?:while|whereas|but)(?![A-Za-z0-9])", _I)
+_N1_VERB_NEGATED_RE = re.compile(
+    r"(?:(?<![A-Za-z0-9])(?:not|never|cannot|neither|nor|no\s+longer)|n['’]t)(?:\s+[A-Za-z]+){0,2}\s*$", _I
+)
+_N1_MODAL_RE = re.compile(r"(?<![A-Za-z0-9])(?:would|could|might|may|should|if|unless|whether)(?![A-Za-z0-9])", _I)
+_N1_NEGATION_RE = re.compile(
+    r"(?<![A-Za-z0-9])(?:not|no|never|none|neither|nor|without|cannot)(?![A-Za-z0-9])|n['’]t(?![A-Za-z0-9])", _I
+)
+_N1_DISTRIBUTIVE_RE = re.compile(r"(?<![A-Za-z0-9])(?:each|apiece|respectively|per|every)(?![A-Za-z0-9])", _I)
+# A contrast in the subject ("unlike DP-1, the other deposit adds $X") may move the
+# effect off the named item, so it proves nothing.
+_N1_CONTRAST_RE = re.compile(
+    r"(?<![A-Za-z0-9])(?:unlike|except|excluding|besides|apart\s+from|other\s+than|rather\s+than|instead\s+of"
+    r"|versus|vs|opposed|another|other|compared\s+(?:with|to)|alongside|along\s+with|together\s+with|as\s+well\s+as"
+    r"|like)(?![A-Za-z0-9])",
+    _I,
+)
+# An unnamed item is described by an item noun, never by a pronoun alone.
+_N1_ITEM_NOUN_RE = re.compile(
+    r"(?<![A-Za-z0-9])(?:deposits?|withdrawals?|fees?|transfers?|items?|movements?|inflows?|outflows?|receipts?"
+    r"|payouts?|settlements?|entr(?:y|ies))(?![A-Za-z0-9])",
+    _I,
+)
+# An item noun in the subject must agree with the item's flow or type.
+_N1_KIND_RES: tuple = (
+    (re.compile(r"(?<![A-Za-z0-9])(?:deposits?|inflows?|receipts?)(?![A-Za-z0-9])", _I), lambda it: it.flow == "inflow"),
+    (re.compile(r"(?<![A-Za-z0-9])(?:withdrawals?|outflows?|payouts?)(?![A-Za-z0-9])", _I),
+     lambda it: it.flow == "outflow"),
+    (re.compile(r"(?<![A-Za-z0-9])fees?(?![A-Za-z0-9])", _I), lambda it: it.type == "fee"),
+)
+_N1_COUNTS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8,
+              "nine": 9, "ten": 10, "both": 2}
+_N1_COUNT_ALT = "|".join(_N1_COUNTS)
+# P5 list head at the start of a clause: "Three widen the shortfall: ...", "One narrows it: ..."
+_N1_HEAD_RE = re.compile(
+    rf"\s*(?P<count>{_N1_COUNT_ALT})(?:\s+(?:of\s+(?:them|these|the\s+items)|(?:open\s+)?items?))?\s+{_N1_VERB}"
+    rf"\s+(?:part\s+of\s+)?(?:{_N1_OBJ})\s*:\s+",
+    _I,
+)
+# P4 itemized net: "...: three surplus-increasing items (A, B, C) and two surplus-reducing items (D, E)."
+_N1_GROUP_RE = re.compile(
+    rf"(?P<count>{_N1_COUNT_ALT})\s+(?P<obj>surplus|shortfall|deficit)[- ](?P<verb>increasing|raising|widening|adding"
+    rf"|reducing|lowering|narrowing|decreasing|offsetting)\s+items?\s*\((?P<body>[^()]*)\)",
+    _I,
+)
+_N1_GROUP_SEP_RE = re.compile(r"\s*,?\s*(?:and\s+)?", _I)
+_N1_EXPLAIN_CUE_RE = re.compile(r"explain(?:s|ed|ing)?|reconciled|accounts?\s+for|accounted\s+for", _I)
+# review reasons a pass-proof may clear in _check_amount (the figure fits an item)
+_N1_PROOF_REASONS = frozenset({"variance_amount_fits_other_role", "amount_role_unresolved"})
+
+
 def _resolve_role(clause: _Clause, i: int, ctx: "_Context") -> dict:
     """Bind the amount at toks[i] to a role from cue words in its clause.
 
@@ -792,6 +887,15 @@ def _resolve_role(clause: _Clause, i: int, ctx: "_Context") -> dict:
             subject_ok = subject_ok and partitive_after
         if subject_ok:
             out = {"role": "explained", "resolution": "aggregate_total", "cue": toks[agg].text}
+            # fix round 3, lane N1 (P4): an explain word right before the aggregate word
+            # ("items explain a net $X") or right after the figure ("net to $X explained")
+            # states that the figure is the explained portion; _check_amount uses it
+            p = agg - 1
+            while p >= 0 and _is_link(toks[p]):
+                p -= 1
+            for t in ((toks[p] if p >= 0 else None), (toks[j] if j < len(toks) else None)):
+                if t is not None and t.kind == "cue" and t.role == "explained" and _N1_EXPLAIN_CUE_RE.fullmatch(t.text):
+                    out["explained_adjacent"] = t.text
             # Aggregate step (2026-11-06, FIX-ROUND-2-AGGREGATE-BRIEF): "Together they
             # total $X, all of it unexplained" labels the explained total as the
             # unexplained amount. A role cue later in the clause (past the linking run,
@@ -901,6 +1005,14 @@ def _resolve_role(clause: _Clause, i: int, ctx: "_Context") -> dict:
     out = {"role": role, "resolution": f"nearest_cue_{side}", "cue": cue.text, "distance": d}
     if role == "item":
         out["ref_token"] = cue
+    # fix round 3, lane N1 (P1): "Explained variance is $0.00" names the explained
+    # portion with a variance cue headed by an explained or unexplained cue right before
+    # it. The role stays the variance; _check_amount may prove the portion instead.
+    if (role == "variance" and side == "before" and ci >= 1 and toks[ci - 1].kind == "cue"
+            and (toks[ci - 1].role == "unexplained" or _N1_EXPLAIN_CUE_RE.fullmatch(toks[ci - 1].text))
+            and not ctx.text[toks[ci - 1].end:cue.start].strip()):
+        out["portion"] = toks[ci - 1].role
+        out["portion_cue_end"] = cue.end
     return out
 
 
@@ -1036,11 +1148,41 @@ def _check_amount(toks: list[_Tok], i: int, binding: dict, ctx: _Context) -> dic
     rec = {"verdict": "ok"}
     signed: float | None = None  # the signed quantity a negative amount must agree with
 
+    def portion_proven() -> bool:
+        """P1 (fix round 3, lane N1): "Explained variance is $0.00, so the full $X is
+        unexplained". The figure bound by the explained (or unexplained) cue heading
+        the variance cue equals that portion, from the cited items and in the truth
+        record; no negation stands between the cue and the figure; and another figure
+        in the clause, bound by the cue rules to the other portion, equals the other
+        portion. Otherwise the variance binding and its route stand."""
+        portion = binding.get("portion")
+        if portion is None or amt.data["negative"] or amt.data["positive"] or amt.data["bare"]:
+            return False
+        other = "unexplained" if portion == "explained" else "explained"
+        mine = {"explained": (ctx.explained, truth.explained_usd), "unexplained": (ctx.unexplained, truth.unexplained_usd)}
+        if not all(_near(value, q) for q in mine[portion]):
+            return False
+        if _N1_NEGATION_RE.search(ctx.text[binding["portion_cue_end"]:amt.start]):
+            return False
+        clause = _Clause.of(toks)
+        for j, t in enumerate(toks):
+            if j == i or t.kind != "amount" or t.data["negative"] or t.data["positive"] or t.data["bare"]:
+                continue
+            b = _resolve_role(clause, j, ctx)
+            if b.get("role") == other and not b.get("route_reason") and all(
+                    _near(t.data["value"], q) for q in mine[other]):
+                return True
+        return False
+
     if role == "variance":
         target = truth.variance_usd
         rec["expected"] = abs(target)
         if _near(value, target):
             signed = target
+        elif portion_proven():
+            rec.update(resolution="portion_compound", expected=abs(ctx.explained if binding["portion"] == "explained"
+                                                                    else ctx.unexplained), portion=binding["portion"])
+            signed = None
         else:
             fits = [k for k, q in ctx.quantities().items() if k != "variance" and _near(value, q)]
             if fits:
@@ -1080,11 +1222,78 @@ def _check_amount(toks: list[_Tok], i: int, binding: dict, ctx: _Context) -> dic
         else:
             rec.update(verdict="FM-001", reason="amount_role_unresolved_and_ungrounded", review=True)
 
+    if (rec["verdict"] == "review" and rec.get("reason") in _N1_PROOF_REASONS
+            and binding.get("resolution") not in ("label", "threshold_pair", "parallel_list")):
+        # fix round 3, lane N1 (P2, P3, P5): a figure that fits an item clears its route
+        # only when _item_effect_fit proves the item(s) and the direction phrase
+        fit = _item_effect_fit(toks, i, ctx)
+        if fit is not None and fit["verdict"] == "ok":
+            for k in ("reason", "fits", "review"):
+                rec.pop(k, None)
+            rec.update(fit, rebound_from=role)
+
+    def aggregate_proven() -> bool:
+        """P4 (fix round 3, lane N1): a net or aggregate total routed by the aggregate
+        step passes only when it equals the explained portion in the truth record (it
+        already equals the signed sum of the cited items' effects, or the verdict would
+        not be ok), no negation precedes it and no unexplained cue or remainder word is
+        in its clause, and either an explain word binds it ("items explain a net $X",
+        "net to $X explained") or the rest of the clause itemizes every cited item under
+        signed heads whose signs agree with the truth ("net to $X: three
+        surplus-increasing items (A, B, C) and two surplus-reducing items (D, E)")."""
+        if amt.data["negative"] or amt.data["positive"] or amt.data["bare"]:
+            return False
+        if not _near(value, truth.explained_usd) or not _near(value, ctx.explained):
+            return False
+        c0, c1 = toks[0].start, toks[-1].end
+        lead = ctx.text[c0:amt.start]
+        if _N1_NEGATION_RE.search(lead) or _N1_CONTRAST_RE.search(lead) or _EXCL_PREDICATE_RE.search(lead) \
+                or _N1_MODAL_RE.search(lead):
+            return False
+        if any((t.kind == "cue" and t.role == "unexplained") or t.low in _REMAINDER_WORDS for t in toks):
+            return False
+        if binding.get("route_reason") == "aggregate_total_unconfirmed" and binding.get("explained_adjacent"):
+            return True
+        tail = ctx.text[amt.end:c1]
+        m = re.match(r"\s*:\s*", tail)
+        if m is None:
+            return False
+        pos, seen, total = m.end(), set(), 0.0
+        while True:
+            g = _N1_GROUP_RE.match(tail, pos)
+            if g is None:
+                return False
+            sign = (1 if g.group("verb").lower() in ("increasing", "raising", "widening", "adding") else -1) * (
+                1 if g.group("obj").lower() == "surplus" else -1)
+            b0, b1 = amt.end + g.start("body"), amt.end + g.end("body")
+            group_refs = [t for t in toks if t.kind == "ref" and b0 <= t.start < b1]
+            if len(group_refs) != _N1_COUNTS[g.group("count").lower()]:
+                return False
+            for t in group_refs:
+                it = truth.item_by_reference(t.text)
+                if it is None or it.reference not in ctx.cited or it.reference in seen:
+                    return False
+                effect = item_effect_usd(it)
+                if effect * sign <= 0:
+                    return False
+                seen.add(it.reference)
+                total += effect
+            pos = g.end()
+            if re.fullmatch(r"\s*[.!?]?\s*", tail[pos:]):
+                break
+            pos = _N1_GROUP_SEP_RE.match(tail, pos).end()
+        refs_after = {t.text for t in toks if t.kind == "ref" and t.start >= amt.end}
+        return (seen == set(ctx.cited) and len(refs_after) == len(seen) and _near(value, round(total, 2)))
+
     if rec["verdict"] == "ok" and binding.get("route_reason"):
         # aggregate step (2026-11-06): the figure is the explained total but a role cue
         # later in its clause labels it otherwise (_resolve_role, aggregate_total), so it
-        # routes rather than passes; a figure that is wrong keeps its FM-001 above
-        rec.update(verdict="review", reason=binding["route_reason"])
+        # routes rather than passes; a figure that is wrong keeps its FM-001 above.
+        # Fix round 3, lane N1 (P4): unless aggregate_proven() proves it.
+        if aggregate_proven():
+            rec["proof"] = "aggregate_total_proven"
+        else:
+            rec.update(verdict="review", reason=binding["route_reason"])
     if rec["verdict"] == "ok" and signed is not None and (
         (amt.data["negative"] and signed > 0) or (amt.data["positive"] and signed < 0)
     ):
@@ -1174,7 +1383,13 @@ def _item_effect_fit(toks: list[_Tok], i: int, ctx: _Context) -> dict | None:
     Without an effect verb, a bracketed amount after a reference it describes
     ("DP-1 not yet credited in the ledger (+$X)") that equals that cited item's amount
     routes to review. Anything else returns None and the FM-001 stands, so a wrong
-    figure, or a right figure for a different or uncited item, still fails."""
+    figure, or a right figure for a different or uncited item, still fails.
+
+    Fix round 3 (2026-11-07, lane N1): before those routes, list_proof (P5) and
+    effect_proof (P2, P3) may return verdict ok, but only when the figure is bound to
+    its item(s) and the direction phrase's sign matches every item's truth effect; a
+    proof that does not hold falls through to the round-2 routes unchanged. It is also
+    called by _check_amount for a figure routed as fitting an item."""
     amt = toks[i]
     value = amt.data["value"]
     refs = [k for k, t in enumerate(toks) if t.kind == "ref"]
@@ -1182,6 +1397,197 @@ def _item_effect_fit(toks: list[_Tok], i: int, ctx: _Context) -> dict | None:
     def cited_item(k: int):
         it = ctx.truth.item_by_reference(toks[k].text)
         return it if it is not None and it.reference in ctx.cited else None
+
+    # --- fix round 3, lane N1: pass-proofs (P2, P3, P5) ---------------------------------
+    text = ctx.text
+    c0, c1 = toks[0].start, toks[-1].end
+
+    def sign_of(x: float) -> int:
+        return 1 if x > USD_TOLERANCE else (-1 if x < -USD_TOLERANCE else 0)
+
+    def previous_start() -> int:
+        """Offset where the sentence (or semicolon clause) before this clause starts."""
+        ends = []
+        for m in _SENTENCE_END_RE.finditer(text, 0, c0):
+            prev = re.search(r"([A-Za-z.]+)$", text[:m.start()]) if text[m.start()] == "." else None
+            if prev is None or prev.group(1).lower() not in _ABBREV:
+                ends.append(m.start() + 1)
+        return ends[-2] if len(ends) >= 2 else 0
+
+    def antecedent_sign(verb_start: int, exclude: set) -> int | None:
+        """The sign of "it" or "that": every variance word and item reference from the
+        start of the previous sentence up to the verb (the subject items excluded) must
+        carry one sign, the surplus +1, the shortfall or deficit -1, the variance its
+        truth sign, an item its truth effect. None when there is no candidate, the
+        candidates disagree, or a reference is not in the fixture."""
+        region = text[previous_start():verb_start]
+        signs: set[int] = set()
+        for m in re.finditer(r"(?<![A-Za-z0-9])(?:(?P<p>surplus(?:es)?)|(?P<n>shortfalls?|deficits?)|(?P<v>variances?))"
+                             r"(?![A-Za-z0-9])", region, _I):
+            signs.add(1 if m.group("p") else (-1 if m.group("n") else sign_of(ctx.truth.variance_usd)))
+        for m in _REF_RE.finditer(region):
+            it = ctx.truth.item_by_reference(m.group(0))
+            if it is None:
+                return None
+            if it.reference not in exclude:
+                signs.add(sign_of(item_effect_usd(it)))
+        return signs.pop() if len(signs) == 1 and 0 not in signs else None
+
+    def object_sign(m: re.Match, verb_start: int, exclude: set) -> int | None:
+        if m.group("var"):
+            return 1 if m.group("var").lower() == "surplus" else -1
+        if m.group("res"):
+            return 1
+        return antecedent_sign(verb_start, exclude)
+
+    def kinds_agree(span_text: str, it) -> bool:
+        return all(ok(it) for rx, ok in _N1_KIND_RES if rx.search(span_text))
+
+    def unique_item(v: float):
+        """The one cited eligible item whose amount is v, when no other fixture item has it."""
+        hits = [it for it in ctx.truth.items if it.amount_usd is not None and _near(v, it.amount_usd)]
+        return hits[0] if len(hits) == 1 and hits[0].reference in ctx.cited else None
+
+    def proven(mode: str, items: list, sign: int) -> dict:
+        total = round(sum(abs(it.amount_usd) for it in items), 2)
+        return {"verdict": "ok", "resolution": f"item_effect_proven_{mode}", "expected": total,
+                "references": [it.reference for it in items], "effect_sign": "+" if sign > 0 else "-"}
+
+    def list_proof() -> dict | None:
+        """P5: "Three widen the shortfall: a withdrawal ... ($A), a fee ($B) and a deposit
+        ... ($C)." The head opens the clause; its count word equals the number of figures
+        after the colon; no reference, exclusion or hypothetical is in the list and
+        nothing follows the last figure; each figure is the amount of exactly one cited
+        eligible item (no other fixture item has it, no item twice), any item noun in its
+        entry agrees with that item, and every item's truth effect has the head's sign."""
+        hm = _N1_HEAD_RE.match(text, c0)
+        if hm is None or hm.end() > amt.start or hm.end() > c1:
+            return None
+        listed = [k for k, t in enumerate(toks) if t.kind == "amount" and t.start >= hm.end()]
+        if len(listed) != _N1_COUNTS[hm.group("count").lower()] or i not in listed:
+            return None
+        body = text[hm.end():c1]
+        if any(t.kind == "ref" and t.start >= hm.end() for t in toks) or _EXCL_PREDICATE_RE.search(body) \
+                or _N1_MODAL_RE.search(body) or not re.fullmatch(r"\)?\s*[.!?]?\s*", text[toks[listed[-1]].end:c1]):
+            return None
+        polarity = 1 if _N1_POS_VERB_RE.fullmatch(hm.group("verb")) else -1
+        obj = object_sign(hm, hm.start("verb"), set())
+        if obj is None:
+            return None
+        sign = polarity * obj
+        prev_end, chosen, mine = hm.end(), set(), None
+        for k in listed:
+            t = toks[k]
+            if t.data["negative"] or t.data["positive"] or t.data["bare"]:
+                return None
+            it = unique_item(t.data["value"])
+            if it is None or it.reference in chosen or sign_of(item_effect_usd(it)) != sign:
+                return None
+            if not kinds_agree(text[prev_end:t.start], it):
+                return None
+            chosen.add(it.reference)
+            prev_end = t.end
+            if k == i:
+                mine = it
+        return proven("listed", [mine], sign) if mine is not None else None
+
+    def effect_proof() -> dict | None:
+        """P2 and P3: an effect phrase from the closed lexicon (_N1_BY_RE, _N1_PAREN_RE,
+        "adds $X to", "puts reserves $X below the ledger") governs the figure. P2: the
+        figure equals the amount of the one reference in its segment, named before the
+        verb (or, with no reference in the clause, of exactly one cited eligible item);
+        P3: it equals the sum of every reference in the clause, all named before the verb
+        in its segment or all listed after a colon that follows it, with no negation or
+        distributive word in the clause. Every item is cited and eligible, its truth
+        effect carries one sign, and that sign is the phrase's (verb polarity times the
+        object's sign). A negated, hypothetical or excluding segment proves nothing."""
+        if amt.data["negative"] or amt.data["positive"] or amt.data["bare"] or amt.data.get("half_unit"):
+            return None
+        before, after = text[c0:amt.start], text[amt.end:c1]
+        puts = False
+        m = _N1_BY_RE.search(before) or _N1_PAREN_RE.search(before)
+        if m is not None:
+            if m.groupdict().get("to") and not _N1_ADD_VERB_RE.fullmatch(m.group("verb")):
+                return None
+            polarity = 1 if _N1_POS_VERB_RE.fullmatch(m.group("verb")) else -1
+            verb_start, objm = c0 + m.start("verb"), m
+        else:
+            mb, ma = _N1_ADD_BEFORE_RE.search(before), _N1_ADD_AFTER_RE.match(after)
+            if mb is not None and ma is not None:
+                polarity, verb_start, objm = 1, c0 + mb.start("verb"), ma
+            else:
+                mb, ma = _N1_PUTS_BEFORE_RE.search(before), _N1_PUTS_AFTER_RE.match(after)
+                if mb is None or ma is None:
+                    return None
+                puts, verb_start, objm = True, c0 + mb.start("verb"), None
+                polarity = 1 if ma.group("cmp").lower() in ("above", "ahead of") else -1
+        seg_s, seg_e = c0, c1
+        for b in _N1_SEGMENT_BREAK_RE.finditer(text, c0, c1):
+            if b.end() <= amt.start:
+                seg_s = b.end()
+            elif b.start() >= amt.end:
+                seg_e = b.start()
+                break
+        if verb_start < seg_s:
+            return None
+        head = text[seg_s:verb_start]
+        if (_N1_VERB_NEGATED_RE.search(head) or _N1_MODAL_RE.search(text[seg_s:amt.start])
+                or _EXCL_PREDICATE_RE.search(text[seg_s:seg_e])):
+            return None
+        seg_refs = [k for k in refs if seg_s <= toks[k].start < seg_e]
+        if len(seg_refs) == 1 and toks[seg_refs[0]].start < verb_start:
+            it = cited_item(seg_refs[0])
+            if (it is None or not _near(value, it.amount_usd) or not kinds_agree(head, it)
+                    or _N1_CONTRAST_RE.search(head)):
+                return None
+            mode, items = "item", [it]
+        elif not refs:
+            # an unnamed item: described by an item noun, with no reference in this
+            # clause or the sentence before it that "it" or "the deposit" could mean
+            it = unique_item(value)
+            if (it is None or not kinds_agree(head, it) or not _N1_ITEM_NOUN_RE.search(head)
+                    or _N1_CONTRAST_RE.search(head) or _REF_RE.search(text[previous_start():c0])):
+                return None
+            mode, items = "unnamed", [it]
+        elif len(refs) >= 2 and not puts:
+            clause_text = text[c0:c1]
+            if (_N1_NEGATION_RE.search(clause_text) or _N1_DISTRIBUTIVE_RE.search(clause_text)
+                    or _N1_CONTRAST_RE.search(clause_text)):
+                return None
+            before_verb = all(seg_s <= toks[k].start < verb_start for k in refs)
+            after_colon = (seg_e < c1 and text[seg_e] == ":" and all(toks[k].start > seg_e for k in refs)
+                           and any(t.kind in ("word", "cue") and t.low in _ITEM_SUBJECT_WORDS
+                                   for t in toks if seg_s <= t.start < verb_start))
+            if not (before_verb or after_colon):
+                return None
+            items = []
+            for k in refs:
+                it = cited_item(k)
+                if it is None:
+                    return None
+                if all(it.reference != n.reference for n in items):
+                    items.append(it)
+            if len(items) < 2 or not _near(value, round(sum(abs(n.amount_usd) for n in items), 2)):
+                return None
+            mode = "sum"
+        else:
+            return None
+        signs = {sign_of(item_effect_usd(n)) for n in items}
+        if len(signs) != 1 or 0 in signs:
+            return None
+        if puts:
+            sign = polarity
+        else:
+            obj = object_sign(objm, verb_start, {n.reference for n in items})
+            if obj is None:
+                return None
+            sign = polarity * obj
+        return proven(mode, items, sign) if sign in signs else None
+
+    proof = list_proof() or effect_proof()
+    if proof is not None:
+        return proof
+    # --- end of the fix round 3 pass-proofs ----------------------------------------------
 
     verb = None
     for k in range(i - 1, max(-1, i - 1 - _EFFECT_VERB_SPAN), -1):
