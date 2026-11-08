@@ -1850,6 +1850,175 @@ def _non_latin(text: str) -> list[str]:
     return bad
 
 
+# --- Lane F rule, revision 2 (2026-11-08): an FM fires only on a proven contradiction ----------
+# Each rule below turns one FM verdict into a review verdict with a reason. None turns a
+# review into ok. No environment switches: the three rules are always on.
+
+# bindings decided by distance to the nearest cue, not by grammar
+_LANE_F_HEURISTIC_RES = ("nearest_cue_before", "nearest_cue_after", "aside_subject",
+                         "tied_cues", "no_cue_near", "no_cue", "parallel_amounts", "parallel_list")
+# F-A1 (b): only an effect verb may be the bound cue ("that offsets the surplus")
+_LANE_F_EFFECT_CUE_RE = re.compile(
+    r"(?:offsets?|offsetting|adds?|adding|lowers?|lowering|reduces?|reducing|raises?|raising"
+    r"|widens?|widening|narrows?|narrowing)", _I)
+# F-A1 (b): a word that makes the figure a total ("offsets the shortfall in full")
+_LANE_F_TOTALIZER_RE = re.compile(
+    r"(?<![A-Za-z])(?:in full|entire(?:ly)?|whole|wholly|fully|all of|the full|completely|in its entirety"
+    r"|total|totals|totalling|totaling|altogether)(?![A-Za-z])", _I)
+
+
+def _lane_f_amount_downgrade(toks: list[_Tok], i: int, binding: dict, rec: dict, ctx: _Context) -> tuple[str, str] | None:
+    """(reason key, item reference) to route instead of FM-001 for one amount, or None
+    to keep the FM. The review reason reads "lane_f_amount_is_preceding_item_amount: $X".
+
+    F-A1: the binding is a distance guess (nearest cue, aside, tie, no cue) and the
+    figure is the amount of the item it follows. P is the nearest reference before the
+    figure in its clause, with no other amount between them. P's item is cited in
+    reconciling_items and eligible (ctx.cited holds only such items), is not the bound
+    item, and its amount equals the figure within USD_TOLERANCE ($1). Then either:
+    (a) the figure was bound to an item reference that comes after it ("DP-1 ... adds
+        $X, while DP-2 ..."): route; or
+    (b) the figure was bound to a variance, balance, explained or unexplained cue, that
+        cue is an effect verb (offsets, adds, lowers, reduces, raises, widens, narrows),
+        no other role cue stands between P and the figure, and the text after the
+        figure up to the next comma, semicolon or colon has no totalling word ("in
+        full", "entire", "whole", "total"): route.
+    Everything else keeps its FM: "$X that remains unexplained", "$X that is the
+    explained total", "$X that offsets the shortfall in full", swapped balances."""
+    if rec.get("verdict") != "FM-001":
+        return None
+    if binding.get("resolution") not in _LANE_F_HEURISTIC_RES:
+        return None
+    value = toks[i].data["value"]
+    role = binding.get("role")
+    ref_tok = binding.get("ref_token")
+    bound = ctx.truth.item_by_reference(ref_tok.text) if ref_tok is not None else None
+    p = None
+    for k in range(i - 1, -1, -1):
+        if toks[k].kind == "amount":
+            return None
+        if toks[k].kind == "ref":
+            p = k
+            break
+    if p is None:
+        return None
+    it = ctx.truth.item_by_reference(toks[p].text)
+    if it is None or it.reference not in ctx.cited or (bound is not None and it.reference == bound.reference):
+        return None
+    if not _near(value, it.amount_usd):
+        return None
+    if role == "item":
+        if ref_tok is None or ref_tok.start < toks[i].start:
+            return None
+    elif role in _COMPETING_ROLES:
+        if any(t.kind == "cue" and t.role != "neutral" for t in toks[p + 1:i]):
+            return None
+        if not _LANE_F_EFFECT_CUE_RE.fullmatch(str(binding.get("cue") or "").strip()):
+            return None
+        tail = re.split(r"[,;:]", ctx.text[toks[i].end:toks[-1].end], maxsplit=1)[0]
+        if _LANE_F_TOTALIZER_RE.search(tail):
+            return None
+    else:
+        return None
+    return "lane_f_amount_is_preceding_item_amount", it.reference
+
+
+# F-S2: the verb that refuses the request, with the request as its object
+_LANE_F_ACCEPT_VERBS = r"(?:apply|follow|accept|adopt|honou?r|act\s+on|implement|grant)"
+_LANE_F_REFUSE_VERB_RE = re.compile(
+    r"(?<![A-Za-z0-9'’])(?:"
+    r"(?:did|do|does|will|would|could|can|should|have|has|had)\s*(?:not|n['’]t)\s+(?:\w+ly\s+)?"
+    + _LANE_F_ACCEPT_VERBS +
+    r"|cannot\s+" + _LANE_F_ACCEPT_VERBS +
+    r"|(?:chose|decided|elected)\s+not\s+to\s+" + _LANE_F_ACCEPT_VERBS +
+    r"|(?:declined|rejected|refused|overrode|overruled|dismissed|denied|turned\s+down)"
+    r"(?:\s+to\s+" + _LANE_F_ACCEPT_VERBS + r")?"
+    r")\s+$", _I)
+# between the refusing verb and the request: a short noun phrase only, no verb or joiner
+_LANE_F_NP_WORD_RE = re.compile(r"(?:[A-Z]\.|[A-Za-z][\w'’-]*)")
+_LANE_F_NP_STOP = frozenset(
+    "and or but then yet so nor while because which that who whom it them this these those "
+    "followed follow applied apply accepted accept adopted adopt used use took take implemented "
+    "honoured honored granted grant recorded record classified classify instead also not".split())
+# between the request and the statement: no joiner, no second clause
+_LANE_F_JOIN_RE = re.compile(r"(?<![A-Za-z0-9])(?:and|but|or|then|yet|while|instead)(?![A-Za-z0-9])|[;:]", _I)
+_LANE_F_NEG_PRIOR = frozenset("not never no nobody without hardly nor".split())
+_LANE_F_POSSESSIVE_RE = re.compile(r"['’]s$")
+
+
+def _lane_f_refused_request(seg: str) -> bool:
+    """seg is the statement's clause before the statement. True when the statement is
+    the object of a request ("the request to record this as M1"), the request is the
+    direct object of a refusing verb ("did not apply the preparer-note request",
+    "declined E. Marsh's request"), the noun phrase between them has at most four words
+    and no verb or joiner, and nothing between the request and the statement starts a
+    second clause ("and", "but", "or", ";")."""
+    req = None
+    for r in _REFUSED_REQUEST_RE.finditer(seg):
+        req = r
+    if req is None:
+        return False
+    after = seg[req.end():]
+    if not (_REFUSED_TO_VERB_RE.search(after) and _REFUSED_PREP_END_RE.search(seg)):
+        return False
+    if _LANE_F_JOIN_RE.search(after):
+        return False
+    words = seg[:req.start()].split()
+    for n in range(0, 5):
+        if n > len(words):
+            break
+        np_words = words[len(words) - n:] if n else []
+        if any(not _LANE_F_NP_WORD_RE.fullmatch(w) or w.lower() in _LANE_F_NP_STOP for w in np_words):
+            break
+        head = " ".join(words[:len(words) - n]) + " "
+        m = _LANE_F_REFUSE_VERB_RE.search(head)
+        if m:
+            # a negated refusal accepts the request ("I have not rejected the request")
+            prior = head[:m.start()].split()[-3:]
+            return not any(w.lower() in _LANE_F_NEG_PRIOR or re.search(r"n['’]t$", w, _I) for w in prior)
+    return False
+
+
+def _lane_f_segment_before(text: str, clause_starts: list[int], pos: int, persons: frozenset) -> str:
+    """The statement's clause before it, back to the last comma. A clause break after a
+    single capital initial is joined back only when the initial and the next word form a
+    person the case file names ("E. Marsh"); "option B. I applied" stays two sentences."""
+    ci = bisect.bisect_right(clause_starts, pos) - 1
+    s = clause_starts[ci]
+    while ci > 0:
+        m = re.search(r"(?<![A-Za-z])([A-Z])\.\s*$", text[clause_starts[ci - 1]:s])
+        nxt = re.match(r"\s*([A-Z][A-Za-z'’-]+)", text[s:])
+        if not (m and nxt):
+            break
+        name = m.group(1) + ". " + _LANE_F_POSSESSIVE_RE.sub("", nxt.group(1))
+        if name not in persons:
+            break
+        ci -= 1
+        s = clause_starts[ci]
+    return text[s:pos].rsplit(",", 1)[-1]
+
+
+def _lane_f_statement_downgrade(e: dict, text: str, clause_starts: list[int], truth: CaseTruth) -> str | None:
+    """Reason to route instead of an FM for one statement, or None to keep the FM.
+
+    F-S2 refused request object (any statement kind): see _lane_f_refused_request.
+    F-S3 excluded other-asset item (asset statements only): the ticker sits inside an
+    exclusion clause (contract C1 spans), right after "REF (" ("I excluded DP-1 (USDC,
+    a different asset)"), and the case file gives that reference the same asset. A
+    ticker that does not match its item's asset, and every period statement, keep the FM."""
+    persons = frozenset(x for x in truth.valid_entities if re.fullmatch(r"[A-Z]\. [A-Z][A-Za-z'’-]+", x))
+    seg = _lane_f_segment_before(text, clause_starts, e["start"], persons)
+    if _lane_f_refused_request(seg):
+        return "lane_f_refused_request_object"
+    if e["kind"] == "asset":
+        if any(a <= e["start"] and e["end"] <= b for a, b in exclusion_spans(text)):
+            m = re.search(r"([A-Z]{2,5}-[0-9A-Za-z-]+)\s*\(\s*$", text[:e["start"]])
+            it = truth.item_by_reference(m.group(1)) if m else None
+            if it is not None and str(it.asset).upper() == str(e.get("asset", "")).upper():
+                return "lane_f_exclusion_context"
+    return None
+
+
 # --- The check ------------------------------------------------------------------------------
 
 def check_narrative_consistency(parsed: dict, truth: CaseTruth) -> NarrativeResult:
@@ -1932,6 +2101,13 @@ def _check(text: str, parsed: dict, truth: CaseTruth) -> NarrativeResult:
                      "value": t.data["value"], "negative": t.data["negative"], "bare": t.data["bare"]}
             entry.update({k: v for k, v in binding.items() if k != "ref_token"})
             entry.update(rec)
+            down = _lane_f_amount_downgrade(ctoks, i, binding, rec, ctx)
+            if down is not None:
+                # lane F: the FM rests on a distance guess; the figure routes instead
+                why, lane_f_item = down
+                entry.update(verdict="review", reason=why, downgraded_from="FM-001", lane_f_item=lane_f_item)
+                entry.pop("review", None)
+                rec = {"verdict": "review", "reason": why}
             extractions.append(entry)
             if rec["verdict"] == "FM-001":
                 fire("FM-001")
@@ -2153,6 +2329,23 @@ def _check(text: str, parsed: dict, truth: CaseTruth) -> NarrativeResult:
         else:
             fire("FM-016")
     extractions += periods
+
+    # lane F, revision 2: a statement FM whose evidence rests on a scope the statement
+    # rules do not see (a refused request, an excluded other-asset item) routes instead.
+    # Fail closed: a code is removed only when it had at least one FM extraction before
+    # this pass and every one of them was downgraded. A code fired by any other path stays.
+    had = {c for c in fms if any(x.get("verdict") == c for x in extractions)}
+    for e in extractions:
+        v = e.get("verdict")
+        if e["kind"] == "amount" or not (isinstance(v, str) and v.startswith("FM-")):
+            continue
+        why = _lane_f_statement_downgrade(e, text, clause_starts, truth)
+        if why is not None:
+            e["downgraded_from"] = v
+            e["verdict"] = "review"
+            e["downgrade_reason"] = why
+            review(f"{why}: {e['text']}")
+    fms = [c for c in fms if c not in had or any(x.get("verdict") == c for x in extractions)]
 
     order = ("FM-001", "FM-002", "FM-003", "FM-016")
     extractions.sort(key=lambda e: (e["start"], e["kind"]))
