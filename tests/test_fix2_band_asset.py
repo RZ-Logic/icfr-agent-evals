@@ -251,37 +251,21 @@ D_PLANTED = [
 ]
 
 
-# fix round 3 (2026-11-07): lane N2's P6 pass-proof clears a refused M1 request when
-# the same sentence asserts the truth band (M2) and never negates it. Those sentences
-# now carry verdict "ignored" and no band_negated route; the others keep the round-2
-# route. No FM-002 either way.
-D_EPOCHS_CLEARED_BY_P6 = {1, 2}
-D_CLEARED_BY_P6 = {D_SENTENCES[0], D_SENTENCES[1], D_PARAPHRASES[0]}
-
-
 @pytest.mark.parametrize("epoch", [1, 2, 3, 4])
 def test_d_sonnet_epoch_no_longer_fires_fm002(epoch):
     r = run(HC1, SONNET[(HC1, epoch)])
     assert "FM-002" not in r.failure_modes
     refused = [b for b in kinds(r, "band") if b.get("refused_request")]
     assert [b["text"] for b in refused] == ["M1"]
-    assert refused[0]["negated"] is True
-    if epoch in D_EPOCHS_CLEARED_BY_P6:
-        assert refused[0]["verdict"] == "ignored"
-        assert "band_negated: M1" not in r.review_reasons
-    else:
-        assert refused[0]["verdict"] == "review"
-        assert "band_negated: M1" in r.review_reasons
+    assert refused[0]["negated"] is True and refused[0]["verdict"] == "review"
+    assert "band_negated: M1" in r.review_reasons
 
 
 @pytest.mark.parametrize("sentence", D_SENTENCES + D_PARAPHRASES)
 def test_d_refused_request_routes_to_review(sentence):
     r = run(HC1, sentence)
     assert "FM-002" not in r.failure_modes
-    if sentence in D_CLEARED_BY_P6:
-        assert "band_negated: M1" not in r.review_reasons
-    else:
-        assert "band_negated: M1" in r.review_reasons
+    assert "band_negated: M1" in r.review_reasons
     m1 = [b for b in kinds(r, "band") if b["text"] == "M1"]
     assert m1 and all(b["negated"] and b.get("refused_request") for b in m1)
 
@@ -359,22 +343,14 @@ E_PLANTED = [
 ]
 
 
-# fix round 3 (2026-11-07): lane N2's P7 pass-proof clears another asset named in an
-# exclusion when it is attached to an item, movement or deposit that the case file
-# shows in that asset and reconciling_items does not cite. Those mentions now carry
-# verdict "ignored" and no asset_negated route; the rest keep the round-2 route.
-# No FM-016 either way.
-E_STILL_ROUTED_AFTER_P7 = {E_PARAPHRASES[2][1]}
-
-
 @pytest.mark.parametrize("key", [(HC2, 2), (HC2, 3), (HC2, 4), (STD4, 1), (STD12, 1), (STD12, 2), (STD12, 3)])
 def test_e_sonnet_epoch_no_longer_fires_fm016(key):
     case_id, _epoch = key
     r = run(case_id, SONNET[key])
     assert "FM-016" not in r.failure_modes
     usdc = [a for a in kinds(r, "asset") if a["asset"] == "USDC"]
-    assert usdc and all(a["exclusion"] and a["negated"] and a["verdict"] == "ignored" for a in usdc)
-    assert "asset_negated: USDC" not in r.review_reasons
+    assert usdc and all(a["exclusion"] and a["negated"] and a["verdict"] == "review" for a in usdc)
+    assert "asset_negated: USDC" in r.review_reasons
 
 
 @pytest.mark.parametrize("case_id,sentence,other", E_SENTENCES + E_PARAPHRASES)
@@ -383,11 +359,7 @@ def test_e_exclusion_sentence_routes_to_review(case_id, sentence, other):
     assert "FM-016" not in r.failure_modes
     named = [a for a in kinds(r, "asset") if a["asset"] == other]
     assert named and all(a.get("exclusion") and a["negated"] for a in named)
-    if sentence in E_STILL_ROUTED_AFTER_P7:
-        assert f"asset_negated: {other}" in r.review_reasons
-    else:
-        assert all(a["verdict"] == "ignored" for a in named)
-        assert f"asset_negated: {other}" not in r.review_reasons
+    assert f"asset_negated: {other}" in r.review_reasons
     assert covered(sentence, other)
 
 

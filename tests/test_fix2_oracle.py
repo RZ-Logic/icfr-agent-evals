@@ -413,9 +413,7 @@ PATTERN_G_RUN = [
 @pytest.mark.parametrize("case_id,entities,text,token", [
     pytest.param(case, ents, text, tok, id=rid) for rid, case, ents, text, tok in PATTERN_G_RUN
 ])
-# fix round 3 (2026-11-07): the strict xfail set by the 2026-11-06 revert is removed;
-# lane S1's P11 rule (count word stripped only before a case-file wallet label) passes
-# these rows, as that marker was put there to notice.
+@pytest.mark.xfail(strict=True, reason="G1/G2 rules reverted 2026-11-06 (R2.md); structural reliance fix pending")
 def test_pattern_g_number_word_before_wallet_not_swept(case_id, entities, text, token):
     result = check_fabrication(answer(case_id, text, entities), truth(case_id))
     assert result.failure_modes == ()

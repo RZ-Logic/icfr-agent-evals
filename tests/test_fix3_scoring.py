@@ -13,7 +13,9 @@ register, and a planted-error twin that must still fail or route.
        hyphen, underscore and space folded, closed synonyms); a memo-only item's
        label of another allowed type is not routed (owner ruling, S015).
   P11  a count word before a wallet label of the case file ("Two Hot 1 items") is
-       not a capitalized-run hit; before anything else it still is.
+       not a capitalized-run hit; before anything else it still is. RV (2026-11-07)
+       reverted P11 after the R1 red team, with its tests; the wallet-label test
+       stays, because P12 uses fixture_wallet_labels.
   P12  a sweep hit equal to a fixture reference number or wallet label that
        entities_cited leaves out is a citation omission: details
        citation_omissions, anchor 0, no route, never FM-005 (owner ruling).
@@ -155,40 +157,8 @@ def test_p12_twin_fabricated_citation_is_still_fm005():
 
 
 # =====================================================================================
-# P11: count word before a wallet label
+# Fixture wallet labels (P11 reverted by RV; the labels serve P12)
 # =====================================================================================
-
-HC005_ENTITIES = ["Hot 1", "WD-2511-218501", "WD-2511-545901"]
-S005 = ("Two Hot 1 withdrawals, WD-2511-218501 ($113,434.40) and WD-2511-545901 ($66,215.11), were sent on "
-        "chain before the cutoff but booked in the ledger on Dec 1.")
-HC011_ENTITIES = ["Hot 1", "DP-2510-557345", "WD-2510-652593", "WD-2510-074129"]
-S011 = ("Three Hot 1 items open at the 10/31 cutoff explain all of it: DP-2510-557345 (6,298.01 USD) was "
-        "credited in the ledger before cutoff but only reached the chain at 00:39 on 11/1.")
-
-
-@pytest.mark.parametrize("case_id, text, entities", [
-    (HC005, S005, HC005_ENTITIES),
-    (HC011, S011, HC011_ENTITIES),
-    # paraphrase, another register and another wallet of hc-005
-    (HC005, "Seven Vault 1 sweeps settled after cutoff; none is open.", HC005_ENTITIES + ["Vault 1"]),
-], ids=["S005-two-hot-1", "S011-three-hot-1", "paraphrase-seven-vault-1"])
-def test_p11_count_word_before_wallet_label_is_not_swept(case_id, text, entities):
-    r = S.check_fabrication(output(case_id, text, entities=entities), truth(case_id))
-    assert not [h for h in r.details["sweep_hits"] if h["kind"] == "capitalized_run"]
-    assert r.points == S.SCORE_MAX
-
-
-@pytest.mark.parametrize("text, token", [
-    ("Two Harbor Custody withdrawals were sent on chain before the cutoff.", "Two Harbor Custody"),
-    ("Two Meridian 1 withdrawals were sent on chain before the cutoff.", "Two Meridian"),
-    ("Two Hot 3 withdrawals were sent on chain before the cutoff.", "Two Hot"),  # hc-005 has no Hot 3
-], ids=["twin-not-a-label", "twin-r2-meridian", "twin-wrong-wallet-number"])
-def test_p11_twin_count_word_before_other_text_is_still_swept(text, token):
-    r = S.check_fabrication(output(HC005, text, entities=HC005_ENTITIES), truth(HC005))
-    assert r.requires_human_review
-    assert any(token in h["token"] for h in r.details["sweep_hits"])
-    assert token not in r.details["citation_omissions"]
-
 
 def test_p11_fixture_wallet_labels_follow_the_generator_styles():
     """CaseTruth has no wallet table: the labels are derived from valid_entities.

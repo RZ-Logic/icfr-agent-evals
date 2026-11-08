@@ -59,6 +59,91 @@ from icfr_agent_evals.scoring import (
     check_reconciling_items,
 )
 
+# RV reverted-rule rows (generated)
+# RV (2026-11-07) reverted the rules R1 showed passing a wrong narrative
+# (fixround3/R1.md, fixround3/RV.md). The oracle rows that needed one of them
+# are kept and run as non-strict expected failures, so a later fix that clears
+# them shows up as XPASS. Each id maps to the commit stage that reverted its rule:
+# stage A, R1's revert list (N1-P2 unnamed-item branch, N1-P4, N1-P5, N2-P6, N2-P7,
+# N2-P9, S1-P11); stage B, the rules R1 shows passing only class C rows (N1-P2 named
+# branch, N1-P3, S1-P8 with N2's C1 widening, S1-P10).
+_RV_REVERTED: dict[str, str] = {
+    "test_fresh_register[fresh-P7-terse-right]": "stage A",
+    "test_p11_count_word_before_wallet_label[P11-S005-hc005-e1]": "stage A",
+    "test_p11_count_word_before_wallet_label[P11-S011-hc011-e1]": "stage A",
+    "test_p11_count_word_before_wallet_label[P11-S014-hc014-e1]": "stage A",
+    "test_p11_count_word_before_wallet_label[P11-S042-hc005-e2]": "stage A",
+    "test_p11_count_word_before_wallet_label[P11-S054-hc013-e2]": "stage A",
+    "test_p11_count_word_before_wallet_label[P11-S057-hc014-e2]": "stage A",
+    "test_p11_count_word_before_wallet_label[P11-S092-hc005-e3]": "stage A",
+    "test_p11_count_word_before_wallet_label[P11-S103-hc013-e3]": "stage A",
+    "test_p11_count_word_before_wallet_label[P11-S107-hc014-e3]": "stage A",
+    "test_p11_count_word_before_wallet_label[P11-S129-hc005-e4]": "stage A",
+    "test_p11_count_word_before_wallet_label[P11-S132-hc011-e4]": "stage A",
+    "test_p11_count_word_before_wallet_label[P11-S134-hc013-e4]": "stage A",
+    "test_p11_count_word_before_wallet_label[P11-S137-hc014-e4]": "stage A",
+    "test_p4_net_explained_total[P4-S024-std007-e1]": "stage A",
+    "test_p4_net_explained_total[P4-S066-std007-e2]": "stage A",
+    "test_p5_amounts_under_direction_head[P5-S036-S039-hc001-e2]": "stage A",
+    "test_p5_amounts_under_direction_head[P5-S083-S086-hc001-e3]": "stage A",
+    "test_p6_band_in_rejected_request[P6-S001-hc001-e1]": "stage A",
+    "test_p6_band_in_rejected_request[P6-S040-hc001-e2]": "stage A",
+    "test_p6_band_in_rejected_request[P6-paraphrase-declined]": "stage A",
+    "test_p7_other_asset_in_exclusion[P7-S013-hc014-e1]": "stage A",
+    "test_p7_other_asset_in_exclusion[P7-S018-S019-std004-e1]": "stage A",
+    "test_p7_other_asset_in_exclusion[P7-S025-S026-std008-e1]": "stage A",
+    "test_p7_other_asset_in_exclusion[P7-S030-std012-e1]": "stage A",
+    "test_p7_other_asset_in_exclusion[P7-S041-hc002-e2]": "stage A",
+    "test_p7_other_asset_in_exclusion[P7-S067-std008-e2]": "stage A",
+    "test_p7_other_asset_in_exclusion[P7-S073-std012-e2]": "stage A",
+    "test_p7_other_asset_in_exclusion[P7-S088-hc002-e3]": "stage A",
+    "test_p7_other_asset_in_exclusion[P7-S111-S112-std008-e3]": "stage A",
+    "test_p7_other_asset_in_exclusion[P7-S121-std012-e3]": "stage A",
+    "test_p7_other_asset_in_exclusion[P7-S122-std013-e3]": "stage A",
+    "test_p7_other_asset_in_exclusion[P7-S124-hc002-e4]": "stage A",
+    "test_p7_other_asset_in_exclusion[P7-S139-std008-e4]": "stage A",
+    "test_p9_split_subject_it[P9-S117-std010-e3]": "stage A",
+    "test_whole_epoch_after_fix[dev-hc-001-BTC-M2-e1-correctness]": "stage A",
+    "test_whole_epoch_after_fix[dev-hc-001-BTC-M2-e2-correctness]": "stage A",
+    "test_whole_epoch_after_fix[dev-hc-002-USDT-M2-e2-correctness]": "stage A",
+    "test_whole_epoch_after_fix[dev-hc-002-USDT-M2-e3-correctness]": "stage A",
+    "test_whole_epoch_after_fix[dev-hc-002-USDT-M2-e4-correctness]": "stage A",
+    "test_whole_epoch_after_fix[dev-hc-005-USDT-M3-e1-fabrication]": "stage A",
+    "test_whole_epoch_after_fix[dev-hc-005-USDT-M3-e2-fabrication]": "stage A",
+    "test_whole_epoch_after_fix[dev-hc-005-USDT-M3-e3-fabrication]": "stage A",
+    "test_whole_epoch_after_fix[dev-hc-005-USDT-M3-e4-fabrication]": "stage A",
+    "test_whole_epoch_after_fix[dev-hc-011-ADA-M1-e1-fabrication]": "stage A",
+    "test_whole_epoch_after_fix[dev-hc-011-ADA-M1-e4-fabrication]": "stage A",
+    "test_whole_epoch_after_fix[dev-hc-013-ETH-M2-e2-fabrication]": "stage A",
+    "test_whole_epoch_after_fix[dev-hc-013-ETH-M2-e3-fabrication]": "stage A",
+    "test_whole_epoch_after_fix[dev-hc-013-ETH-M2-e4-fabrication]": "stage A",
+    "test_whole_epoch_after_fix[dev-hc-014-USDC-M1-e1-correctness]": "stage A",
+    "test_whole_epoch_after_fix[dev-hc-014-USDC-M1-e1-fabrication]": "stage A",
+    "test_whole_epoch_after_fix[dev-hc-014-USDC-M1-e2-fabrication]": "stage A",
+    "test_whole_epoch_after_fix[dev-hc-014-USDC-M1-e3-fabrication]": "stage A",
+    "test_whole_epoch_after_fix[dev-hc-014-USDC-M1-e4-fabrication]": "stage A",
+    "test_whole_epoch_after_fix[dev-std-004-SOL-M1-e1-correctness]": "stage A",
+    "test_whole_epoch_after_fix[dev-std-007-ETH-M3-e1-correctness]": "stage A",
+    "test_whole_epoch_after_fix[dev-std-007-ETH-M3-e2-correctness]": "stage A",
+    "test_whole_epoch_after_fix[dev-std-008-USDC-M1-e1-correctness]": "stage A",
+    "test_whole_epoch_after_fix[dev-std-008-USDC-M1-e2-correctness]": "stage A",
+    "test_whole_epoch_after_fix[dev-std-008-USDC-M1-e3-correctness]": "stage A",
+    "test_whole_epoch_after_fix[dev-std-008-USDC-M1-e4-correctness]": "stage A",
+    "test_whole_epoch_after_fix[dev-std-010-BTC-M2-e3-correctness]": "stage A",
+    "test_whole_epoch_after_fix[dev-std-012-SOL-M3-e1-correctness]": "stage A",
+    "test_whole_epoch_after_fix[dev-std-012-SOL-M3-e3-correctness]": "stage A",
+    "test_whole_epoch_after_fix[dev-std-013-USDC-M2-e3-correctness]": "stage A",
+}
+
+
+@pytest.fixture(autouse=True)
+def _rv_reverted_rule(request):
+    stage = _RV_REVERTED.get(request.node.name)
+    if stage is not None:
+        request.node.add_marker(pytest.mark.xfail(
+            strict=False, reason=f"rule reverted by RV ({stage}) after the R1 red team"))
+
+
 CLEAN = "clean"
 NO_FM = "no_fm"
 NOT_CLEAN = "not_clean"

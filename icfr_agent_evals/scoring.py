@@ -545,32 +545,10 @@ def _is_capitalized(word: _Word) -> bool:
     return word.text[:1].isupper() and not word.breaker
 
 
-# fix round 3, lane S1 (2026-11-07), pattern P11: a count word in front of a wallet
-# label ("Two Hot 1 items"). The word is stripped only when the text right after it
-# is, exactly, a wallet label of the case file, so "Two Harbor Custody" or
-# "Two Meridian 1" (no such wallet) is still swept (the 2026-11-06 revert, R2.md F1).
-_COUNT_WORDS = frozenset("two three four five six seven eight nine ten both all".split())
-
-
-def _starts_with_label(text: str, start: int, labels: Iterable[str]) -> bool:
-    """True when text[start:] begins with one of labels, exactly, and the label ends
-    at a word edge."""
-    for label in labels:
-        end = start + len(label)
-        if label and text[start:end] == label and (end == len(text) or not text[end].isalnum()):
-            return True
-    return False
-
-
-def _capitalized_spans(
-    clause: list[_Word], text: str = "", wallet_labels: Iterable[str] = ()
-) -> Iterable[tuple[int, int, str]]:
+def _capitalized_spans(clause: list[_Word]) -> Iterable[tuple[int, int, str]]:
     """Runs of two or more capitalized words (connectors such as "of" allowed
     inside), leading function words stripped. A run made only of non-entity
-    vocabulary is dropped. Pattern P11: a leading count word (Two to Ten, Both, All)
-    is stripped too when the words after it start with a wallet label of the case
-    file (wallet_labels, matched exactly in text)."""
-    labels = tuple(wallet_labels)
+    vocabulary is dropped."""
     non_entity = GENERIC_WORDS | FUNCTION_WORDS | CHAIN_WORDS | TICKER_WORDS
     runs: list[list[_Word]] = []
     current: list[_Word] = []
@@ -589,8 +567,6 @@ def _capitalized_spans(
         while run and (run[-1].key in _RUN_CONNECTORS or run[-1].key == "the"):
             run = run[:-1]
         while run and (run[0].key in FUNCTION_WORDS or run[0].key in _RUN_CONNECTORS):
-            run = run[1:]
-        if len(run) > 1 and run[0].key in _COUNT_WORDS and _starts_with_label(text, run[1].start, labels):
             run = run[1:]
         if len([w for w in run if w.key not in _RUN_CONNECTORS and w.key != "the"]) < 2:
             continue
@@ -708,10 +684,9 @@ def sweep_narrative(parsed: dict, truth: CaseTruth) -> list[SweepHit]:
     spans.update(_identifier_spans(folded))
     spans.update(_reference_spans(folded))
     spans.update((m.start(), m.end(), "custodian_vocabulary") for m in _custodian_re().finditer(text))
-    labels = fixture_wallet_labels(truth)
     for clause in _clauses(text):
         spans.update(_suffix_spans(clause))
-        spans.update(_capitalized_spans(clause, text, labels))
+        spans.update(_capitalized_spans(clause))
 
     allowed = citation_index(parsed, truth)
 
