@@ -42,6 +42,7 @@ from typing import Any, Iterable
 from . import narrative
 from .casefile import (
     ADDRESS_FORMATS,
+    ALLOWED_ITEM_TYPES,
     OUTPUT_FIELDS,
     OUTPUT_ITEM_OPTIONAL,
     OUTPUT_ITEM_REQUIRED,
@@ -54,6 +55,7 @@ from .casefile import (
     explained_from_citations,
     fold_dashes,
     has_format_characters,
+    item_effect_usd,
     nfkc_spaced,
 )
 from .narrative_vocab import BAND_LABEL, BAND_NUMBER_LABEL
@@ -279,6 +281,55 @@ def citation_index(parsed: dict, truth: CaseTruth) -> EntityIndex:
     )
 
 
+# fix round 3, lane S1 (2026-11-07): wallet labels and reference numbers of the case
+# file, read from the truth record. CaseTruth keeps no separate wallet table, so a
+# wallet label is a fixture entity that is none of the other kinds valid_entities
+# holds: an organization, an item reference or alias, a reference number, an address
+# or tx hash, a long token, or a person's initial and surname ("T. Nakamura").
+_PERSON_NAME_RE = re.compile(r"[A-Z]\.(?: ?[A-Z]\.)* [A-Z][A-Za-z'\-]+")
+_ID_FORMAT_PATTERNS = (*ADDRESS_FORMATS.values(), *TX_HASH_FORMATS.values())
+
+
+def _item_identifiers(truth: CaseTruth) -> frozenset[str]:
+    return frozenset(
+        canonical_reference(r) for i in truth.items for r in (i.reference, *i.aliases) if nfkc_spaced(str(r))
+    )
+
+
+@functools.lru_cache(maxsize=512)
+def _wallet_labels_cached(valid: tuple[str, ...], orgs: tuple[str, ...], item_ids: frozenset[str]) -> frozenset[str]:
+    org_keys = {organization_key(o) for o in orgs}
+    out: set[str] = set()
+    for entity in valid:
+        text = nfkc_spaced(entity)
+        if not text or organization_key(text) in org_keys or canonical_reference(text) in item_ids:
+            continue
+        if re.fullmatch(REFERENCE_FORMAT, text) or _PERSON_NAME_RE.fullmatch(text):
+            continue
+        if any(re.fullmatch(p, text) for p in _ID_FORMAT_PATTERNS) or re.fullmatch(r"[0-9A-Za-z]{16,}", text):
+            continue
+        out.add(text)
+    return frozenset(out)
+
+
+def fixture_wallet_labels(truth: CaseTruth) -> frozenset[str]:
+    """Wallet labels the case file shows ("Hot 1", "hot-1", "HOT01", "Treasury ops",
+    "TREAS01"), in scope or not, as the fixture spells them."""
+    return _wallet_labels_cached(tuple(truth.valid_entities), tuple(truth.organizations), _item_identifiers(truth))
+
+
+def citation_omission_index(truth: CaseTruth) -> frozenset[str]:
+    """Pattern P12 (owner ruling 2026-11-07): the canonical forms of the fixture's
+    reference numbers (every fixture entity in REFERENCE_FORMAT, item references
+    included) and wallet labels. A sweep hit equal to one of them, exactly, names a
+    case-file entity that entities_cited leaves out: a citation omission, not a
+    fabrication and not a route. Organizations, people, addresses and tx hashes are
+    not in it, so a hit on them keeps its route."""
+    refs = {canonical_identifier(e) for e in truth.valid_entities if re.fullmatch(REFERENCE_FORMAT, nfkc_spaced(e))}
+    refs |= {canonical_identifier(r) for r in _item_identifiers(truth) if re.fullmatch(REFERENCE_FORMAT, r)}
+    return frozenset(refs | {canonical_identifier(label) for label in fixture_wallet_labels(truth)})
+
+
 # --- Narrative sweep vocabularies (section 6) ----------------------------------------
 
 # Real custodians beside the generator's CUSTODIANS. Plain English words that are
@@ -494,10 +545,32 @@ def _is_capitalized(word: _Word) -> bool:
     return word.text[:1].isupper() and not word.breaker
 
 
-def _capitalized_spans(clause: list[_Word]) -> Iterable[tuple[int, int, str]]:
+# fix round 3, lane S1 (2026-11-07), pattern P11: a count word in front of a wallet
+# label ("Two Hot 1 items"). The word is stripped only when the text right after it
+# is, exactly, a wallet label of the case file, so "Two Harbor Custody" or
+# "Two Meridian 1" (no such wallet) is still swept (the 2026-11-06 revert, R2.md F1).
+_COUNT_WORDS = frozenset("two three four five six seven eight nine ten both all".split())
+
+
+def _starts_with_label(text: str, start: int, labels: Iterable[str]) -> bool:
+    """True when text[start:] begins with one of labels, exactly, and the label ends
+    at a word edge."""
+    for label in labels:
+        end = start + len(label)
+        if label and text[start:end] == label and (end == len(text) or not text[end].isalnum()):
+            return True
+    return False
+
+
+def _capitalized_spans(
+    clause: list[_Word], text: str = "", wallet_labels: Iterable[str] = ()
+) -> Iterable[tuple[int, int, str]]:
     """Runs of two or more capitalized words (connectors such as "of" allowed
     inside), leading function words stripped. A run made only of non-entity
-    vocabulary is dropped."""
+    vocabulary is dropped. Pattern P11: a leading count word (Two to Ten, Both, All)
+    is stripped too when the words after it start with a wallet label of the case
+    file (wallet_labels, matched exactly in text)."""
+    labels = tuple(wallet_labels)
     non_entity = GENERIC_WORDS | FUNCTION_WORDS | CHAIN_WORDS | TICKER_WORDS
     runs: list[list[_Word]] = []
     current: list[_Word] = []
@@ -516,6 +589,8 @@ def _capitalized_spans(clause: list[_Word]) -> Iterable[tuple[int, int, str]]:
         while run and (run[-1].key in _RUN_CONNECTORS or run[-1].key == "the"):
             run = run[:-1]
         while run and (run[0].key in FUNCTION_WORDS or run[0].key in _RUN_CONNECTORS):
+            run = run[1:]
+        if len(run) > 1 and run[0].key in _COUNT_WORDS and _starts_with_label(text, run[1].start, labels):
             run = run[1:]
         if len([w for w in run if w.key not in _RUN_CONNECTORS and w.key != "the"]) < 2:
             continue
@@ -633,9 +708,10 @@ def sweep_narrative(parsed: dict, truth: CaseTruth) -> list[SweepHit]:
     spans.update(_identifier_spans(folded))
     spans.update(_reference_spans(folded))
     spans.update((m.start(), m.end(), "custodian_vocabulary") for m in _custodian_re().finditer(text))
+    labels = fixture_wallet_labels(truth)
     for clause in _clauses(text):
         spans.update(_suffix_spans(clause))
-        spans.update(_capitalized_spans(clause))
+        spans.update(_capitalized_spans(clause, text, labels))
 
     allowed = citation_index(parsed, truth)
 
@@ -705,7 +781,13 @@ def check_fabrication(parsed: dict, truth: CaseTruth) -> AnchorResult:
     in the fixture and passes; another schedule item's ticker routes to review.
     Wallet labels from the wallet-scope table, in scope or not, are already in
     truth.valid_entities and match exactly. Anything else outside the fixture is
-    still FM-005."""
+    still FM-005.
+
+    Fix round 3, pattern P12 (owner ruling 2026-11-07): a sweep hit equal, exactly,
+    to a reference number or wallet label of the case file (citation_omission_index)
+    is a citation omission. It goes to details["citation_omissions"], scores 0 and
+    routes nothing on that ground; it is not FM-005. Every other hit is unchanged:
+    a provisional 0 and a route."""
     fixture = fixture_index(truth)
     header = case_header_terms(truth)
     item_tickers = schedule_asset_tickers(truth)
@@ -716,12 +798,18 @@ def check_fabrication(parsed: dict, truth: CaseTruth) -> AnchorResult:
     ticker_cited = [c for c in outside if nfkc_spaced(c).casefold() in item_tickers]
     fabricated = [c for c in outside if c not in header_cited and c not in ticker_cited]
     hits = sweep_narrative(parsed, truth)
-    details = {"fabricated": fabricated, "sweep_hits": [{"token": h.token, "kind": h.kind} for h in hits]}
+    omission_keys = citation_omission_index(truth)
+    omitted = [h for h in hits if canonical_identifier(h.token) in omission_keys]
+    details = {
+        "fabricated": fabricated,
+        "sweep_hits": [{"token": h.token, "kind": h.kind} for h in hits],
+        "citation_omissions": [h.token for h in omitted],
+    }
     if header_cited:
         details["case_header_terms_cited"] = header_cited
     if ticker_cited:
         details["schedule_tickers_cited"] = ticker_cited
-    reasons = [h.reason for h in hits]
+    reasons = [h.reason for h in hits if h not in omitted]
     reasons += [
         f"entities_cited names {c!r}, the asset of a schedule item, not the case's asset or a counterparty"
         for c in ticker_cited
@@ -730,7 +818,7 @@ def check_fabrication(parsed: dict, truth: CaseTruth) -> AnchorResult:
         reasons.insert(0, "entities_cited holds a blank entry")
     if fabricated:
         return AnchorResult(0, ("FM-005",), (FABRICATION_REVIEW, *reasons), details)
-    if reasons:
+    if reasons or omitted:
         return AnchorResult(0, (), tuple(reasons), details)
     return AnchorResult(SCORE_MAX, (), (), details)
 
@@ -756,6 +844,84 @@ def _type_matches(cited: object, item_type: str) -> bool:
     A label of another type still differs."""
     key = _item_type_key(cited)
     return key == item_type or key in {_item_type_key(label) for label in TYPE_LABELS.get(item_type, ())}
+
+
+# fix round 3, lane S1 (2026-11-07), pattern P10: type labels. A cited type is read as
+# the one type its label names: brackets dropped, case folded, hyphen, underscore and
+# space alike, the schedule's own labels (TYPE_LABELS) plus a closed synonym list.
+_TYPE_SYNONYMS: dict[str, str] = {
+    "in_flight_transfer": "in_flight_settlement",
+}
+_TYPE_PAREN_RE = re.compile(r"\(([^()]*)\)")
+# A bracketed note may state the recording side or the effect; what it states is
+# checked against the item, and a contradiction routes. Anything else in it is dropped.
+_NOTE_SIDE_RES: tuple[tuple[str, re.Pattern], ...] = (
+    ("on_chain", re.compile(r"(?<![A-Za-z])(?:on[- ]?)?chain[- ]only(?![A-Za-z])", re.I)),
+    ("ledger", re.compile(r"(?<![A-Za-z])ledger[- ]only(?![A-Za-z])", re.I)),
+    ("both", re.compile(r"(?<![A-Za-z])(?:both sides|recorded (?:on )?both)(?![A-Za-z])", re.I)),
+)
+_NOTE_EFFECT_RE = re.compile(
+    r"(?<![A-Za-z])(?P<verb>increas(?:e|es|ed|ing)|rais(?:e|es|ed|ing)|adds?(?: to)?|widen(?:s|ed|ing)?|"
+    r"grow(?:s|ing)?|reduc(?:e|es|ed|ing)|lower(?:s|ed|ing)?|narrow(?:s|ed|ing)?|decreas(?:e|es|ed|ing)|"
+    r"cut(?:s|ting)?|shrink(?:s|ing)?)\s+(?:the\s+)?(?P<obj>surplus|reserves|shortfall|deficit)(?![A-Za-z])",
+    re.I,
+)
+_NOTE_UP = re.compile(r"increas|rais|add|widen|grow", re.I)
+_NOTE_OBJECT_SIGN = {"surplus": 1, "reserves": 1, "shortfall": -1, "deficit": -1}
+_ITEM_TYPE_KEYS = frozenset(TYPE_LABELS)
+
+
+def _type_of_label(label: str) -> str | None:
+    """The one item type a label (brackets already dropped) names, or None."""
+    key = _item_type_key(label).strip("_.,;:")
+    if key in _ITEM_TYPE_KEYS:
+        return key
+    if key in _TYPE_SYNONYMS:
+        return _TYPE_SYNONYMS[key]
+    named = {t for t, labels in TYPE_LABELS.items() if key in {_item_type_key(x) for x in labels}}
+    return named.pop() if len(named) == 1 else None
+
+
+def _note_contradicts(note: str, item) -> str | None:
+    """What a bracketed note in a cited type states that the item contradicts, or
+    None. The note may name a recording side or an effect on the variance (frame:
+    on-chain minus ledger); a note that names an item type routes too."""
+    for side, pattern in _NOTE_SIDE_RES:
+        if pattern.search(note) and item.recorded_in != side:
+            return f"note states {side}, item is recorded {item.recorded_in}"
+    effect = item_effect_usd(item)
+    for m in _NOTE_EFFECT_RE.finditer(note):
+        sign = (1 if _NOTE_UP.match(m.group("verb")) else -1) * _NOTE_OBJECT_SIGN[m.group("obj").casefold()]
+        if effect == 0 or (sign > 0) != (effect > 0):
+            return f"note states effect {'+' if sign > 0 else '-'}, item effect is {effect:+.2f}"
+    for labels in TYPE_LABELS.values():
+        for label in labels:
+            if re.search(rf"(?<![A-Za-z]){re.escape(label)}(?![A-Za-z])", note, re.I):
+                return f"note names the type label {label!r}"
+    return None
+
+
+def type_label_verdict(cited: object, item) -> tuple[bool, str]:
+    """(routes, why) for a cited type. It does not route when the label names the
+    item's type and any bracketed note agrees with the item, or (owner ruling
+    2026-11-07, S015) when the item is memo-only, so the schedule shows no type for
+    it, and the label names another allowed type. A disallowed type, an unreadable
+    label, a contradicting note, or another type for an item whose schedule row
+    states one, routes."""
+    text = nfkc_spaced(str(cited))
+    notes = _TYPE_PAREN_RE.findall(text)
+    named = _type_of_label(_TYPE_PAREN_RE.sub(" ", text))
+    if named is None:
+        return True, "label names no single item type"
+    for note in notes:
+        why = _note_contradicts(note, item)
+        if why:
+            return True, why
+    if named == item.type:
+        return False, "label names the item's type"
+    if item.channel == "memo_only" and named in ALLOWED_ITEM_TYPES and item.type in ALLOWED_ITEM_TYPES:
+        return False, f"memo-only item, no type on the schedule; label names allowed type {named}"
+    return True, f"label names {named}"
 
 
 # Reliance on an ineligible item outside reconciling_items (review finding F1-spec-1):
@@ -841,24 +1007,415 @@ def _reliance_verdict(sentence: str) -> str:
     return "unclear"
 
 
+# fix round 3, lane S1 (2026-11-07), pattern P8: an ineligible item named inside an
+# exclusion statement (contract C1, narrative.exclusion_spans). The span alone never
+# proves the exclusion. Every mention of the item in the sentence must lie inside a
+# span, and the sentence, with the span text, must hold no reliance on anything that
+# is not negated in its own clause, no exception word, and no contrast word before a
+# mention of the item. Otherwise the sentence keeps its old verdict.
+_RELIANCE_CUE_RE = re.compile(
+    r"(?<![A-Za-z])(?:rel(?:y|ies|ied|ying) (?:on|upon)|count(?:s|ed|ing)?|us(?:e|es|ed|ing)|"
+    r"includ(?:e|es|ed|ing)|carr(?:y|ies|ied|ying)|treat(?:s|ed|ing)? (?:it |them )?as|"
+    r"tak(?:e|es|en|ing) into account|qualif(?:y|ies|ied|ying)|accept(?:s|ed|ing)?|"
+    r"reconciling items?)(?![A-Za-z])",
+    re.IGNORECASE,
+)
+# "excluded from the reconciling items": the noun phrase after "from" names the set
+# the item is kept out of, not a reliance on it.
+_FROM_BEFORE_RE = re.compile(r"(?<![A-Za-z])(?:from|of) (?:the |its |any )?$", re.IGNORECASE)
+# "$0.00 is explained": a split statement with an amount subject and no agent names
+# no item, so it is not a reliance; with "by", "through" or "via" it is one.
+_SPLIT_PASSIVE_RE = re.compile(
+    r"(?:(?:USD|US\$|\$) ?[0-9][0-9,]*(?:\.[0-9]+)?|[0-9][0-9,]*(?:\.[0-9]+)? ?(?:USD|dollars))"
+    r" (?:is|are|was|were) (?:fully |wholly |partly |partially )?explained"
+    r"(?! (?:by|through|via|with|from|using|in)(?![A-Za-z]))",
+    re.IGNORECASE,
+)
+_CLAUSE_NEGATOR_RE = re.compile(
+    r"(?<![A-Za-z])(?:not|never|no|none|neither|nor|cannot)(?![A-Za-z])|n['\u2019]t(?![A-Za-z])", re.IGNORECASE
+)
+# Clause edges for the scope of a negation: punctuation and the connectives that
+# open a new clause. "and" and "or" do not end a clause (they join list members).
+_CLAUSE_EDGE_RE = re.compile(
+    r"[,;:()\[\]]|(?<![A-Za-z])(?:so|because|since|but|which|while|whereas|although|though|yet|then|that|"
+    r"however|hence|therefore|thus)(?![A-Za-z])",
+    re.IGNORECASE,
+)
+# "only" in a recording side ("ledger-only", "on chain only") limits the side, not
+# the exclusion, so it is not an exception there.
+_EXCEPTION_RE = re.compile(
+    r"(?<![A-Za-z])(?:except(?:ing)?|exceptions?|other than|besides|apart from|aside from|save|bar|barring|"
+    r"unless|instead|rather|beyond|notwithstanding|unlike|alone|just|merely|solely|sole)(?![A-Za-z])"
+    r"|(?<![A-Za-z-])(?<!chain )(?<!ledger )(?<!sides )only(?![A-Za-z-])",
+    re.IGNORECASE,
+)
+_CONTRAST_RE = re.compile(
+    r"(?<![A-Za-z])(?:but|however|whereas|yet|though|although|while|still)(?![A-Za-z])", re.IGNORECASE
+)
+_POLARITY_FLIP_WORDS = frozenset({"only", "just", "merely", "simply", "solely", "fail", "fails", "failed",
+                                  "failing"})
+
+
+def _negated_in_clause(text: str, start: int, cues: list[tuple[int, int]]) -> bool:
+    """True when a negator stands earlier in the clause of the cue at start, with no
+    polarity-flipping word ("not only", "never fails to") between them, and no
+    other cue between them that a coordinator separates from this one ("did not
+    rely on A and relied on B": the second cue is affirmed)."""
+    edge = 0
+    for m in _CLAUSE_EDGE_RE.finditer(text, 0, start):
+        edge = m.end()
+    negators = list(_CLAUSE_NEGATOR_RE.finditer(text, edge, start))
+    if not negators:
+        return False
+    neg = negators[-1]
+    between = text[neg.end():start]
+    if any(w.casefold() in _POLARITY_FLIP_WORDS for w in re.findall(r"[A-Za-z]+", between)):
+        return False
+    for cs, ce in cues:
+        if neg.end() <= cs < start and _COORDINATOR_RE.search(text, ce, start):
+            return False
+    return True
+
+
+def _reliance_cues(text: str) -> list[tuple[int, int]]:
+    """Explain cues and reliance cues in text, without the split statements
+    ("$0.00 is explained") and the "from the reconciling items" phrases."""
+    passive = [(m.start(), m.end()) for m in _SPLIT_PASSIVE_RE.finditer(text)]
+    cues: list[tuple[int, int]] = []
+    for m in (*_EXPLAIN_CUE_RE.finditer(text), *_RELIANCE_CUE_RE.finditer(text)):
+        if any(a <= m.start() < b for a, b in passive):
+            continue
+        word = m.group(0).casefold()
+        if word.startswith("reconciling"):
+            if word == "reconciling" and re.match(r" items?(?![A-Za-z])", text[m.end():], re.I):
+                continue  # the noun phrase, read by _RELIANCE_CUE_RE
+            if _FROM_BEFORE_RE.search(text[:m.start()]):
+                continue
+        cues.append((m.start(), m.end()))
+    return sorted(set(cues))
+
+
+# Scope of the exclusion over one mention. A C1 span may hold several list members
+# and the exclusion phrase of only one of them ("A is a timing item, B sits in the
+# out-of-scope wallet"), so a mention counts as excluded only when an exclusion
+# phrase governs it: its own (in its own list member or the bracket after it), a
+# head before a colon ("None of the open items qualify: A ..., B ..."), a list-taking
+# head whose members up to and with this one are noun phrases ("I did not rely on A,
+# the cleared item B, or C"), or a trailing phrase over the list ("A and B were
+# excluded", "A ... and B ..., so neither is relied on").
+_COORDINATOR_RE = re.compile(r"(?<![A-Za-z])(?:and|or|plus|also)(?![A-Za-z])", re.IGNORECASE)
+_EXCL_PHRASE_RE = re.compile(
+    r"(?<![A-Za-z0-9-])(?:exclud(?:e|es|ed|ing)|disregard(?:s|ed|ing)?|set aside|omitted|left out|ineligible"
+    r"|not (?:an? )?(?:[a-z-]+ )?eligible|n['\u2019]t (?:an? )?eligible|out[- ]of[- ]scope"
+    r"|outside (?:the )?(?:[a-z-]+ )?scope|not in scope|(?:different|another|separate) (?:asset|token|currency|coin)"
+    r"|(?:already[- ])?cleared|(?:dated |booked |broadcast |posted |received |sent )?after (?:the )?cut-?off"
+    r"|post-cut-?off"
+    r"|(?:not|never|neither|none|nor|cannot)(?![A-Za-z])[^,;:.()]{0,40}?(?<![A-Za-z])rel(?:y|ies|ied|ying) (?:on|upon)"
+    r"|n['\u2019]t[^,;:.()]{0,40}?(?<![A-Za-z])rel(?:y|ies|ied|ying) (?:on|upon)"
+    r"|(?:not|never|neither|none|nor|no)(?![A-Za-z])[^,;:.()]{0,40}?(?<![A-Za-z])(?:qualif(?:y|ies|ied)|eligible))"
+    r"(?![A-Za-z0-9])",
+    re.IGNORECASE,
+)
+_PHRASE_NEGATED_RE = re.compile(r"(?:(?<![A-Za-z])(?:not|never|no longer)|n['\u2019]t)\s+(?:\w+\s+)?$", re.IGNORECASE)
+_NOT_UNIVERSAL_RE = re.compile(r"(?:not|no) (?:every|all|each|both|always|any one)(?![A-Za-z])", re.IGNORECASE)
+_PHRASE_NEGATOR_LEAD_RE = re.compile(r"(?:not|never|neither|none|nor|no|cannot|n['\u2019]t)(?![A-Za-z])", re.IGNORECASE)
+_ANY_NEGATOR_RE = re.compile(
+    r"(?<![A-Za-z])(?:not|never|no|none|nothing|nobody|neither|nor|cannot|without)(?![A-Za-z])|n['\u2019]t(?![A-Za-z])",
+    re.IGNORECASE,
+)
+_LIST_HEAD_RE = re.compile(
+    r"(?<![A-Za-z])(?:exclud(?:e|es|ed|ing)|disregard(?:s|ed|ing)?|set aside|omitted|left out"
+    r"|(?:not|never)\s+(?:\w+\s+)?rel(?:y|ied|ying) (?:on|upon)|n['\u2019]t\s+(?:\w+\s+)?rel(?:y|ied|ying) (?:on|upon))"
+    r"(?![A-Za-z])",
+    re.IGNORECASE,
+)
+_TICKERS_ALT = "BTC|ETH|SOL|USDC|USDT|XRP|ADA"
+_NOT_TICKER_RE = re.compile(rf",? (?:not|rather than|instead of) (?:an? |the )?(?:{_TICKERS_ALT})(?![A-Za-z0-9])")
+_OTHER_TICKER_ITEM_RE = re.compile(
+    rf"(?<![A-Za-z0-9])(?P<tk>{_TICKERS_ALT})[ -](?:[a-z-]+ )?(?:item|movement|deposit|withdrawal|transfer|entry"
+    rf"|transaction|leg|receipt|payment)s?(?![A-Za-z0-9])"
+)
+_BACKREF_RE = re.compile(r"(?<![A-Za-z])(?:neither|none|both|these|those|they|all|each|it)(?![A-Za-z])", re.IGNORECASE)
+_MEMBER_EDGE_RE = re.compile(r"[,;:]|(?<![A-Za-z])(?:and|or|nor|so|because|since|but)(?![A-Za-z])", re.IGNORECASE)
+_TRAILING_EDGE_RE = re.compile(r"[,;:]|(?<![A-Za-z])(?:so|and|hence|thus|therefore)(?![A-Za-z])", re.IGNORECASE)
+_AUX_TAIL_RE = re.compile(
+    r"(?:\s|(?<![A-Za-z])(?:is|are|was|were|been|be|has|have|had|also|not|never|then|both|all)(?![A-Za-z]))*$",
+    re.IGNORECASE,
+)
+_ELLIPTIC_RE = re.compile(
+    r"\s*(?:does|do|did|is|was|are|were|can|could|will|would|has|have|had|qualifies|counts)(?:\s+(?:too|also|so))?\s*",
+    re.IGNORECASE,
+)
+_COUNT_HEAD_RE = re.compile(r"(?<![A-Za-z])(two|three|four|five|six|seven|eight|nine|ten)(?![A-Za-z])", re.IGNORECASE)
+_OTHER_HEAD_RE = re.compile(r"(?<![A-Za-z])(?:other|remaining|rest)(?![A-Za-z])", re.IGNORECASE)
+_COUNTS = {w: n for n, w in enumerate("two three four five six seven eight nine ten".split(), start=2)}
+_FINITE_VERBS = frozenset("""
+is are was were be been being has have had do does did sits sit sat relates relate explains explain explained
+remains remain stays stay covers cover offsets offset adds add reduces reduce lowers lower raises raise widens
+widen narrows narrow accounts account qualifies qualify counts count appears appear shows show looks look
+belongs belong falls fall carries carry holds hold needs need reflects reflect represents represent keep keeps
+kept retain retains take takes took taken put puts make makes made treat treats use uses include includes rely
+relies leave leaves left move moves can could will would should must may might goes went closes close clears
+""".split())
+# -ed words that the lists use as adjectives inside a noun phrase
+_ED_ADJECTIVES = frozenset({
+    "cleared", "dated", "unbooked", "listed", "noted", "scheduled", "unmatched", "unconfirmed", "credited",
+    "debited", "related", "unrelated", "detailed", "described",
+})
+_PAREN_RE = re.compile(r"\([^()]*\)")
+
+
+def _verb_like(text: str) -> bool:
+    """A finite verb, or an -ed word outside the adjective list, in text with its
+    brackets removed: the sign that a stretch is a clause, not a noun phrase."""
+    for word in re.findall(r"[A-Za-z][A-Za-z'-]*", _PAREN_RE.sub(" ", text)):
+        w = word.casefold()
+        if w in _FINITE_VERBS:
+            return True
+        last = w.rsplit("-", 1)[-1]
+        if last.endswith("ed") and len(last) > 3 and last not in _ED_ADJECTIVES:
+            return True
+    return False
+
+
+# Negation scope for an exclusion phrase that does not open with its own negator:
+# list commas do not end it ("None of A, B or C was omitted"), clause edges do.
+_STRONG_EDGE_RE = re.compile(
+    r"[;:]|(?<![A-Za-z])(?:so|because|since|but|which|while|whereas|although|though|yet|then|that|however|hence"
+    r"|therefore|thus)(?![A-Za-z])",
+    re.IGNORECASE,
+)
+# The words a list member under an exclusion head may use: function words, the item
+# types, and the descriptive vocabulary of an exclusion (status, scope, date, wallet,
+# asset). A member that uses any other word ("WD-1 bridges the gap", "JE-2 is the
+# driver") is not shown to be excluded, so the mention keeps its route.
+_MEMBER_FUNCTION_WORDS = frozenset("""
+a an the and or nor of in on at by for from to into onto with within under over via per as its it their them
+they this these those is are was were be been being has have had not no both either neither none also so than
+then each all any
+""".split())
+_MEMBER_DESCRIPTIVE_WORDS = frozenset("""
+pending transfer transfers xfer timing difference differences diff fee fees network flight settlement
+settlements manual adjustment adjustments adj suspense clearing prior period ppa cleared excluded ineligible
+omitted disregarded set aside left out scope outside dated after cutoff cut off sides side sits sit sat relates
+relate related belongs belong own funds staking payouts rewards treasury ops booked unbooked posted broadcast
+received sent recorded another different separate relied rely upon qualify qualifies already only entry entries
+line lines movement movements item items type types post pre listed noted
+""".split())
+_GENERIC_NOT_DESCRIPTIVE = frozenset("""
+variance surplus shortfall deficit excess total aggregate net gross balance balances amount amounts value
+explained unexplained remaining remainder portion residual reconciled reconciling reconciliation
+reconciliations fully partly partially overall analysis commentary review control controls proof por
+""".split())
+_MEMBER_VOCAB = (
+    _MEMBER_FUNCTION_WORDS | _MEMBER_DESCRIPTIVE_WORDS | CHAIN_WORDS | TICKER_WORDS
+    | (GENERIC_WORDS - _GENERIC_NOT_DESCRIPTIVE)
+)
+
+
+def _descriptive(segment: str, labels: Iterable[str]) -> bool:
+    """True when every word of segment, with wallet labels and tokens that hold a
+    digit (references, dates, amounts) taken out, is in _MEMBER_VOCAB."""
+    for label in sorted(labels, key=len, reverse=True):
+        segment = segment.replace(label, " ")
+    segment = re.sub(r"\S*[0-9]\S*", " ", segment)
+    return all(w.casefold() in _MEMBER_VOCAB for w in re.findall(r"[A-Za-z]+", segment))
+
+
+def _phrases(text: str, start: int, end: int, scope_start: int | None = None) -> list[re.Match]:
+    """Exclusion phrases in text[start:end] that are not themselves negated and do
+    not open with a non-universal quantifier ("not every item qualifies"). A phrase
+    that does not open with its own negator ("excluded", "omitted", "cleared") is
+    negated by a negator earlier in its clause ("Nothing was omitted", "None of A, B
+    or C was omitted"), searched from scope_start (the sentence start)."""
+    scope_start = start if scope_start is None else scope_start
+    out = []
+    for m in _EXCL_PHRASE_RE.finditer(text, start, end):
+        if _PHRASE_NEGATED_RE.search(text[max(start, m.start() - 20):m.start()]):
+            continue
+        if _NOT_UNIVERSAL_RE.match(text, m.start()):
+            continue
+        if not _PHRASE_NEGATOR_LEAD_RE.match(text, m.start()) and _clause_negated(text, scope_start, m.start()):
+            continue
+        out.append(m)
+    return out
+
+
+def _clause_negated(text: str, scope_start: int, pos: int) -> bool:
+    """A negator between the last strong clause edge before pos and pos."""
+    edge = max([e.end() for e in _STRONG_EDGE_RE.finditer(text, scope_start, pos)] + [scope_start])
+    return bool(_ANY_NEGATOR_RE.search(text, edge, pos))
+
+
+def _own_member(text: str, b: int, refs: list[tuple[int, int]], s1: int) -> tuple[int, int]:
+    """The list member a mention ending at b heads: the bracket right after it, then
+    the text up to the next member edge, the next reference or the sentence end,
+    then a ", not <ticker>" right after."""
+    pos = b
+    paren = re.match(r"\s*\([^()]*\)", text[pos:s1])
+    if paren:
+        pos += paren.end()
+    nxt = min([ra for ra, _ in refs if ra >= b] + [s1])
+    edge = _MEMBER_EDGE_RE.search(text, pos, nxt)
+    end = edge.start() if edge else nxt
+    tail = _NOT_TICKER_RE.match(text, end, nxt)
+    if tail:
+        end = tail.end()
+    return b, end
+
+
+def _colon_head_scopes(text: str, s0: int, a: int, refs: list[tuple[int, int]]) -> bool:
+    """A head before a top-level colon ahead of the mention states the exclusion. A
+    head over "the other two" items scopes only when its count equals the number of
+    references after the colon ("None of the other items qualify: A ..." leaves room
+    for an item that does)."""
+    for colon in re.finditer(r":", text[s0:a]):
+        cpos = s0 + colon.start()
+        head = text[s0:cpos]
+        if head.count("(") != head.count(")") or not _phrases(text, s0, cpos):
+            continue
+        if _OTHER_HEAD_RE.search(head):
+            count = _COUNT_HEAD_RE.search(head)
+            if not count or _COUNTS[count.group(1).casefold()] != len([r for r in refs if r[0] > cpos]):
+                continue
+        return True
+    return False
+
+
+def _mention_scoped(text: str, sentence: tuple[int, int], a: int, b: int, refs: list[tuple[int, int]],
+                    truth: CaseTruth) -> bool:
+    """True when an exclusion phrase governs the mention at (a, b) and the list member
+    it heads is descriptive (see _MEMBER_VOCAB)."""
+    s0, s1 = sentence
+    labels = fixture_wallet_labels(truth)
+    m0, m1 = _own_member(text, b, refs, s1)
+    own = text[m0:m1]
+    if _ELLIPTIC_RE.fullmatch(own):
+        return False  # "JE-1 does": an elliptical affirmation
+    nxt = min([ra for ra, _ in refs if ra > a] + [s1])
+    member = text[b:nxt]  # the mention's whole list member, up to the next reference
+    if _descriptive(own, labels):
+        if _phrases(text, m0, m1, s0):
+            return True
+        if any(m.group("tk") != truth.asset for m in _OTHER_TICKER_ITEM_RE.finditer(own)):
+            return True
+    if _colon_head_scopes(text, s0, a, refs) and _descriptive(member, labels):
+        return True
+    for h in _LIST_HEAD_RE.finditer(text, s0, a):
+        if _PHRASE_NEGATED_RE.search(text[max(s0, h.start() - 20):h.start()]):
+            continue
+        if not _PHRASE_NEGATOR_LEAD_RE.match(text, h.start()) and _clause_negated(text, s0, h.start()):
+            continue  # "Nothing was omitted: A, B"
+        gap = text[h.end():a]
+        if not _verb_like(gap) and not _verb_like(own) and _descriptive(gap, labels) and _descriptive(own, labels):
+            return True
+    last = max(rb for _, rb in refs)
+    for p in _phrases(text, last, s1, s0):
+        clause_start = max([e.end() for e in _TRAILING_EDGE_RE.finditer(text, last, p.start())] + [last])
+        member = text[b:min([ra for ra, _ in refs if ra > a] + [clause_start])]
+        if not _descriptive(member, labels):
+            continue
+        back = _BACKREF_RE.search(text, clause_start, p.end())
+        if back and (back.group(0).casefold() != "it" or len(refs) == 1):
+            return True
+        gap = _AUX_TAIL_RE.sub("", text[b:p.start()])
+        if not _verb_like(gap) and _descriptive(gap, labels):
+            return True
+    return False
+
+
+def _span_exclusion_proved(text: str, sentence: tuple[int, int], mentions: list[tuple[int, int]],
+                           spans: list[tuple[int, int]], refs: list[tuple[int, int]], truth: CaseTruth) -> bool:
+    """Pattern P8 pass-proof for one sentence that names an ineligible item: every
+    mention inside a C1 span and governed by an exclusion phrase over a descriptive
+    list member, and no affirmed reliance, exception word or contrast word in the
+    sentence or its spans."""
+    if not mentions:
+        return False
+    holding: list[tuple[int, int]] = []
+    for a, b in mentions:
+        inside = [(lo, hi) for lo, hi in spans if lo <= a and b <= hi]
+        if not inside or not _mention_scoped(text, sentence, a, b, refs, truth):
+            return False
+        holding.extend(inside)
+    s0, s1 = sentence
+    regions = [(s0, s1), *[(lo, hi) for lo, hi in holding if not (s0 <= lo and hi <= s1)]]
+    for lo, hi in regions:
+        part = text[lo:hi]
+        if _EXCEPTION_RE.search(part) or _CONTRAST_RE.search(part):
+            return False
+        cues = _reliance_cues(part)
+        if any(not _negated_in_clause(part, cs, cues) for cs, _ in cues):
+            return False
+    return True
+
+
+def _mention_spans(text: str, start: int, end: int, item) -> list[tuple[int, int]]:
+    out: list[tuple[int, int]] = []
+    for lit in (item.reference, *item.aliases):
+        lit = canonical_reference(lit)
+        if not lit:
+            continue
+        pattern = re.compile(rf"(?<![A-Za-z0-9]){re.escape(lit)}(?![A-Za-z0-9]|-[A-Za-z0-9])")
+        out.extend((m.start(), m.end()) for m in pattern.finditer(text, start, end))
+    return sorted(set(out))
+
+
+def _sentence_bounds(text: str) -> list[tuple[int, int]]:
+    """The sentences _SENTENCE_SPLIT_RE.split yields, as offsets into text."""
+    out: list[tuple[int, int]] = []
+    start = 0
+    for m in _SENTENCE_SPLIT_RE.finditer(text):
+        out.append((start, m.start()))
+        start = m.end()
+    out.append((start, len(text)))
+    return [(a, b) for a, b in out if b > a]
+
+
 def ineligible_reliance(parsed: dict, truth: CaseTruth) -> tuple[list[str], list[str]]:
     """(FM-015 problems, review reasons) for ineligible fixture items the commentary
     names in its narrative or entities_cited but not in reconciling_items."""
+    problems, reasons, _ = _ineligible_reliance(parsed, truth)
+    return problems, reasons
+
+
+def _ineligible_reliance(parsed: dict, truth: CaseTruth) -> tuple[list[str], list[str], list[str]]:
+    """ineligible_reliance plus the references whose exclusion the span proof
+    (pattern P8) decided."""
     in_items = {
         truth.item_by_reference(e["reference"]).reference
         for e in parsed["reconciling_items"]
         if truth.item_by_reference(e["reference"]) is not None
     }
     narrative_text = fold_dashes(nfkc_spaced(str(parsed.get("narrative") or "")))
-    sentences = [sn for sn in _SENTENCE_SPLIT_RE.split(narrative_text) if sn]
+    bounds = _sentence_bounds(narrative_text)
+    try:
+        spans = list(narrative.exclusion_spans(narrative_text))
+    except Exception:  # an extractor bug leaves the old verdicts in place, never a pass
+        spans = []
     cited = {truth.item_by_reference(c).reference for c in parsed["entities_cited"]
              if isinstance(c, str) and truth.item_by_reference(c) is not None}
     problems: list[str] = []
     reasons: list[str] = []
+    span_excluded: list[str] = []
     for item in truth.items:
         if item.reference in in_items or truth.eligibility(item).eligible:
             continue
-        verdicts = [_reliance_verdict(sn) for sn in sentences if _mentions(sn, item)]
+        verdicts = []
+        by_span = False
+        for a, b in bounds:
+            sn = narrative_text[a:b]
+            if not _mentions(sn, item):
+                continue
+            verdict = _reliance_verdict(sn)
+            refs = sorted({r for other in truth.items for r in _mention_spans(narrative_text, a, b, other)})
+            if verdict == "unclear" and _span_exclusion_proved(
+                narrative_text, (a, b), _mention_spans(narrative_text, a, b, item), spans, refs, truth
+            ):
+                verdict, by_span = "excluded", True
+            verdicts.append(verdict)
+        if by_span and set(verdicts) == {"excluded"}:
+            span_excluded.append(item.reference)
         if "relied" in verdicts:
             problems.append(f"narrative relies on {item.reference}, which is ineligible: "
                             f"{', '.join(truth.eligibility(item).reasons)}")
@@ -866,13 +1423,14 @@ def ineligible_reliance(parsed: dict, truth: CaseTruth) -> tuple[list[str], list
             reasons.append(f"narrative names ineligible item {item.reference} without stating whether it explains the variance")
         elif not verdicts and item.reference in cited:
             reasons.append(f"entities_cited names ineligible item {item.reference} that the narrative does not discuss")
-    return problems, reasons
+    return problems, reasons, span_excluded
 
 
 def check_reconciling_items(parsed: dict, truth: CaseTruth) -> AnchorResult:
     entries = list(parsed["reconciling_items"])
     problems: list[str] = []
     reasons: list[str] = []
+    type_checks: list[dict] = []
     seen: dict[str, int] = {}
     for n, entry in enumerate(entries):
         ref = entry["reference"]
@@ -891,12 +1449,17 @@ def check_reconciling_items(parsed: dict, truth: CaseTruth) -> AnchorResult:
                 f"reconciling_items[{n}] {ref!r} amount {entry['amount_usd']} does not match {item.amount_usd}"
             )
         if "type" in entry and not _type_matches(entry["type"], item.type):
-            reasons.append(f"reconciling_items[{n}] {ref!r} type {entry['type']!r} differs from {item.type!r}")
-    relied, unclear = ineligible_reliance(parsed, truth)
+            routes, why = type_label_verdict(entry["type"], item)
+            type_checks.append({"index": n, "reference": item.reference, "cited_type": entry["type"],
+                                "item_type": item.type, "routes": routes, "why": why})
+            if routes:
+                reasons.append(f"reconciling_items[{n}] {ref!r} type {entry['type']!r} differs from {item.type!r}")
+    relied, unclear, span_excluded = _ineligible_reliance(parsed, truth)
     problems += relied
     reasons += unclear
     if problems:
-        return AnchorResult(0, ("FM-015",), (FABRICATION_REVIEW, *reasons), {"problems": problems})
+        return AnchorResult(0, ("FM-015",), (FABRICATION_REVIEW, *reasons),
+                            {"problems": problems, "type_checks": type_checks, "span_excluded": span_excluded})
 
     cited_refs = [e["reference"] for e in entries]
     explained, unexplained = explained_from_citations(cited_refs, truth)
@@ -907,6 +1470,8 @@ def check_reconciling_items(parsed: dict, truth: CaseTruth) -> AnchorResult:
         "unexplained_usd": unexplained,
         "truth_explained_usd": truth.explained_usd,
         "omitted": omitted,
+        "type_checks": type_checks,
+        "span_excluded": span_excluded,
     }
     if abs(explained - truth.explained_usd) <= USD_TOLERANCE:
         points = SCORE_MAX
@@ -927,11 +1492,17 @@ def check_faithfulness(parsed: dict, truth: CaseTruth) -> AnchorResult:
 
 
 def combine_faithfulness(fab: AnchorResult, rec: AnchorResult) -> AnchorResult:
+    """The min of the two anchors. Pattern P12: the fabrication anchor's citation
+    omissions ride along in details, so the faithfulness score says why it is 0."""
     return AnchorResult(
         min(fab.points, rec.points),
         tuple(dict.fromkeys(fab.failure_modes + rec.failure_modes)),
         tuple(dict.fromkeys(fab.review_reasons + rec.review_reasons)),
-        {"fabrication": fab.points, "reconciling_items": rec.points},
+        {
+            "fabrication": fab.points,
+            "reconciling_items": rec.points,
+            "citation_omissions": list(fab.details.get("citation_omissions", [])),
+        },
     )
 
 
