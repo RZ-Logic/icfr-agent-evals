@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import hashlib
 
-WORKER_PROMPT_VERSION = "v0.0.3-draft"  # lock after dev-set elicitation
+WORKER_PROMPT_VERSION = "v0.0.4-draft"  # lock after dev-set elicitation
 
 # NOTE: this prompt is delivered via Inspect's system_message(), which runs the
 # text through str.format()-style templating against sample metadata. It is
@@ -55,7 +55,8 @@ Respond with ONLY a JSON object (no prose, no code fences) with exactly these ke
   "variance_amount_usd": the absolute USD variance as a number (no symbols or commas)
   "variance_direction":  "surplus" or "shortfall"
   "materiality_band":    "M1", "M2", or "M3"
-  "entities_cited":      array of entity strings drawn only from the case file
+  "entities_cited":      array of every entity named in the narrative, including \
+items you excluded, as strings drawn only from the case file
   "reconciling_items":   array of the reconciling items you rely on, each an object \
 with "reference" (as given in the case file) and "amount_usd" (a number), and \
 optionally "type"; an empty array if none
