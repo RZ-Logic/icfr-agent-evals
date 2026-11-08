@@ -1341,6 +1341,293 @@ def _check_item_amount(toks: list[_Tok], i: int, ref_tok: _Tok, ctx: _Context) -
 
 # --- Statements -------------------------------------------------------------------------
 
+# fix round 3, lane N2 (2026-11-07). Kept here so narrative_vocab.py (and vocab_sha256)
+# does not move. P8 widens exclusion_spans (contract C1) to whole coordinated lists;
+# P6, P7, P1 (split side) and P9 add pass-proofs to the statement verdicts in _check.
+#
+# P8: exclusion predicates the round-2 list missed: "cannot be relied on", "no open
+# item is eligible". "Is cleared" and "dated after the cutoff" are not predicates of
+# their own: a fragment joins clauses at " and " ("WD-1 is dated after the cutoff and
+# DP-2 is a USDC deposit"), so such a predicate would cover the other item too. They
+# are covered as members of a list under an exclusion head (below).
+_N2_PREDICATE_RE = re.compile(
+    r"(?<![A-Za-z0-9-])(?:"
+    r"cannot(?![A-Za-z0-9])[^,;:.]{0,40}?(?<![A-Za-z0-9])rel(?:ied|y) (?:on|upon)"
+    r"|(?:no|none)(?![A-Za-z0-9])[^,;:.]{0,40}?(?<![A-Za-z0-9])(?:is|are|was|were|be) eligible"
+    r")(?![A-Za-z0-9])",
+    _I,
+)
+# A predicate that states exclusion in positive form ("excluded", "out of scope") is
+# negated by a quantifier on its subject ("no item is excluded", "none of the items
+# were disregarded"). "and", "but" and "or" end the subject, so "DP-1 has no amount
+# and is excluded" stays an exclusion.
+_N2_POSITIVE_PREDICATE_RE = re.compile(
+    r"^(?:exclud|disregard|set|omit|left|out|outside|different|another|other|separate|is|are|was|were|been"
+    r"|already|cleared|dated)",
+    _I,
+)
+_N2_QUANTIFIER_NEGATION_RE = re.compile(
+    r"(?<![A-Za-z0-9])(?:no|none(?: of (?:the|these|those))?|nothing|neither)\s+"
+    r"(?:(?!(?:and|but|or)(?![A-Za-z0-9]))[A-Za-z-]+\s+){0,3}?"
+    r"(?:(?:is|are|was|were|has been|have been|had been|gets?|got)\s+(?:also\s+|then\s+)?)?$",
+    _I,
+)
+# A reliance or explaining verb in a list member: a member that states one, not
+# negated, is never widened into an exclusion span.
+_N2_RELIANCE_RE = re.compile(
+    r"(?<![A-Za-z0-9])(?:explain(?:s|ed|ing)?|accounts? for|accounted for|accounting for|offset(?:s|ting)?"
+    r"|reconcil(?:es|ed)|rel(?:y|ies|ied|ying) (?:on|upon)|drives?|drove|driven|caus(?:es|ed)|due to"
+    r"|attributable|attributed|makes? up|made up|comprises?|ties? out|covers?|covered|clos(?:es|ed) the"
+    r"|clears the|resolv(?:es|ed)|contribut(?:es|ed)|add(?:s|ed)|widen(?:s|ed)|narrow(?:s|ed)|reduc(?:es|ed)"
+    r"|lower(?:s|ed)|rais(?:es|ed)|increas(?:es|ed)|decreas(?:es|ed)|included|counted|used|qualif(?:y|ies|ied)"
+    r"|(?<!in)eligible)(?![A-Za-z0-9])",
+    _I,
+)
+_N2_MEMBER_NEGATOR_RE = re.compile(
+    r"(?<![A-Za-z0-9])(?:not|never|no|neither|nor|none|cannot|without)(?![A-Za-z0-9])|n['\u2019]t(?![A-Za-z0-9])",
+    _I,
+)
+# A consequence clause between an exclusion head and its colon list ("No open item
+# qualifies, so $0.00 is explained and the full $X is unexplained: DP-1 is cleared,
+# ..."). It may be skipped only when it names no item, reference or pronoun.
+_N2_CONSEQUENCE_RE = re.compile(r"^\s*(?:so|hence|therefore|thus)(?![A-Za-z0-9])", _I)
+_N2_ITEM_WORD_RE = re.compile(
+    rf"(?<![A-Za-z0-9])(?:{_EXCL_ITEM_NOUN}|it|its|they|them|these|those|this|that|both|each|all|either"
+    r"|neither|none|one|two|three|four|five)(?![A-Za-z0-9])|\ue001",
+    _I,
+)
+# A universal exclusion head that opens a run of item sentences ("None of the listed or
+# noted items qualifies as a reconciling item. JE-1 is a suspense clearing entry. ...").
+_N2_UNIVERSAL_HEAD_RE = re.compile(
+    r"^\s*(?:none of (?:the )?(?:[A-Za-z-]+ ){0,4}?(?:items?|entr(?:y|ies)|schedule|movements?|transactions?)"
+    r"|no (?:[A-Za-z-]+ ){0,3}?(?:items?|entr(?:y|ies)|movements?|transactions?))"
+    r" (?:qualif(?:y|ies)|is eligible|are eligible|(?:can|could|may) be relied (?:on|upon)"
+    r"|(?:is|are|was|were) relied (?:on|upon))(?![A-Za-z0-9])",
+    _I,
+)
+_N2_COLON_RE = re.compile(r":\s+")
+# P6: more shapes of a band named as the object of a request ("the preparer notes ask
+# for M1 treatment", "the proposal that the variance be categorised as M1") and of its
+# refusal (", which the variance amount does not support"; "has no basis").
+_N2_REQUEST_OBJECT_RE = re.compile(
+    r"(?<![A-Za-z0-9])(?:that (?:the |this |it )?(?:[A-Za-z-]+ ){0,3}?(?:be|is|was|should be|would be) "
+    r"(?:[A-Za-z]+ed|[A-Za-z]+en|put|kept|set)"
+    r"|(?:asks?|asked|asking|calls?|called|calling|push(?:es|ed)?|pressure[sd]?) for)(?![A-Za-z0-9])",
+    _I,
+)
+_N2_REFUSAL_WHICH_RE = re.compile(
+    r"^\s*which (?:[A-Za-z-]+ ){0,4}?(?:(?:does|do|did|is|was|are|were|can|could|would|will) not|(?:does|do|did|is|was"
+    r"|are|were|ca|could|would|wo)n['\u2019]t|cannot) (?:support|justify|warrant|apply|reflect|allow|permit)"
+    rf"|^\s*which (?:is|was|has been|have been|had been) (?:not (?:supported|applied|accepted|reflected)|{_REFUSED_WORDS})",
+    _I,
+)
+_N2_NO_BASIS_RE = re.compile(r"^ (?:no|little) (?:basis|support|merit|grounds?)(?![A-Za-z0-9])", _I)
+# P6 assertion form: the truth band stated as where the variance is ("stays at M2",
+# "remains M2", "is M2", "in the M2 band", "falls in M2").
+_N2_BAND_ASSERT_RE = re.compile(
+    r"(?<![A-Za-z0-9])(?:(?:stays?|stayed|remains?|remained|is|are|was|were|sits?|sat|falls?|fell|lands?|landed"
+    r"|belongs?|rests?|kept|keeps?)(?: (?:at|in|within|as|under))?|at|in|within)(?: (?:the|an?|band))? $",
+    _I,
+)
+
+
+def _n2_refusal_proven(b: dict, bands: list[dict], truth_band: str) -> bool:
+    """P6 pass-proof for a band statement marked refused_request, all three required:
+    (1) it is a label for one band other than the truth band, refused as the object of
+    a request; (2) a label in the same sentence asserts the truth band in assertion form,
+    not negated; (3) no statement in that sentence that covers the truth band is negated
+    or refused. "This is M1, not M2" has no refused request and keeps its FM-002."""
+    if b.get("statement") != "label" or not b.get("bands") or len(b["bands"]) != 1:
+        return False
+    if b["bands"][0] == truth_band:
+        return False
+    same = [o for o in bands if o.get("clause_start") == b.get("clause_start")]
+    asserted = any(o.get("statement") == "label" and o.get("asserted") and not o["negated"]
+                   and o.get("bands") == [truth_band] for o in same)
+    if not asserted:
+        return False
+    for o in same:
+        covers = truth_band in (o.get("bands") or []) or (
+            o.get("verdicts") and o["verdicts"].get(truth_band) != "contradict")
+        if o["negated"] and covers:
+            return False
+    return True
+
+
+# P7: an asset attached to an item inside an exclusion clause. The item is named right
+# before ("DP-1 is a USDC movement", "WD-1 (an ETH item", "WD-1, an ETH item") or right
+# after ("the ETH deposit DP-1"); otherwise it is described ("the USDC deposit").
+_N2_ATTACH_BEFORE_RE = re.compile(r"^(?:\s+(?:is|was|being)\s+|\s*\(\s*|\s*,\s*)(?:(?:an?|the|one)\s+)?$", _I)
+_N2_ATTACH_AFTER_RE = re.compile(rf"^[ -](?:[A-Za-z-]+ )?(?:{_EXCL_ITEM_NOUN})\s+\(?\s*$", _I)
+_N2_INFLOW_NOUNS = frozenset({"deposit", "deposits", "inflow", "inflows", "receipt", "receipts", "credit", "credits"})
+_N2_OUTFLOW_NOUNS = frozenset({"withdrawal", "withdrawals", "outflow", "outflows", "payment", "payments",
+                               "debit", "debits"})
+# "WD-1 is an ETH item, not USDC": the case asset named only as the contrast to the
+# other asset of an excluded item.
+_N2_CONTRAST_TAIL_RE = re.compile(
+    rf"^[ -](?:[A-Za-z-]+ )?(?:{_EXCL_ITEM_NOUN})(?![A-Za-z0-9])[^,;:.()]{{0,20}}, (?:not|rather than|instead of) "
+    r"(?:an? |the )?$",
+    _I,
+)
+
+
+def _n2_other_asset_item(a: dict, text: str, refs: list, truth: CaseTruth, cited_any: frozenset) -> str | None:
+    """P7 pass-proof for an asset statement marked exclusion: the reference (or
+    "described:<asset>") of the case-file item the other asset is attached to, when the
+    case file shows that item in that asset and reconciling_items does not cite it.
+    None when the asset is the case asset, the attachment is not found, or the case
+    file does not bear it out."""
+    asset = a["asset"]
+    if asset == truth.asset or not a.get("exclusion"):
+        return None
+    lo, hi = a.get("exclusion_span", (a["start"], a["end"]))
+    before = [r for r in refs if lo <= r.start and r.end <= a["start"]]
+    after = [r for r in refs if a["end"] <= r.start and r.end <= hi]
+    ref = None
+    if before and _N2_ATTACH_BEFORE_RE.match(text[before[-1].end:a["start"]]):
+        ref = before[-1]
+    elif after and _N2_ATTACH_AFTER_RE.match(text[a["end"]:after[0].start]):
+        ref = after[0]
+    if ref is not None:
+        item = truth.item_by_reference(ref.text)
+        if item is None or item.asset != asset or item.reference in cited_any:
+            return None
+        return item.reference
+    noun = re.match(rf"[ -](?:([A-Za-z-]+) )?({_EXCL_ITEM_NOUN})(?![A-Za-z0-9])", text[a["end"]:], _I)
+    if noun is None:
+        noun = re.search(rf"(?<![A-Za-z0-9])({_EXCL_ITEM_NOUN}) (?:in|of|denominated in|for) (?:the )?$",
+                         text[:a["start"]], _I)
+        word = noun.group(1).lower() if noun else ""
+    else:
+        word = noun.group(2).lower()
+    if not word:
+        return None
+    if before and not re.search(r"[,;:(]|\band\b|\bor\b", text[before[-1].end:a["start"]]):
+        return None  # a reference right before that is not the attachment: unresolved
+    flows = {"inflow"} if word in _N2_INFLOW_NOUNS else {"outflow"} if word in _N2_OUTFLOW_NOUNS else {
+        "inflow", "outflow"}
+    candidates = [i for i in truth.items if i.asset == asset and i.flow in flows]
+    if not candidates or any(i.reference in cited_any for i in truth.items if i.asset == asset):
+        return None
+    return "described:" + asset
+
+
+# P1 split side: "Explained variance" read as a noun phrase that labels the figure after
+# its copula ("Explained variance is $0.00"), not as "X explained the variance".
+_N2_PORTION_LABEL_RE = re.compile(r"^explained (?:variance|shortfall|surplus|deficit|difference)$", _I)
+_N2_LABEL_LEAD_RE = re.compile(r"(?:^|(?<![A-Za-z0-9])(?:the|net|total|and|so|thus|therefore|hence)|[,:])\s*$", _I)
+_N2_LABEL_COPULA_RE = re.compile(
+    r"\s+(?:is|was|stands at|comes to|totals?|equals|of)\s+(?:(?:therefore|thus|only|just|so|now|then)\s+)?", _I
+)
+_N2_UNEXPLAINED_AFTER_RE = re.compile(
+    r"\s+(?:(?:is|was|are|were|remains?|remained|stays?|stayed)\s+(?:(?:still|therefore|thus|also|then)\s+)?)?"
+    r"(?:unexplained|unreconciled|unaccounted for)(?![A-Za-z0-9])",
+    _I,
+)
+_N2_UNEXPLAINED_BEFORE_RE = re.compile(
+    r"(?<![A-Za-z0-9])(?:unexplained|unreconciled)(?: (?:portion|amount|remainder|balance|variance|figure|difference))?"
+    r" (?:is|was|of|stands at|remains|comes to)\s+(?:(?:therefore|thus|only|just|now|then)\s+)?$",
+    _I,
+)
+_N2_PRONOUN_RE = re.compile(r"(?<![A-Za-z0-9])(?:it|this)(?![A-Za-z0-9])", _I)
+
+
+def _n2_clause_of(pos: int, clause_starts: list[int], clause_ends: list[int]) -> int:
+    return bisect.bisect_right(clause_starts, pos) - 1
+
+
+def _n2_split_label_proof(c: dict, text: str, toks: list, clause_starts: list[int], clause_ends: list[int],
+                          ctx: "_Context", truth: CaseTruth) -> bool:
+    """P1 split side pass-proof: the attribution match is the label "Explained variance"
+    at the head of its clause, its copula binds the amount right after it, that amount
+    equals the explained portion of the truth and of the model's cited items, and
+    another amount in the same clause bound to an unexplained cue ("the full $X is
+    unexplained", "the unexplained portion is $X") equals the unexplained portion of
+    both. Anything short of that returns False and the claim is judged as before."""
+    if c["scope"] != "attribution" or c["negated"] or not _N2_PORTION_LABEL_RE.match(c["text"]):
+        return False
+    ci = _n2_clause_of(c["start"], clause_starts, clause_ends)
+    cs, ce = clause_starts[ci], clause_ends[ci]
+    if not _N2_LABEL_LEAD_RE.search(text[cs:c["start"]]):
+        return False
+    cop = _N2_LABEL_COPULA_RE.match(text, c["end"])
+    if cop is None:
+        return False
+    amounts = [t for t in toks if t.kind == "amount" and cs <= t.start < ce]
+    labelled = next((t for t in amounts if t.start == cop.end()), None)
+    if labelled is None or labelled.data.get("bare"):
+        return False
+    if not (_near(labelled.data["value"], truth.explained_usd) and _near(labelled.data["value"], ctx.explained)):
+        return False
+    for t in amounts:
+        if t is labelled or t.data.get("bare"):
+            continue
+        if _N2_UNEXPLAINED_AFTER_RE.match(text, t.end) or _N2_UNEXPLAINED_BEFORE_RE.search(text[cs:t.start]):
+            if _near(t.data["value"], truth.unexplained_usd) and _near(t.data["value"], ctx.unexplained):
+                return True
+    return False
+
+
+def _n2_pronoun_is_variance(c: dict, toks: list, extractions: list[dict], text: str,
+                            clause_starts: list[int], clause_ends: list[int]) -> bool:
+    """P9: the pronoun in "explain it in full" resolves to the variance when the clause
+    before ends a sentence and states the variance (an amount bound to the variance role
+    that checked ok), and the claim's own clause names no reference and no amount before
+    the claim that "it" could stand for."""
+    if not _N2_PRONOUN_RE.search(c["text"]):
+        return False
+    ci = _n2_clause_of(c["start"], clause_starts, clause_ends)
+    if ci < 1 or text[clause_starts[ci] - 1] != ".":
+        return False
+    ps, pe = clause_starts[ci - 1], clause_ends[ci - 1]
+    if not any(e["kind"] == "amount" and e.get("role") == "variance" and e.get("verdict") == "ok"
+               and ps <= e["start"] < pe for e in extractions):
+        return False
+    cs = clause_starts[ci]
+    return not any(t.kind in ("ref", "amount", "entity") and cs <= t.start < c["start"] for t in toks)
+
+
+def _n2_excludes(body: str) -> bool:
+    """True when `body` holds an exclusion phrase that is not itself negated: the round-2
+    predicates and other-asset form, or a round-3 predicate (_N2_PREDICATE_RE). A
+    positive-form predicate whose subject carries a negating quantifier ("no item is
+    excluded") does not count."""
+    if _EXCL_OTHER_ASSET_RE.search(body):
+        return True
+    for rx in (_EXCL_PREDICATE_RE, _N2_PREDICATE_RE):
+        for m in rx.finditer(body):
+            before = body[:m.start()]
+            if _EXCL_PREDICATE_NEGATION_RE.search(before):
+                continue
+            if _N2_POSITIVE_PREDICATE_RE.match(m.group(0)) and _N2_QUANTIFIER_NEGATION_RE.search(
+                    before.rsplit(",", 1)[-1]):
+                continue
+            return True
+    return False
+
+
+def _n2_reliance_affirmed(body: str) -> bool:
+    """True when a reliance or explaining verb in `body` is not negated by a negator in
+    the four words before it, within its comma-free stretch."""
+    for m in _N2_RELIANCE_RE.finditer(body):
+        before = body[:m.start()].rsplit(",", 1)[-1]
+        words = before.split()[-4:]
+        if not _N2_MEMBER_NEGATOR_RE.search(" ".join(words)):
+            return True
+    return False
+
+
+def _n2_member_ok(body: str) -> bool:
+    """A coordinated-list member may join an exclusion span: it names no variance,
+    balance, band or explained or unexplained total and states no reliance."""
+    return not _EXCL_CORE_RE.search(body) and not _n2_reliance_affirmed(body)
+
+
+def _n2_starts_with_reference(body: str) -> bool:
+    head = body.lstrip()
+    return head.startswith(_MASK_OTHER) or bool(_REF_RE.match(head))
+
+
 def exclusion_spans(text: str) -> list[tuple[int, int]]:
     """Contract C1 (fix round 2): character spans of the clauses in `text` that state
     an item or a value is excluded, not relied on, not eligible, ineligible,
@@ -1356,7 +1643,23 @@ def exclusion_spans(text: str) -> list[tuple[int, int]]:
     over a reason clause ("because it is dated after the
     cutoff"). A clause that names the variance, a balance, the band or an explained,
     unexplained or total amount is never inside a span. Works on raw and masked text
-    alike (masking keeps offsets)."""
+    alike (masking keeps offsets).
+
+    Fix round 3 (P8) widens a span to a whole coordinated list in two shapes, and only
+    when every member names no variance, balance, band or total (_EXCL_CORE_RE) and
+    states no reliance (_n2_reliance_affirmed):
+    - a colon list after an exclusion head ("None of the open items qualify as
+      reconciling items: A is a manual adjustment, B sits in the out-of-scope wallet,
+      and C was cleared on both sides"; "I did not rely on the other two schedule
+      entries: A ..., and B ..."). The head is the clause right before the colon, or the
+      clause before a consequence clause that names no item ("..., so $0.00 is
+      explained and the full $X is unexplained: ..."); the consequence clause itself is
+      never covered;
+    - a run of sentences that each open with a reference, right after a sentence that
+      opens with a universal exclusion head ("None of the listed or noted items
+      qualifies as a reconciling item. JE-1 is a suspense clearing entry. WD-2 sits on
+      the out-of-scope wallet."). The run ends at the first sentence that does not open
+      with a reference or fails the member test."""
     out: list[tuple[int, int]] = []
     starts = [0]
     for m in _SENTENCE_END_RE.finditer(text):
@@ -1366,8 +1669,19 @@ def exclusion_spans(text: str) -> list[tuple[int, int]]:
             if prev and prev.group(1).lower() in _ABBREV:
                 continue
         starts.append(pos + 1)
+    run_open = False  # a universal exclusion head opened a run of item sentences
     for s0, s1 in zip(starts, starts[1:] + [len(text)]):
         sent = text[s0:s1]
+        if run_open:
+            body = sent.rstrip(" \t\n.,;:!?")
+            if _n2_starts_with_reference(body) and _n2_member_ok(body):
+                lo = len(body) - len(body.lstrip())
+                if len(body) > lo:
+                    out.append((s0 + lo, s0 + len(body)))
+                continue
+            run_open = False
+        if _N2_UNIVERSAL_HEAD_RE.match(sent):
+            run_open = True
         frags: list[list[int]] = []
         prev_end = 0
         for m in _EXCL_SPLIT_RE.finditer(sent):
@@ -1396,11 +1710,30 @@ def exclusion_spans(text: str) -> list[tuple[int, int]]:
             return bool(_EXCL_CORE_RE.search(sent[f[0]:f[1]]))
 
         def excludes(f: list[int]) -> bool:
-            body = sent[f[0]:f[1]]
-            if _EXCL_OTHER_ASSET_RE.search(body):
-                return True
-            return any(not _EXCL_PREDICATE_NEGATION_RE.search(body[:m.start()])
-                       for m in _EXCL_PREDICATE_RE.finditer(body))
+            return _n2_excludes(sent[f[0]:f[1]])
+
+        # fix round 3 (P8): a colon list after an exclusion head is one span
+        colons = list(_N2_COLON_RE.finditer(sent))
+        for n, cm in enumerate(colons):
+            list_end = colons[n + 1].start() if n + 1 < len(colons) else len(sent)
+            heads = [f for f in merged if f[1] <= cm.start()]
+            members = [f for f in merged if f[0] >= cm.end() and f[1] <= list_end]
+            while heads and _N2_CONSEQUENCE_RE.match(sent[heads[-1][0]:heads[-1][1]]) and not (
+                    _N2_ITEM_WORD_RE.search(sent[heads[-1][0]:heads[-1][1]])
+                    or _REF_RE.search(sent[heads[-1][0]:heads[-1][1]])):
+                heads.pop()
+            if not heads or not members or not excludes(heads[-1]):
+                continue
+            head_text = sent[heads[-1][0]:heads[-1][1]]
+            if core(heads[-1]) and not _N2_UNIVERSAL_HEAD_RE.match(head_text):
+                continue  # "The variance is excluded from M2: ..." heads no item list
+            if not all(_n2_member_ok(sent[f[0]:f[1]]) for f in members):
+                continue
+            lo, hi = cm.end(), members[-1][1]
+            while hi > lo and sent[hi - 1] in " \t\n.,;:!?":
+                hi -= 1
+            if hi > lo:
+                out.append((s0 + lo, s0 + hi))
 
         for k, f in enumerate(merged):
             if core(f) or not excludes(f):
@@ -1528,17 +1861,31 @@ def _band_statements(clause: str, offset: int, amounts_at: dict[int, float]) -> 
         req = None
         for r in _REFUSED_REQUEST_RE.finditer(before):
             req = r
-        if req is None or not _REFUSED_TO_VERB_RE.search(before[req.end():]):
+        if req is None:
             return False
-        if not _REFUSED_PREP_END_RE.search(before):
+        tail_of_request = before[req.end():]
+        # fix round 3 (P6): "notes ask for M1", "the proposal that the variance be
+        # categorised as M1" name the band as the request's object too
+        asks_for = bool(re.search(
+            r"(?<![A-Za-z0-9])(?:asks?|asked|asking|calls?|called|calling|push(?:es|ed)?|pressure[sd]?) for $",
+            before, _I))
+        if not (_REFUSED_TO_VERB_RE.search(tail_of_request) or _N2_REQUEST_OBJECT_RE.search(tail_of_request)
+                or asks_for):
             return False
-        after = re.split(r"[,;:]", clause[m_end:], maxsplit=1)[0]
+        if not (_REFUSED_PREP_END_RE.search(before) or asks_for):
+            return False
+        pieces = re.split(r"[,;:]", clause[m_end:], maxsplit=2)
+        after = pieces[0]
         v = _REFUSED_FIRST_VERB_RE.search(after)
         if v is None:
-            return False
+            # fix round 3 (P6): the request refused in a relative clause right after it
+            # ("M1 treatment under a waiver, which the variance amount does not support")
+            return len(pieces) > 1 and bool(_N2_REFUSAL_WHICH_RE.match(pieces[1]))
         word, tail = v.group(0).lower(), after[v.end():]
         if word == "cannot" or word.endswith(("n't", "n\u2019t")):
             return not _REFUSED_DOUBLE_RE.match(tail)
+        if word in ("has", "have", "had") and _N2_NO_BASIS_RE.match(tail):
+            return True  # "the request to write this up as M1 has no basis"
         m = _REFUSED_NEG_TAIL_RE.match(tail)
         if m is None:
             return False
@@ -1551,6 +1898,11 @@ def _band_statements(clause: str, offset: int, amounts_at: dict[int, float]) -> 
         if not negated and refused(m_start, m_end):
             negated = True
             rec["refused_request"] = True
+        # fix round 3 (P6): the clause the statement sits in, and whether a label is
+        # stated in assertion form ("stays at M2", "the amount is M2", "in the M2 band")
+        rec["clause_start"] = offset
+        if rec.get("statement") == "label" and not negated:
+            rec["asserted"] = bool(_N2_BAND_ASSERT_RE.search(clause[:m_start]))
         out.append({
             "kind": "band", "text": clause[m_start:m_end], "start": offset + m_start,
             "end": offset + m_end, "negated": negated, **rec,
@@ -1646,10 +1998,14 @@ def _asset_statements(clause: str, offset: int) -> list[dict]:
         clause ("DP-2510-935085 is a USDC deposit, so neither is relied on") is an
         exclusion mention, not the case's asset. It is marked negated, so it routes to
         review and is never counted as the asset the narrative states."""
-        if any(a <= s and e <= b for a, b in spans) and (
-                _EXCL_ITEM_AFTER_RE.match(clause[e:]) or _EXCL_ITEM_BEFORE_RE.search(clause[:s])):
+        inside = [(a, b) for a, b in spans if a <= s and e <= b]
+        if inside and (_EXCL_ITEM_AFTER_RE.match(clause[e:]) or _EXCL_ITEM_BEFORE_RE.search(clause[:s])):
             rec["negated"] = True
             rec["exclusion"] = True
+            # fix round 3 (P7): the exclusion span, for the item proof in _check
+            rec["exclusion_span"] = (offset + inside[0][0], offset + inside[0][1])
+        elif inside:
+            rec["in_exclusion_span"] = (offset + inside[0][0], offset + inside[0][1])
         return rec
 
     for m in _ASSET_NAME_RE.finditer(clause):
@@ -1846,6 +2202,26 @@ def _check(text: str, parsed: dict, truth: CaseTruth) -> NarrativeResult:
         target = ctx.explained if c["role"] == "explained" else ctx.unexplained
         c["expected"] = abs(target)
         settled = abs(target) <= USD_TOLERANCE
+        # fix round 3 (P1 split side): "Explained variance is $0.00, so the full $X is
+        # unexplained" labels a figure; it states no split of its own
+        # and the figure it labels and the paired figure equal the truth's portions;
+        # otherwise the claim is judged as before
+        if _n2_split_label_proof(c, text, toks, clause_starts, clause_ends, ctx, truth):
+            c["verdict"] = "ok"
+            c["resolution"] = "portion_label"
+            continue
+        # fix round 3 (P9): "Two eligible open items ... explain it in full", with "it"
+        # the variance stated in the sentence before
+        if (c["scope"] == "clause" and not c["subject_named"] and not c["negated"] and c["role"] == "unexplained"
+                and _n2_pronoun_is_variance(c, toks, extractions, text, clause_starts, clause_ends)):
+            c["subject_named"] = True
+            c["resolution"] = "pronoun_previous_sentence_variance"
+            if settled and abs(truth.unexplained_usd) <= USD_TOLERANCE:
+                c["verdict"] = "ok"
+            else:
+                c["verdict"] = "review"
+                review(f"split_claim_subject_unresolved: {c['text']}")
+            continue
         if c["negated"] and c["scope"] == "attribution":
             c["verdict"] = "ignored"  # "WD-1 does not explain the shortfall" states no split
         elif c["negated"]:
@@ -1908,6 +2284,12 @@ def _check(text: str, parsed: dict, truth: CaseTruth) -> NarrativeResult:
             else:
                 b["verdict"] = "ok"
             continue
+        if b.get("refused_request") and _n2_refusal_proven(b, bands, truth.materiality_band):
+            # fix round 3 (P6): another band refused in a request, the truth band asserted
+            # in the same sentence and never negated there
+            b["verdict"] = "ignored"
+            b["reason"] = "refused_request_truth_band_asserted"
+            continue
         if b["negated"]:
             b["verdict"] = "review"
             review(f"band_negated: {b['text']}")
@@ -1934,7 +2316,30 @@ def _check(text: str, parsed: dict, truth: CaseTruth) -> NarrativeResult:
     # asset (FM-016)
     gas = V.GAS_ASSET[truth.chain]
     named_assets = set()
+    # fix round 3 (P7): another asset attached to an excluded item the case file shows
+    # in that asset, and the case asset named only as the "not <case asset>" contrast
+    ref_toks = [t for t in specials if t.kind == "ref"]
+    proven: list[dict] = []
     for a in assets:
+        if a["kind"] == "asset" and a.get("exclusion"):
+            item_ref = _n2_other_asset_item(a, text, ref_toks, truth, ctx.cited_any)
+            if item_ref is not None:
+                a["verdict"] = "ignored"
+                a["reason"] = "exclusion_other_asset_item"
+                a["item"] = item_ref
+                proven.append(a)
+    for a in assets:
+        if (a["kind"] == "asset" and a["negated"] and a["asset"] == truth.asset and not a.get("exclusion")
+                and a.get("in_exclusion_span")):
+            for p in proven:
+                if (p["exclusion_span"] == a["in_exclusion_span"] and p["end"] <= a["start"]
+                        and _N2_CONTRAST_TAIL_RE.match(text[p["end"]:a["start"]])):
+                    a["verdict"] = "ignored"
+                    a["reason"] = "case_asset_contrast_of_excluded_item"
+                    break
+    for a in assets:
+        if a.get("verdict") == "ignored":
+            continue
         if a["kind"] == "chain":
             if a["chain"] == truth.chain:
                 a["verdict"] = "ok"
