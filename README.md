@@ -305,6 +305,7 @@ The ones that change how this build should be read. The pre-registration lists t
 
 - **Phase 1 is a non-reliance use.** No deployment-readiness or reliance claim is made from its results; reliance is the Phase 2 question.
 - **Materiality bands are notional teaching values**, not a production policy, and the reporting entity is fictional.
+- **Manual adjustments, suspense entries and prior-period adjustments are never relied on, by policy.** Real reconciliations may list a supported correction, so the eval measures adherence to the stated rule, not that judgment. Referring such entries to the controller is not scored yet; it enters with the Phase 2 action layer.
 - **Ground truth is generator truth** for the 146 synthetic cases, and the labeled subset's kappa gate is a screen at n = 54.
 - **Adversarial results are existence proofs**, 4 cases per category, never absence proofs of robustness.
 

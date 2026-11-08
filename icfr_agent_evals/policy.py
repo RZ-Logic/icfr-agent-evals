@@ -15,7 +15,7 @@ from typing import Iterable
 
 # --- Asset tiers (Kraken Dec 31, 2025 PoR scope) ---------------------------------
 ASSET_TIERS: dict[str, str] = {
-    "USDC": "T1", "USDT": "T1",              # T1 stablecoins (tight; deviation more suspicious)
+    "USDC": "T1", "USDT": "T1",              # T1 stablecoins (ceiling = Kraken's 105%+ display cap)
     "BTC": "T2", "ETH": "T2", "SOL": "T2",   # T2 major coins (modest over-collateralization)
     "XRP": "T3", "ADA": "T3",                # T3 mid-tail (slightly wider tolerance)
 }
