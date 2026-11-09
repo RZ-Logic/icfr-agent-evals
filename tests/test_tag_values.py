@@ -153,3 +153,14 @@ def test_markdown_mode_drafts_section13_rows():
     assert text.startswith("| Item | Value at tag (draft) |")
     assert "Generator version G" in text and "22260607" in text
     assert chr(0x2014) not in text  # no em dash in the drafted rows
+
+
+def test_draft_prompt_pin_matches_the_worker_prompt_at_this_commit(two_runs):
+    """Section 3 pins the draft worker prompt (v0.0.4-draft at a783322); the pin and the
+    solver's prompt hash agree, so matches_section3_draft is True."""
+    from icfr_agent_evals import solver
+
+    assert tv.PREREGISTERED["draft_prompt"] == (
+        "v0.0.4-draft", "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d")
+    assert (solver.WORKER_PROMPT_VERSION, solver.WORKER_PROMPT_SHA256) == tv.PREREGISTERED["draft_prompt"]
+    assert json.loads(two_runs[0])["worker_prompt"]["matches_section3_draft"] is True
