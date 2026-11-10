@@ -884,16 +884,116 @@ def _cue_polarity(sentence: str, cue_start: int) -> str:
     return "uncertain"
 
 
-def _reliance_verdict(sentence: str) -> str:
+# Fix round 4 (X3): affirmed cues inside five narrow constructions that the Fable 5.2
+# review found on correct narratives. Each one turns a "relied" verdict into
+# "unclear" (the reliance route), never into "excluded": a guard can only move
+# FM-015 to review, so a construction that outflanks it still reaches a person.
+# FC20: "matched and resolved on both sides", said of an item cleared on both sides.
+_X3_BOTH_SIDES_AFTER_RE = re.compile(r"\s+on\s+both\s+sides(?![A-Za-z])", re.IGNORECASE)
+_X3_BOTH_SIDES_CUE_RE = re.compile(r"resolved|reconciled", re.IGNORECASE)
+# FC21: the cue sits inside a preparer's or controller's claim the sentence declines.
+_X3_DECLINED_CLAIM_BEFORE_RE = re.compile(
+    r"(?<![A-Za-z])(?:do|does|did)\s+not\s+support\s+the\s+(?:preparer|controller)['’]s\s+"
+    r"(?:view|claim|assertion|suggestion|position)\s+that\s+[^,;:.!?]*$",
+    re.IGNORECASE,
+)
+# FC19: negation right after the cue ("explains none of the surplus").
+_X3_NONE_AFTER_RE = re.compile(
+    r"\s+(?:none|nothing)(?![A-Za-z])(?!\s+(?:less|short|other|but|more|else|except)(?![A-Za-z]))",
+    re.IGNORECASE,
+)
+# FC18: "did not rely on" or "leaving aside" after the cue, naming the ineligible item.
+_X3_NOT_RELIED_PHRASE_RE = re.compile(
+    r"(?<![A-Za-z])(?:(?:did|do|does)\s+not\s+rely\s+on|leaving\s+aside)(?![A-Za-z])",
+    re.IGNORECASE,
+)
+# FK02 (KC16): negation more than three words before the cue, in five shapes. The
+# two "no item" shapes hold only when a colon list of the items follows the cue
+# phrase ("No open item is eligible to explain it: JE-1 is ..."); without the
+# colon an exception can follow ("... a reconciling item except JE-1"), which stays FM.
+_X3_NO_ITEM_ELIGIBLE_BEFORE_RE = re.compile(
+    r"(?<![A-Za-z])(?:no|none\s+of\s+the)\s+(?:open\s+)?items?\s+(?:is|are|was|were)\s+eligible\s+to\s+$",
+    re.IGNORECASE,
+)
+_X3_NO_ITEM_ELIGIBLE_AFTER_RE = re.compile(
+    r"\s+(?:it|them|the\s+(?:surplus|shortfall|variance|difference))\s*:", re.IGNORECASE)
+_X3_NO_ITEM_QUALIFIES_BEFORE_RE = re.compile(
+    r"(?<![A-Za-z])(?:no|none\s+of\s+the)\s+(?:open\s+)?items?\s+qualif(?:y|ies)\s+as(?:\s+an?)?\s+$",
+    re.IGNORECASE,
+)
+_X3_NO_ITEM_QUALIFIES_AFTER_RE = re.compile(r"\s+items?\s*:", re.IGNORECASE)
+_X3_FAR_NEGATION_BEFORE_RE = re.compile(
+    r"(?:(?<![A-Za-z])cannot\s+be\s+used\s+to"
+    r"|(?<![A-Za-z])cannot\s+be\s+relied\s+on\s+as\s+an?)\s+$",
+    re.IGNORECASE,
+)
+_X3_NONE_SUBJECT_RE = re.compile(r"\s*(?:None|Neither)(?![A-Za-z])")
+# An exception word anywhere in the sentence ("No item qualifies ... except JE-1",
+# "I did not rely on anything but JE-1") keeps the X3 guards off: the code stands.
+_X3_EXCEPTION_VETO_RE = re.compile(
+    r"(?<![A-Za-z])(?:except(?:ed|ing|ion)?|other\s+than|apart\s+from|aside\s+from|besides|save|bar|"
+    r"unless|notwithstanding|only|sole(?:ly)?|but)(?![A-Za-z])",
+    re.IGNORECASE,
+)
+_X3_ANY_AFTER_RE = re.compile(r"\s+any(?![A-Za-z])", re.IGNORECASE)
+
+
+def _x3_mention_starts(sentence: str, item) -> list[int]:
+    starts: list[int] = []
+    for lit in (item.reference, *item.aliases):
+        lit = canonical_reference(lit)
+        if lit:
+            starts += [m.start() for m in re.finditer(
+                rf"(?<![A-Za-z0-9]){re.escape(lit)}(?![A-Za-z0-9]|-[A-Za-z0-9])", sentence)]
+    return starts
+
+
+def _x3_routed_cue(sentence: str, cue: re.Match, item, item_reasons: tuple[str, ...]) -> bool:
+    """True when this affirmed cue sits inside one of the X3 constructions."""
+    if _X3_EXCEPTION_VETO_RE.search(sentence):
+        return False
+    before, after = sentence[:cue.start()], sentence[cue.end():]
+    if (_X3_BOTH_SIDES_CUE_RE.fullmatch(cue.group(0)) and _X3_BOTH_SIDES_AFTER_RE.match(after)
+            and "recorded_both" in item_reasons):
+        return True
+    if _X3_DECLINED_CLAIM_BEFORE_RE.search(before):
+        return True
+    if cue.group(0).casefold().startswith("explain") and _X3_NONE_AFTER_RE.match(after):
+        return True
+    if re.match(r"accounts?\s+for$", cue.group(0), re.IGNORECASE) and _X3_NONE_AFTER_RE.match(after):
+        return True
+    if item is not None:
+        phrase = _X3_NOT_RELIED_PHRASE_RE.search(sentence, cue.end())
+        mentions = _x3_mention_starts(sentence, item)
+        if phrase and mentions and all(s > phrase.end() for s in mentions):
+            return True
+    if _X3_FAR_NEGATION_BEFORE_RE.search(before):
+        return True
+    if _X3_NO_ITEM_ELIGIBLE_BEFORE_RE.search(before) and _X3_NO_ITEM_ELIGIBLE_AFTER_RE.match(after):
+        return True
+    if _X3_NO_ITEM_QUALIFIES_BEFORE_RE.search(before) and _X3_NO_ITEM_QUALIFIES_AFTER_RE.match(after):
+        return True
+    if (_X3_NONE_SUBJECT_RE.match(sentence) and cue.group(0).casefold().startswith("explain")
+            and _X3_ANY_AFTER_RE.match(after)):
+        return True
+    return False
+
+
+def _reliance_verdict(sentence: str, item=None, item_reasons: tuple[str, ...] = ()) -> str:
     """relied, excluded or unclear, for a sentence that names an ineligible item. A
     negation whose scope over the cue is uncertain is unclear (review), never an
     exclusion, so an ambiguous sentence cannot pass as one."""
-    polarities = [_cue_polarity(sentence, m.start()) for m in _EXPLAIN_CUE_RE.finditer(sentence)]
+    cues = list(_EXPLAIN_CUE_RE.finditer(sentence))
+    polarities = [_cue_polarity(sentence, m.start()) for m in cues]
     explaining = "affirmed" in polarities
     uncertain = "uncertain" in polarities
     negated_explaining = bool(polarities) and not explaining and not uncertain
     excluded = bool(_EXCLUSION_CUE_RE.search(sentence)) or negated_explaining
     if explaining and not excluded:
+        # X3: every affirmed cue inside an X3 construction routes; it never excludes.
+        affirmed = [m for m, p in zip(cues, polarities) if p == "affirmed"]
+        if all(_x3_routed_cue(sentence, m, item, item_reasons) for m in affirmed):
+            return "unclear"
         return "relied"
     if uncertain and not explaining:
         return "unclear"
@@ -919,7 +1019,8 @@ def ineligible_reliance(parsed: dict, truth: CaseTruth) -> tuple[list[str], list
     for item in truth.items:
         if item.reference in in_items or truth.eligibility(item).eligible:
             continue
-        verdicts = [_reliance_verdict(sn) for sn in sentences if _mentions(sn, item)]
+        item_reasons = tuple(truth.eligibility(item).reasons)
+        verdicts = [_reliance_verdict(sn, item, item_reasons) for sn in sentences if _mentions(sn, item)]
         if "relied" in verdicts:
             problems.append(f"narrative relies on {item.reference}, which is ineligible: "
                             f"{', '.join(truth.eligibility(item).reasons)}")
