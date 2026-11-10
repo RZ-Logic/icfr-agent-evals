@@ -59,7 +59,10 @@ SPEC_ROWS: dict[str, tuple] = {
     "S71": (False, _Y, _C, None, "none", "test_unsettleable_narrative_too_long"),
     "S72": (False, _Y, _C, None, "none", "test_unsettleable_extractor_error"),
     "S73": (False, _N, _C, None, "none", "test_unsettleable_format_characters_in_narrative"),
-    "S74": (False, "any", "any", None, "none", "test_every_route_key_has_a_settlement_row"),
+    "S74": (True, _N, _C, "FM-002", "band", "test_settle_band_statement_subject_unresolved"),
+    "S75": (True, _N, _C, "FM-003", "direction", "test_settle_direction_word_threshold_object"),
+    "S76": (True, _N, _C, "FM-016", "asset", "test_settle_asset_word_ambiguous"),
+    "S77": (False, "any", "any", None, "none", "test_every_route_key_has_a_settlement_row"),
 }
 SPEC_NARRATIVE_FAMILIES = (
     (("amount_role_unresolved", "amount_role_unresolved_and_ungrounded", "aggregate_equals_item_subset_sum",
@@ -88,7 +91,7 @@ for _kinds, _code, _family in SPEC_NARRATIVE_FAMILIES:
         SPEC_ROWS[_rid] = (True, _N, _C, _code, _family, _test)
         NARRATIVE_KIND_OF_ROW[_rid] = _kind
         _n += 1
-assert _n == 68 and len(SPEC_ROWS) == 74
+assert _n == 68 and len(SPEC_ROWS) == 77
 
 
 def _representative_reasons(row_id: str) -> tuple[str, ...]:
@@ -129,6 +132,9 @@ def _representative_reasons(row_id: str) -> tuple[str, ...]:
         "S71": ("narrative_too_long: 9000 characters",),
         "S72": ("extractor_error: KeyError",),
         "S73": ("format_characters_in_narrative",),
+        "S74": ("band_statement_subject_unresolved: unexplained remainder below the reportable floor",),
+        "S75": ("direction_word_threshold_object: short of the M3 threshold",),
+        "S76": ("asset_word_ambiguous: true USD",),
     }
     return fixed[row_id]
 
@@ -175,12 +181,12 @@ for _rid in sorted(SPEC_ROWS):
 
 
 def test_counts() -> None:
-    assert settlement.counts() == {"rows": 74, "settleable": 63, "settleable_narrative": 57,
+    assert settlement.counts() == {"rows": 77, "settleable": 66, "settleable_narrative": 60,
                                    "settleable_structured": 6, "unsettleable": 11}
-    assert len({r.row_id for r in settlement.TABLE}) == 74
-    assert len({r.unit_test for r in settlement.TABLE}) == 74
-    assert [r.row_id for r in settlement.TABLE] == [f"S{i:02d}" for i in range(1, 75)]
-    assert settlement.TABLE[-1].row_id == settlement.CATCH_ALL_ROW_ID == "S74"
+    assert len({r.row_id for r in settlement.TABLE}) == 77
+    assert len({r.unit_test for r in settlement.TABLE}) == 77
+    assert [r.row_id for r in settlement.TABLE] == [f"S{i:02d}" for i in range(1, 78)]
+    assert settlement.TABLE[-1].row_id == settlement.CATCH_ALL_ROW_ID == "S77"
 
 
 def test_rows_follow_the_spec() -> None:
@@ -229,6 +235,9 @@ def test_correct_means_and_on_correct_texts() -> None:
         assert settlement.row(rid).note == "lane F, a783322"
     for rid in ("S71", "S72", "S73"):
         assert settlement.row(rid).note == "code emits it; draft lacked it"
+    for rid in ("S74", "S75", "S76"):
+        assert settlement.row(rid).on_correct == "structured Correctness kept"
+        assert settlement.row(rid).note == "fix round 4, 2026-11-09"
     assert settlement.row("S10").correct_means == (
         "the cited ticker is the asset of a schedule item and naming it misstates nothing")
     assert settlement.row("S14").correct_means == "the cited type names the item's own type in other words"
@@ -275,11 +284,11 @@ def test_off_contract_other_field_adds_catch_all() -> None:
     key = settlement.OFF_CONTRACT_ROUTE_KEY
     reasons = [_off("period"), _off("asset")]
     got = settlement.rows_for(key, reasons)
-    assert [r.row_id for r in got] == ["S13", "S74"]
+    assert [r.row_id for r in got] == ["S13", "S77"]
     assert not settlement.is_settleable(key, reasons)
     assert settlement.allowed_verdicts(key, reasons) == ()
     # an off-contract reason that names no field in the known form is fail safe too
-    assert [r.row_id for r in settlement.rows_for(key, ["off_contract_value: garbled"])] == ["S74"]
+    assert [r.row_id for r in settlement.rows_for(key, ["off_contract_value: garbled"])] == ["S77"]
 
 
 def test_off_contract_without_field_raises() -> None:
@@ -355,7 +364,7 @@ def test_table_sha_stable(monkeypatch) -> None:
 def test_table_rows_as_dicts_is_plain_json() -> None:
     import json
     rows = settlement.table_rows_as_dicts()
-    assert len(rows) == 74
+    assert len(rows) == 77
     assert json.loads(json.dumps(rows)) == rows
     assert set(rows[0]) == {f.name for f in dataclasses.fields(settlement.SettlementRow)}
 
@@ -383,8 +392,14 @@ FM_ONLY_REASONS = frozenset({
 FM_ONLY_ROLE_FSTRING = "{role}_amount_mismatch"
 FM_ONLY_ROLES = ("ledger", "onchain", "explained", "unexplained")
 # Measured at a783322. A new emit site fails here until it is classified.
-NARRATIVE_REVIEW_CALL_SITES = 28
-NARRATIVE_VARIABLE_HEADS = ("rec['reason']", "rec['reason']", "b['reason']", "why")
+NARRATIVE_REVIEW_CALL_SITES = 36  # 28 at a783322; fix round 4 added 8
+NARRATIVE_VARIABLE_HEADS = ("rec['reason']", "rec['reason']", "b['reason']", "why",
+                            # fix round 4 and 4b guards: their keys are read from the guards' returns
+                            "y1", "x1", "why", "x1", "x2[0]", "y2", "why", "why")
+# Fix round 4 and 4b guard functions; every string they return is a reason kind, except the
+# internal marker below, which the band guard returns with emit=False.
+FIX4_GUARD_PREFIXES = ("_x1_", "_x2_", "_y1_", "_y2_")
+FIX4_INTERNAL_MARKERS = frozenset({"gloss_of_label"})
 SCORING_REASON_EMIT_SITES = 14
 
 
@@ -417,7 +432,7 @@ def _narrative_kinds() -> dict[str, set[str]]:
     tree = ast.parse(NARRATIVE_SRC)
     out: dict[str, set[str]] = {"review_heads": set(), "reason_literals": set(), "route_reason": set(),
                                 "lane_f": set(), "result_heads": set(), "bare_prefix": set(),
-                                "fstring_reasons": set(), "why_literals": set()}
+                                "fstring_reasons": set(), "why_literals": set(), "fix4_guards": set()}
     variable_heads: list[str] = []
     review_sites = 0
     for node in ast.walk(tree):
@@ -466,6 +481,16 @@ def _narrative_kinds() -> dict[str, set[str]]:
             for k, v in zip(node.keys, node.values):
                 if k is not None and _const(k) == "reason" and _const(v) is not None:
                     out["reason_literals"].add(_const(v))
+        elif isinstance(node, ast.FunctionDef) and node.name.startswith(FIX4_GUARD_PREFIXES):
+            for sub in ast.walk(node):
+                if isinstance(sub, ast.Return) and sub.value is not None:
+                    val = sub.value
+                    if isinstance(val, ast.Tuple) and val.elts:
+                        val = val.elts[0]
+                    vals = [val.body, val.orelse] if isinstance(val, ast.IfExp) else [val]
+                    for v in vals:
+                        if _const(v) is not None and _const(v) not in FIX4_INTERNAL_MARKERS:
+                            out["fix4_guards"].add(_const(v))
         elif isinstance(node, ast.FunctionDef) and node.name.startswith("_lane_f_"):
             for sub in ast.walk(node):
                 if isinstance(sub, ast.Return) and sub.value is not None:
@@ -562,7 +587,9 @@ def test_every_route_key_has_a_settlement_row() -> None:
     kinds = _narrative_kinds()
     # narrative kinds: review heads, reason literals, route reasons, lane F returns, result heads
     narrative_kinds = (kinds["review_heads"] | kinds["reason_literals"] | kinds["route_reason"]
-                       | kinds["lane_f"] | kinds["result_heads"])
+                       | kinds["lane_f"] | kinds["result_heads"] | kinds["fix4_guards"])
+    assert {"band_statement_subject_unresolved", "direction_word_threshold_object",
+            "asset_word_ambiguous"} <= kinds["fix4_guards"]
     assert {"aggregate_total_role_cue_follows", "aggregate_total_unconfirmed"} <= kinds["route_reason"]
     assert {"narrative_too_long", "extractor_error", "format_characters_in_narrative"} <= kinds["result_heads"]
     assert {"lane_f_amount_is_preceding_item_amount", "lane_f_refused_request_object",
@@ -614,7 +641,7 @@ def test_every_route_key_has_a_settlement_row() -> None:
 
 
 def test_catch_all_reason_shapes_never_settle() -> None:
-    # fail safe: reasons that do not fit a row land on S74 and fail on code
+    # fail safe: reasons that do not fit a row land on S77 and fail on code
     for reason in ("brand_new_kind: x", "something the code never wrote"):
         key = regression.route_key(reason)
         assert settlement.rows_for(key, [reason]) == (settlement.TABLE[-1],)

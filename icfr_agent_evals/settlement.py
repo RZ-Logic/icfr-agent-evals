@@ -35,7 +35,7 @@ FACTS_FAMILIES: tuple[str, ...] = (
 
 @dataclass(frozen=True)
 class SettlementRow:
-    row_id: str                         # "S01" .. "S74", stable, in table order
+    row_id: str                         # "S01" .. "S77", stable, in table order
     match: str                          # one of MATCH_KINDS
     key: str                            # full route key, key prefix, regex (fullmatch) or field name
     route_class: str                    # "narrative_sweep" | "code_review" | "any"
@@ -57,7 +57,7 @@ _CR = f"{CODE}: "
 OFF_CONTRACT_ROUTE_KEY = f"{CODE}: {scoring.OFF_CONTRACT_REASON}"
 OFF_CONTRACT_FIELDS: tuple[str, ...] = ("variance_amount_usd", "materiality_band", "period")
 _OFF_CONTRACT_FIELD_RE = re.compile(rf"^{re.escape(scoring.OFF_CONTRACT_REASON)}: (\S+) states(?: |$)")
-CATCH_ALL_ROW_ID = "S74"
+CATCH_ALL_ROW_ID = "S77"
 CATCH_ALL_KEY = "*"
 
 _SENTINEL = "\x00sentinel\x00"
@@ -102,6 +102,14 @@ ON_CORRECT_EXTRACTOR = "fails on code and is filed as an extractor defect"
 
 NOTE_LANE_F = "lane F, a783322"
 NOTE_DRAFT_LACKED = "code emits it; draft lacked it"
+NOTE_FIX4 = "fix round 4, 2026-11-09"
+CORRECT_MEANS_BAND_SUBJECT = ("the band or threshold comparison is about the unexplained remainder or another "
+                              "non-variance figure (including a rounded rendering of the variance) and is true of "
+                              "that figure; the narrative states no wrong band for the variance itself")
+CORRECT_MEANS_DIRECTION_THRESHOLD = ("'short of' compares the variance with a threshold or band; the narrative "
+                                     "states no wrong direction")
+CORRECT_MEANS_ASSET_WORD = ("the words that spell an asset name are plain words ('the true USD shortfall'), "
+                            "not an asset claim; the narrative states no wrong asset")
 
 
 def _settleable(row_id: str, match: str, key: str, route_class: str, source: str, anchor: str,
@@ -275,6 +283,15 @@ def _build_table() -> tuple[SettlementRow, ...]:
                       "test_unsettleable_extractor_error", ON_CORRECT_EXTRACTOR, note=NOTE_DRAFT_LACKED),
         _unsettleable("S73", "exact", f"{_CR}format_characters_in_narrative", CODE, "narrative", "correctness",
                       "test_unsettleable_format_characters_in_narrative", note=NOTE_DRAFT_LACKED),
+        _settleable("S74", "exact", f"{_CR}band_statement_subject_unresolved", CODE, "narrative", "correctness",
+                    "FM-002", "band", "test_settle_band_statement_subject_unresolved",
+                    CORRECT_MEANS_BAND_SUBJECT, ON_CORRECT_NARRATIVE_CODE, note=NOTE_FIX4),
+        _settleable("S75", "exact", f"{_CR}direction_word_threshold_object", CODE, "narrative", "correctness",
+                    "FM-003", "direction", "test_settle_direction_word_threshold_object",
+                    CORRECT_MEANS_DIRECTION_THRESHOLD, ON_CORRECT_NARRATIVE_CODE, note=NOTE_FIX4),
+        _settleable("S76", "exact", f"{_CR}asset_word_ambiguous", CODE, "narrative", "correctness",
+                    "FM-016", "asset", "test_settle_asset_word_ambiguous",
+                    CORRECT_MEANS_ASSET_WORD, ON_CORRECT_NARRATIVE_CODE, note=NOTE_FIX4),
         _unsettleable(CATCH_ALL_ROW_ID, "catch_all", CATCH_ALL_KEY, "any", "any", "any",
                       "test_every_route_key_has_a_settlement_row",
                       note="a meta-test scans every review() call site and fails when a key has no row"),
@@ -287,7 +304,7 @@ _BY_ID: dict[str, SettlementRow] = {r.row_id: r for r in TABLE}
 
 
 def _check_table() -> None:
-    assert [r.row_id for r in TABLE] == [f"S{i:02d}" for i in range(1, 75)], "row ids must run S01..S74"
+    assert [r.row_id for r in TABLE] == [f"S{i:02d}" for i in range(1, 78)], "row ids must run S01..S77"
     assert TABLE[-1].row_id == CATCH_ALL_ROW_ID and TABLE[-1].match == "catch_all"
     assert len({r.unit_test for r in TABLE}) == len(TABLE), "each row has its own unit test"
     for r in TABLE:
