@@ -1155,6 +1155,8 @@ def _check_amount(toks: list[_Tok], i: int, binding: dict, ctx: _Context) -> dic
     if rec["verdict"] == "FM-001":
         # fix round 4, X1: one construction's FM-001 becomes a route, never a pass
         x1 = _x1_amount_route(toks, i, binding, rec, ctx)
+        if x1 is None:
+            x1 = _y1_amount_route(toks, i, binding, rec, ctx)  # fix round 4b, Y1 (FC02, FC07, FC29)
         if x1 is not None:
             rec.pop("review", None)
             rec.update(x1, downgraded_from="FM-001")
@@ -1672,6 +1674,215 @@ def _x1_zero_variance_route(b: dict, text: str, clause_starts: list[int], clause
     if re.fullmatch(r"no (?:net )?variance", words) and _X1_LEAVING_END_RE.search(seg) \
             and _X1_REMAINING_AFTER_RE.match(after):
         return "split_claim_subject_unresolved"
+    return None
+
+
+# fix round 4b, fixer Y1 (2026-11-09): the six held-out FM-001 constructions the owner
+# released for fixing (FC02, FC03, FC05, FC07, FC24, FC29). Same contract as the X1 block:
+# each rule only turns an FM-001 into a route, for one construction and only when the
+# figure or claim equals the quantity that construction states; it never passes a figure
+# or a claim, and when its trigger is not met the FM-001 stands. Every key is an existing
+# settlement row. Kept here so narrative_vocab.py (and vocab_sha256) does not move.
+_Y1_V = r"(?:shortfall|surplus|variance|difference|deficit)"
+# FC02: a negated or pending explain verb after the remainder ("That leaves $U that has
+# not been explained", "$U has yet to be accounted for", "$U still to be explained")
+_Y1_PENDING_GAP_RE = re.compile(
+    r"^\s+(?:(?:that|which)\s+)?(?:(?:has|have|had|is|are|was|were)\s+)?"
+    r"(?:not\s+(?:yet\s+)?been|(?:still|yet)\s+to\s+be|remains?\s+to\s+be|remained\s+to\s+be"
+    r"|(?:cannot|can\s?not|can['’]t|could\s+not|couldn['’]t)\s+be)\s+$",
+    _I)
+_Y1_PENDING_CUES = frozenset({"explained", "accounted for", "reconciled"})
+# FC02, elided: "$E is explained by the items and $U is not."
+_Y1_ELIDED_AFTER_RE = re.compile(r"^\s+(?:is|was|are|were)\s+not\s*(?:[.;]|$)", _I)
+_Y1_EXPLAINED_COPULA_RE = re.compile(r"^\s+(?:is|was|are|were|has\s+been|have\s+been)\s+$", _I)
+# FC07: "After excluding WD-1, JE-2 and DP-3, $U is still open"
+_Y1_EXCLUDE_WORDS = frozenset({"excluded", "excluding", "exclude", "excludes"})
+_Y1_EXCLUDED_GAP_RE = re.compile(r"^\s*,\s*(?:which\s+(?:leaves|left)\s+)?$", _I)
+_Y1_OPEN_AFTER_RE = re.compile(r"^\s+(?:(?:is|remains|stays)\s+)?(?:still\s+)?open(?![A-Za-z0-9])", _I)
+# FC29: "DP-2 was on chain ...; it offsets DP-1 by $X": $X is DP-2's own amount
+_Y1_PRONOUN_OFFSETS_RE = re.compile(r"(?<![A-Za-z0-9])(?:it|which|this|that)\s+(?:also\s+)?offsets?\s+$", _I)
+_Y1_BY_GAP_RE = re.compile(r"^\s+by\s+$", _I)
+_Y1_CURRENCY_FIGURE_RE = re.compile(r"(?:\$|USD\s?)[0-9]")
+# FC03: "the explained variance is zero", "The explained portion is nil"
+_Y1_PORTION_WORD_END_RE = re.compile(r"(?<![A-Za-z])(?P<w>explained|unexplained)\s+$", _I)
+_Y1_BARE_PORTION_ZERO_RE = re.compile(
+    r"(?:remainder|residual|balance|portion) (?:is|was|stands at|of) (?:zero|nil|none|nothing)", _I)
+_Y1_VARIANCE_ZERO_RE = re.compile(r"variance (?:is|was|of|stands at|amounts to) (?:zero|nil|nothing|none)", _I)
+# FC05: a tool's output reported and refused ("The auto-match export reports no variance,
+# which conflicts with the surplus, so I did not rely on it")
+_Y1_TOOL_REPORTS_RE = re.compile(
+    r"(?<![A-Za-z])(?:export|exports|output|extract|auto-match)(?![A-Za-z])[^.;]{0,60}?"
+    r"(?<![A-Za-z])(?:reports?|reported|reporting|shows?|showed|showing|shown|states?|stated|indicates?|indicated)"
+    r"\s+(?:a\s+)?$",
+    _I)
+_Y1_NOT_RELIED_RE = re.compile(
+    r"(?<![A-Za-z])(?:(?:did|do|does|will|would|should|could|can|must|may)\s+not|cannot"
+    r"|(?:didn|don|doesn|won|shouldn|couldn|wouldn)['’]t|(?:was|were|is|are|has|have)\s+not(?:\s+been)?)"
+    r"\s+(?:be\s+)?rel(?:y|ied|ying)\s+(?:on|upon)(?![A-Za-z])",
+    _I)
+# FC24: a resolution or full-explanation claim held as a condition ("sign-off should wait
+# until the difference is resolved", "should stay open until the surplus is fully explained")
+_Y1_UNTIL_END_RE = re.compile(r"(?<![A-Za-z])until\s+$", _I)
+_Y1_UNTIL_CLAUSE_END_RE = re.compile(rf"(?<![A-Za-z])until\s+(?:the\s+)?{_Y1_V}\s+(?:is|has\s+been)\s+$", _I)
+_Y1_WAIT_RE = re.compile(
+    r"(?<![A-Za-z])(?:wait|waits|be\s+held|be\s+deferred|on\s+hold|(?:stay|stays|remain|remains|be\s+kept|be\s+left)"
+    r"\s+open)(?![A-Za-z])",
+    _I)
+_Y1_WAIT_NEGATION_RE = re.compile(r"(?<![A-Za-z])(?:not|never|no\s+need)(?![A-Za-z])|n['’]t(?![A-Za-z])", _I)
+_Y1_PRESENT_CLAIM_RE = re.compile(r"(?<![A-Za-z])(?:is|has\s+been)(?![A-Za-z])", _I)
+# FC24: "This timing difference was cleared on 12/01": said of the item just named
+_Y1_TIMING_ITEM_END_RE = re.compile(r"(?<![A-Za-z])(?:this|that|the)\s+timing\s+$", _I)
+_Y1_PAST_CLEARED_RE = re.compile(r"difference (?:was|has been) (?:cleared|closed|resolved)", _I)
+
+
+def _y1_zero_both(portion: str, ctx: _Context) -> bool:
+    """The portion is zero from the cited items and in the truth record."""
+    if portion == "explained":
+        return abs(ctx.explained) <= USD_TOLERANCE and abs(ctx.truth.explained_usd) <= USD_TOLERANCE
+    return (abs(ctx.unexplained) <= USD_TOLERANCE and abs(ctx.truth.unexplained_usd) <= USD_TOLERANCE
+            and _near(ctx.explained, ctx.truth.explained_usd))
+
+
+def _y1_last_ref(text: str):
+    last = None
+    for r in _REF_RE.finditer(text):
+        last = r
+    return last
+
+
+def _y1_amount_route(toks: list[_Tok], i: int, binding: dict, rec: dict, ctx: _Context) -> dict | None:
+    """Route instead of FM-001 for one amount (FC02, FC07, FC29), or None to keep the FM."""
+    if rec.get("verdict") != "FM-001":
+        return None
+    amt = toks[i]
+    if amt.data["bare"]:
+        return None
+    value = amt.data["value"]
+    role = binding.get("role")
+    res = str(binding.get("resolution", ""))
+    text = ctx.text
+    unresolved = {"verdict": "review", "reason": "amount_role_unresolved", "fits": ["unexplained"]}
+
+    if role == "explained" and res == "nearest_cue_after" and _x1_portion_fits(value, "unexplained", ctx):
+        # FC02: "That leaves $U that has not been explained": the explain cue after the
+        # figure is negated or pending, so the figure is the unexplained remainder
+        c = next((k for k in range(i + 1, len(toks)) if toks[k].kind == "cue" and toks[k].text == binding.get("cue")),
+                 None)
+        if (c is not None and toks[c].low in _Y1_PENDING_CUES
+                and _Y1_PENDING_GAP_RE.match(text[amt.end:toks[c].start])):
+            return dict(unresolved, y1_rule="FC02")
+
+    if role == "explained" and res == "nearest_cue_before" and _x1_portion_fits(value, "unexplained", ctx):
+        # FC02, elided: "of which $E is explained by the items and $U is not." The cue is
+        # "$E is explained"; any figure between the cue and $U is an item's bracketed amount
+        c = max((k for k in range(i) if toks[k].kind == "cue" and toks[k].text == binding.get("cue")), default=-1)
+        e = max((k for k in range(c) if toks[k].kind == "amount"), default=-1) if c > 0 else -1
+        between_ok = all(
+            toks[k].kind != "amount" or (k >= 2 and toks[k - 1].text == "(" and toks[k - 2].kind == "ref")
+            for k in range(c + 1, i))
+        if (e >= 0 and toks[c].low == "explained" and toks[i - 1].low == "and" and between_ok
+                and _Y1_ELIDED_AFTER_RE.match(text[amt.end:]) and not toks[e].data["bare"]
+                and _Y1_EXPLAINED_COPULA_RE.match(text[toks[e].end:toks[c].start])
+                and _x1_portion_fits(toks[e].data["value"], "explained", ctx)):
+            return dict(unresolved, y1_rule="FC02")
+
+    if (role == "item" and res == "nearest_cue_before" and rec.get("reason") == "reference_not_cited"
+            and _x1_portion_fits(value, "unexplained", ctx)):
+        # FC07: the figure after a list of excluded references is the remainder; every
+        # listed reference is an ineligible item that the answer does not cite
+        ref = binding.get("ref_token")
+        k = next((j for j in range(i) if toks[j] is ref), None)
+        if (k is not None and _Y1_EXCLUDED_GAP_RE.match(text[ref.end:amt.start])
+                and _Y1_OPEN_AFTER_RE.match(text[amt.end:])):
+            listed = []
+            j = k
+            while j >= 0:
+                t = toks[j]
+                if t.kind == "ref":
+                    listed.append(t)
+                elif not ((t.kind == "punct" and t.text == ",") or (t.kind == "word" and t.low == "and")):
+                    break
+                j -= 1
+            if j >= 0 and toks[j].kind == "word" and toks[j].low in _Y1_EXCLUDE_WORDS and listed:
+                for t in listed:
+                    it = ctx.truth.item_by_reference(t.text)
+                    if it is None or it.reference in ctx.cited_any or ctx.truth.eligibility(it).eligible:
+                        return None
+                return dict(unresolved, y1_rule="FC07")
+
+    if role == "item" and res == "nearest_cue_before" and rec.get("reason") == "item_amount_mismatch":
+        # FC29: "DP-2 ...; it offsets DP-1 by $X": the pronoun is DP-2, the last reference
+        # before it, and $X is DP-2's own amount; both are cited and eligible, and their
+        # effects have opposite signs
+        ref = binding.get("ref_token")
+        if ref is not None and _Y1_BY_GAP_RE.match(text[ref.end:amt.start]):
+            m = _Y1_PRONOUN_OFFSETS_RE.search(text[:ref.start])
+            last = _y1_last_ref(text[:m.start()]) if m else None
+            if last is not None and not _Y1_CURRENCY_FIGURE_RE.search(text[last.end():m.start()]):
+                subj = ctx.truth.item_by_reference(last.group(0))
+                obj = ctx.truth.item_by_reference(ref.text)
+                if (subj is not None and obj is not None and subj.reference != obj.reference
+                        and subj.reference in ctx.cited and obj.reference in ctx.cited
+                        and subj.amount_usd is not None and _near(value, subj.amount_usd)
+                        and item_effect_usd(subj) * item_effect_usd(obj) < 0):
+                    return {"verdict": "review", "reason": "item_effect_unverified", "reference": subj.reference,
+                            "expected": abs(subj.amount_usd), "y1_rule": "FC29"}
+    return None
+
+
+def _y1_split_route(c: dict, text: str, toks: list[_Tok], clause_starts: list[int], clause_ends: list[int],
+                    ctx: _Context) -> str | None:
+    """Route key instead of FM-001 for one split claim (FC03, FC24), or None to keep the FM.
+    Called only where the claim would fire FM-001."""
+    ci = _n2_clause_of(c["start"], clause_starts, clause_ends)
+    cs = clause_starts[ci]
+    before = text[cs:c["start"]]
+    words = c["text"]
+    if c["scope"] == "subject" and c["role"] == "unexplained" and _Y1_BARE_PORTION_ZERO_RE.fullmatch(words):
+        # FC03: "the explained portion is zero": the zero is the explained portion
+        m = _Y1_PORTION_WORD_END_RE.search(before)
+        if m and m.group("w").lower() == "explained" and _y1_zero_both("explained", ctx):
+            return "split_claim_subject_unresolved"
+    if c["role"] == "unexplained" and c["scope"] in ("resolution", "clause"):
+        # FC24: the claim is a condition still to be met while a remainder is open
+        if c["scope"] == "resolution":
+            cond = bool(_Y1_UNTIL_END_RE.search(before) and _Y1_PRESENT_CLAIM_RE.search(words))
+        else:
+            cond = bool(_Y1_UNTIL_CLAUSE_END_RE.search(before))
+        if cond and abs(ctx.unexplained) > USD_TOLERANCE and abs(ctx.truth.unexplained_usd) > USD_TOLERANCE:
+            head = before[:before.lower().rfind("until")]
+            w = None
+            for w in _Y1_WAIT_RE.finditer(head):
+                pass
+            if w is not None and not _Y1_WAIT_NEGATION_RE.search(head[max(0, w.start() - 24):w.start()]):
+                return "split_resolution_with_remainder"
+    if (c["scope"] == "resolution" and _Y1_PAST_CLEARED_RE.fullmatch(words)
+            and _Y1_TIMING_ITEM_END_RE.search(before)):
+        # FC24: "This timing difference was cleared on 12/01" is said of the item just
+        # named: the last reference before it, in this sentence or the one before, is a
+        # cited, eligible timing difference
+        last = _y1_last_ref(text[:c["start"]])
+        it = ctx.truth.item_by_reference(last.group(0)) if last is not None else None
+        if (it is not None and it.reference in ctx.cited and it.type == "timing_difference"
+                and ci >= 1 and last.start() >= clause_starts[ci - 1]):
+            return "split_claim_subject_unresolved"
+    return None
+
+
+def _y1_zero_variance_route(b: dict, text: str, clause_starts: list[int], clause_ends: list[int],
+                            ctx: _Context) -> str | None:
+    """Route key instead of FM-001 for one zero-variance phrase (FC03, FC05), or None."""
+    ci = _n2_clause_of(b["start"], clause_starts, clause_ends)
+    seg = text[clause_starts[ci]:b["start"]]
+    after = text[b["end"]:clause_ends[ci]]
+    if _Y1_VARIANCE_ZERO_RE.fullmatch(b["text"]):
+        # FC03: "the explained variance is zero", "the unexplained variance is zero"
+        m = _Y1_PORTION_WORD_END_RE.search(seg)
+        if m and _y1_zero_both(m.group("w").lower(), ctx):
+            return "split_claim_subject_unresolved"
+    if _Y1_TOOL_REPORTS_RE.search(seg) and _Y1_NOT_RELIED_RE.search(after):
+        # FC05: a tool output that reports no variance, refused in the same sentence
+        return "split_claim_negated"
     return None
 
 
@@ -2738,8 +2949,14 @@ def _check(text: str, parsed: dict, truth: CaseTruth) -> NarrativeResult:
             if settled:
                 c["verdict"] = "ok"
             elif c["subject_named"]:
-                c["verdict"] = "FM-001"
-                fire("FM-001")
+                y1 = _y1_split_route(c, text, toks, clause_starts, clause_ends, ctx)  # fix round 4b, Y1 (FC24)
+                if y1 is not None:
+                    c["verdict"] = "review"
+                    c["downgraded_from"] = "FM-001"
+                    review(f"{y1}: {c['text']}")
+                else:
+                    c["verdict"] = "FM-001"
+                    fire("FM-001")
             else:
                 c["verdict"] = "review"
                 review(f"split_resolution_with_remainder: {c['text']}")
@@ -2751,6 +2968,8 @@ def _check(text: str, parsed: dict, truth: CaseTruth) -> NarrativeResult:
         else:
             # fix round 4, X1: one construction's FM-001 becomes a route, never a pass
             x1 = _x1_split_route(c, text, toks, clause_starts, clause_ends, ctx)
+            if x1 is None:
+                x1 = _y1_split_route(c, text, toks, clause_starts, clause_ends, ctx)  # fix round 4b, Y1 (FC03, FC24)
             if x1 is not None:
                 c["verdict"] = "review"
                 c["downgraded_from"] = "FM-001"
@@ -2797,6 +3016,8 @@ def _check(text: str, parsed: dict, truth: CaseTruth) -> NarrativeResult:
                 b["verdict"] = "ignored"
             elif abs(truth.variance_usd) > USD_TOLERANCE:
                 x1 = _x1_zero_variance_route(b, text, clause_starts, clause_ends, ctx)  # fix round 4, X1 (FC30)
+                if x1 is None:
+                    x1 = _y1_zero_variance_route(b, text, clause_starts, clause_ends, ctx)  # fix round 4b, Y1 (FC03, FC05)
                 if x1 is not None:
                     b["verdict"] = "review"
                     b["downgraded_from"] = "FM-001"
