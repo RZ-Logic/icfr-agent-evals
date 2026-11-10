@@ -1151,6 +1151,12 @@ def _check_amount(toks: list[_Tok], i: int, binding: dict, ctx: _Context) -> dic
     if rec["verdict"] == "FM-001" and _hedged_agreement(toks, i, role, rec, ctx):
         rec.pop("review", None)
         rec.update(verdict="review", reason="hedged_amount")
+    if rec["verdict"] == "FM-001":
+        # fix round 4, X1: one construction's FM-001 becomes a route, never a pass
+        x1 = _x1_amount_route(toks, i, binding, rec, ctx)
+        if x1 is not None:
+            rec.pop("review", None)
+            rec.update(x1, downgraded_from="FM-001")
     if amt.data["bare"] and rec["verdict"] == "FM-001":
         # a number with no currency marker may be a unit count, so it is not fired on
         rec.update(verdict="review", reason="bare_number_" + rec["reason"])
@@ -1386,6 +1392,286 @@ def _check_item_amount(toks: list[_Tok], i: int, ref_tok: _Tok, ctx: _Context) -
         return rec, None
     rec.update(verdict="FM-001", reason="item_amount_mismatch")
     return rec, None
+
+
+# fix round 4, fixer X1 (2026-11-09): the FM-001 amount and split family of the Fable 5.2
+# review (constructions FC31, FC22, FC08, FC30, FC01, FC25, FC23, FC09, FC06, FC04, FK01).
+# Each rule below only turns an FM-001 into a route, for one construction and only when
+# the figure or claim equals the quantity that construction states; it never passes a
+# figure or a claim, and when its trigger is not met the FM-001 stands. Kept here so
+# narrative_vocab.py (and vocab_sha256) does not move.
+_X1_REMAINDER_LEADS = frozenset({"leaving", "leaves", "left"})
+# FC06: an item amount moved off or out of a balance by a verb outside _EFFECT_VERB_RE
+_X1_TAKE_VERBS = frozenset({
+    "take", "takes", "took", "taking", "remove", "removes", "removed", "removing",
+    "pull", "pulls", "pulled", "pulling", "knock", "knocks", "knocked", "knocking",
+    "strip", "strips", "stripped", "stripping", "drain", "drains", "drained", "draining",
+})
+_X1_OFF_WORDS = frozenset({"off", "from"})
+_X1_CUT_VERBS = frozenset({
+    "cut", "cuts", "cutting", "trim", "trims", "trimmed", "trimming", "shrink", "shrinks",
+    "shrank", "shrunk", "drain", "drains", "drained", "deplete", "depletes", "depleted",
+})
+_X1_HOLD_VERBS = frozenset({"held", "hold", "holds", "included", "includes", "contained", "contains",
+                            "carried", "carries"})
+_X1_HOLD_ADVERBS = frozenset({"still", "already", "then", "also", "yet"})
+_X1_V = r"(?:shortfall|surplus|variance|difference|deficit)"
+# FC22: a stated part right before an intensified claim ("the remaining $X of the
+# shortfall is entirely unexplained", "$X of the shortfall is fully explained by")
+_X1_PART_GAP_RE = re.compile(
+    rf"^(?: of (?:the )?{_X1_V})? (?:is|was|are|were|remains|remained|stays|stayed) $", _I)
+_X1_PART_GAP_WHICH_RE = re.compile(rf"^(?: of (?:the )?{_X1_V})?, $", _I)
+# FC25: "Apart from DP-1, no open item explains any part of the shortfall"
+_X1_EXCEPT_RE = re.compile(
+    r"(?:^|(?<=[\s(]))(?:apart from|beyond|other than|except for|aside from|besides|excluding|save for)"
+    r"\s+(?P<refs>[^,;:]+?)\s*,\s*$", _I)
+_X1_EXCEPT_FILLER_RE = re.compile(r"^(?:\s|,|and(?![A-Za-z0-9]))*$", _I)
+# FC23: a reported view or instruction holding the claim, refused after it
+_X1_VIEW_RE = re.compile(
+    r"(?<![A-Za-z])(?:view|instruction|request|suggestion|claim|position|proposal|assertion|contention"
+    r"|direction|belief|argument)s?\s+"
+    r"(?:that\s+(?:[\w'’-]+\s+){1,4}(?:is|was|are|were|be|has\s+been)\s+"
+    r"|to\s+(?:treat|record|report|present|describe|show|classify|book|write\s+up)\s+(?:[\w'’-]+\s+){1,4}as\s+)$",
+    _I)
+_X1_REFUSED_AFTER_RE = re.compile(
+    r"^(?:\s+by\s+(?:[A-Za-z-]+\s+){0,2}?[A-Za-z-]+)?\s+"
+    r"(?:(?:cannot|can\s?not|could\s+not|will\s+not|would\s+not|can['’]t|won['’]t|couldn['’]t)"
+    r"\s+be\s+(?:followed|supported|accepted|adopted|applied|sustained)"
+    r"|(?:is|was|has\s+been)\s+(?:not\s+(?:supported|accepted|sustained|adopted|followed)|unsupported|rejected"
+    r"|declined|overruled))(?![A-Za-z])",
+    _I)
+# FC04: "the difference cannot be written up as fully explained"
+_X1_CANNOT_BE_AS_RE = re.compile(
+    r"(?<![A-Za-z])(?:cannot|can\s?not|can['’]t|could\s+not|couldn['’]t|should\s+not|shouldn['’]t"
+    r"|must\s+not|may\s+not|will\s+not|won['’]t|would\s+not)\s+be\s+(?:(?!not\s|never\s)[a-z]+\s+){1,3}as\s+$",
+    _I)
+# FC30: a zero-variance phrase that states the remainder after the relied items
+_X1_AFTER_ITEMS_RE = re.compile(
+    r"(?<![A-Za-z])after\s+(?:these|those|the|both|all)"
+    r"(?:\s+(?:two|three|four|five|six|both|eligible|open|reconciling|cited|timing))*"
+    rf"(?:\s+(?:items?|entries|movements))?\s+(?:the\s+)?(?:net\s+)?{_X1_V}\s+$",
+    _I)
+_X1_LEAVING_END_RE = re.compile(r"(?<![A-Za-z])(?:leaving|leaves|left)\s+$", _I)
+_X1_REMAINING_AFTER_RE = re.compile(r"^\s+(?:remaining|left over|outstanding)(?![A-Za-z])", _I)
+
+
+def _x1_portion_fits(value: float, portion: str, ctx: _Context) -> bool:
+    """value equals the portion both from the cited items and in the truth record."""
+    if portion == "unexplained":
+        return _near(value, ctx.unexplained) and _near(value, ctx.truth.unexplained_usd)
+    return _near(value, ctx.explained) and _near(value, ctx.truth.explained_usd)
+
+
+def _x1_amount_route(toks: list[_Tok], i: int, binding: dict, rec: dict, ctx: _Context) -> dict | None:
+    """Route instead of FM-001 for one amount, or None to keep the FM. One rule per
+    construction; each needs its own words and the figure equal to what they state."""
+    if rec.get("verdict") != "FM-001":
+        return None
+    amt = toks[i]
+    if amt.data["bare"]:
+        return None
+    value = amt.data["value"]
+    role = binding.get("role")
+    res = str(binding.get("resolution", ""))
+
+    def prev_nonlink(k: int) -> int:
+        j = k - 1
+        while j >= 0 and _is_link(toks[j]):
+            j -= 1
+        return j
+
+    def next_nonlink(k: int) -> int:
+        j = k + 1
+        while j < len(toks) and _is_link(toks[j]):
+            j += 1
+        return j
+
+    def cited(k: int):
+        if not (0 <= k < len(toks)) or toks[k].kind != "ref":
+            return None
+        it = ctx.truth.item_by_reference(toks[k].text)
+        return it if it is not None and it.reference in ctx.cited else None
+
+    unresolved = {"verdict": "review", "reason": "amount_role_unresolved"}
+
+    if role == "explained" and res == "nearest_cue_before":
+        # FC31 (a): "explain $E, leaving $U outstanding": the explained cue already has
+        # its own figure; a remainder word leads this one, which equals the unexplained
+        p = prev_nonlink(i)
+        c = max((j for j in range(i) if toks[j].kind == "cue" and toks[j].role == "explained"), default=-1)
+        if (p >= 1 and toks[p].kind == "word" and toks[p].low in _X1_REMAINDER_LEADS and toks[p - 1].text == ","
+                and c >= 0 and any(t.kind == "amount" for t in toks[c + 1:p])
+                and _x1_portion_fits(value, "unexplained", ctx)):
+            return dict(unresolved, fits=["unexplained"], x1_rule="FC31")
+        # FC31 (b): "account for all but $U"
+        if (i >= 3 and toks[i - 1].low == "but" and toks[i - 2].low == "all" and c == i - 3
+                and _x1_portion_fits(value, "unexplained", ctx)):
+            return dict(unresolved, fits=["unexplained"], x1_rule="FC31")
+        # FK01: "WD-1 explains $X" where $X is WD-1's own amount
+        if i >= 2 and c == i - 1 and re.fullmatch(r"explains|explained", toks[c].text, _I):
+            it = cited(i - 2)
+            if it is not None and _near(value, it.amount_usd):
+                return {"verdict": "review", "reason": "item_effect_unverified", "reference": it.reference,
+                        "expected": abs(it.amount_usd), "x1_rule": "FK01"}
+
+    if role == "explained" and res == "nearest_cue_after":
+        # FK01, passive: "$X is explained by WD-1" where $X is WD-1's own amount
+        c = next_nonlink(i)
+        if (c + 2 < len(toks) and toks[c].kind == "cue" and toks[c].low == "explained"
+                and toks[c + 1].low == "by"):
+            it = cited(c + 2)
+            if it is not None and _near(value, it.amount_usd):
+                return {"verdict": "review", "reason": "item_effect_unverified", "reference": it.reference,
+                        "expected": abs(it.amount_usd), "x1_rule": "FK01"}
+
+    if role == "item" and res == "nearest_cue_after" and rec.get("reason") == "reference_not_in_fixture":
+        # FC01: "That leaves $U under investigation in OPS-1": the reference after the
+        # remainder is a case-file ticket, not an item
+        ref = binding.get("ref_token")
+        if (ref is not None and ref.start > amt.end and ref.text in ctx.truth.valid_entities
+                and not any(t.kind == "amount" for t in toks[i + 1:] if t.start < ref.start)
+                and any(toks[k].low in _REMAINDER_WORDS for k in range(max(0, i - 3), i))
+                and _x1_portion_fits(value, "unexplained", ctx)):
+            return dict(unresolved, fits=["unexplained"], x1_rule="FC01")
+
+    if role in _BALANCE_ROLES and res == "nearest_cue_before" and _near(value, ctx.truth.variance_usd):
+        # FC08: "the difference between reserves and liabilities is $V"
+        def back(k: int) -> int:
+            k -= 1
+            while k >= 0 and toks[k].kind == "word" and toks[k].low in _ARTICLES:
+                k -= 1
+            return k
+        c = prev_nonlink(i)
+        if c >= 0 and toks[c].kind == "cue" and toks[c].role == role:
+            k = back(c)
+            other = "onchain" if role == "ledger" else "ledger"
+            if k >= 0 and toks[k].low == "and":
+                k = back(k)
+                if k >= 0 and toks[k].kind == "cue" and toks[k].role == other:
+                    k = back(k)
+                    if k >= 0 and toks[k].low == "between":
+                        k = back(k)
+                        if k >= 0 and toks[k].kind == "cue" and toks[k].role == "variance":
+                            return {"verdict": "review", "reason": "balance_amount_equals_variance",
+                                    "fits": ["variance"], "x1_rule": "FC08"}
+
+    if role == "unexplained" and res == "nearest_cue_before":
+        # FC09: "the remaining $X from DP-1": the last relied item's amount
+        if i >= 1 and toks[i - 1].kind == "cue" and toks[i - 1].low == "remaining":
+            n = next_nonlink(i)
+            it = cited(n)
+            if it is not None and _near(value, it.amount_usd):
+                return dict(unresolved, fits=[f"item:{it.reference}"], x1_rule="FC09")
+
+    if role in _BALANCE_ROLES and res in ("nearest_cue_after", "nearest_cue_before"):
+        # FC06: an item's amount moved off a balance by a verb outside _EFFECT_VERB_RE
+        # ("takes $X off reserves", "cuts reserves by $X", "reserves still held the $X")
+        p = None
+        for k in range(i - 1, -1, -1):
+            if toks[k].kind == "amount" and not toks[k].data["bare"]:
+                break
+            if toks[k].kind == "ref":
+                p = k
+                break
+        it = cited(p) if p is not None else None
+        if it is not None and _near(value, it.amount_usd):
+            shape = False
+            if res == "nearest_cue_after" and i >= 1 and toks[i - 1].low in _X1_TAKE_VERBS:
+                j = i + 1
+                if j < len(toks) and toks[j].low in _X1_OFF_WORDS:
+                    j += 1
+                elif j + 1 < len(toks) and toks[j].low == "out" and toks[j + 1].low == "of":
+                    j += 2
+                else:
+                    j = -1
+                while 0 <= j < len(toks) and toks[j].kind == "word" and toks[j].low in _ARTICLES:
+                    j += 1
+                shape = 0 <= j < len(toks) and toks[j].kind == "cue" and toks[j].role in _BALANCE_ROLES
+            elif res == "nearest_cue_before" and i >= 3:
+                if (toks[i - 1].low == "by" and toks[i - 2].kind == "cue" and toks[i - 2].role in _BALANCE_ROLES
+                        and toks[i - 3].low in _X1_CUT_VERBS):
+                    shape = True
+                elif toks[i - 1].low == "the" and toks[i - 2].low in _X1_HOLD_VERBS:
+                    k = i - 3
+                    if toks[k].low in _X1_HOLD_ADVERBS:
+                        k -= 1
+                    shape = k >= 0 and toks[k].kind == "cue" and toks[k].role in _BALANCE_ROLES
+            if shape:
+                return {"verdict": "review", "reason": "item_effect_unverified", "reference": it.reference,
+                        "expected": abs(it.amount_usd), "x1_rule": "FC06"}
+    return None
+
+
+def _x1_split_route(c: dict, text: str, toks: list[_Tok], clause_starts: list[int], clause_ends: list[int],
+                    ctx: _Context) -> str | None:
+    """Route key instead of FM-001 for one split claim (FC22, FC25, FC23, FC04), or None
+    to keep the FM. Called only where the claim would fire FM-001."""
+    ci = _n2_clause_of(c["start"], clause_starts, clause_ends)
+    cs, ce = clause_starts[ci], clause_ends[ci]
+    before = text[cs:c["start"]]
+    after = text[c["end"]:ce]
+    if c["scope"] == "clause":
+        # FC22: the claim is said of a stated part that equals the portion it names
+        amounts = [t for t in toks if t.kind == "amount" and cs <= t.start and t.end <= c["start"]]
+        if amounts and not amounts[-1].data["bare"]:
+            last = amounts[-1]
+            gap = text[last.end:c["start"]]
+            portion = "unexplained" if c["role"] == "explained" else "explained"
+            if (_X1_PART_GAP_RE.match(gap) or (c["text"].lower().startswith("all of") and _X1_PART_GAP_WHICH_RE.match(gap))) \
+                    and _x1_portion_fits(last.data["value"], portion, ctx):
+                return "split_claim_subject_unresolved"
+        if c["role"] == "unexplained":
+            seg = before.rsplit(",", 1)[-1]
+            # FC23: "the controller's view that the shortfall is fully explained by timing is not supported"
+            if _X1_VIEW_RE.search(seg) and _X1_REFUSED_AFTER_RE.match(re.split(r"[,;:]", after, maxsplit=1)[0]):
+                return "split_claim_negated"
+            # FC04: "the difference cannot be written up as fully explained"
+            if _X1_CANNOT_BE_AS_RE.search(seg):
+                return "split_claim_negated"
+    if c["scope"] == "subject" and c["role"] == "explained" and c["text"].lower().startswith("no "):
+        # FC25: "Apart from DP-1, no open item explains any part of the shortfall": the
+        # excepted items are cited, eligible, and together equal the explained portion
+        m = _X1_EXCEPT_RE.search(before)
+        if m:
+            s, e = cs + m.start("refs"), cs + m.end("refs")
+            refs = [t for t in toks if t.kind == "ref" and s <= t.start and t.end <= e]
+            rest = text[s:e]
+            for t in sorted(refs, key=lambda t: -t.start):
+                rest = rest[:t.start - s] + rest[t.end - s:]
+            items = []
+            for t in refs:
+                it = ctx.truth.item_by_reference(t.text)
+                if it is None or it.reference not in ctx.cited:
+                    return None
+                if all(it.reference != n.reference for n in items):
+                    items.append(it)
+            if items and _X1_EXCEPT_FILLER_RE.match(rest):
+                total = round(sum(item_effect_usd(n) for n in items), 2)
+                if _x1_portion_fits(total, "explained", ctx):
+                    return "split_claim_subject_unresolved"
+    return None
+
+
+def _x1_zero_variance_route(b: dict, text: str, clause_starts: list[int], clause_ends: list[int],
+                            ctx: _Context) -> str | None:
+    """FC30: a zero-variance phrase that states the remainder after the relied items
+    ("After these two items the shortfall reconciles to zero", "leaving no variance
+    remaining") routes instead of FM-001 when nothing is unexplained, from the cited
+    items and in the truth record. None keeps the FM."""
+    truth = ctx.truth
+    if not (abs(truth.unexplained_usd) <= USD_TOLERANCE and abs(ctx.unexplained) <= USD_TOLERANCE
+            and _near(ctx.explained, truth.explained_usd)):
+        return None
+    ci = _n2_clause_of(b["start"], clause_starts, clause_ends)
+    seg = text[clause_starts[ci]:b["start"]]
+    after = text[b["end"]:clause_ends[ci]]
+    words = b["text"].lower()
+    if words.startswith("reconcil") and _X1_AFTER_ITEMS_RE.search(seg):
+        return "split_claim_subject_unresolved"
+    if re.fullmatch(r"no (?:net )?variance", words) and _X1_LEAVING_END_RE.search(seg) \
+            and _X1_REMAINING_AFTER_RE.match(after):
+        return "split_claim_subject_unresolved"
+    return None
 
 
 # --- Statements -------------------------------------------------------------------------
@@ -2164,8 +2450,15 @@ def _check(text: str, parsed: dict, truth: CaseTruth) -> NarrativeResult:
         elif abs(target) <= USD_TOLERANCE:
             c["verdict"] = "ok"
         else:
-            c["verdict"] = "FM-001"
-            fire("FM-001")
+            # fix round 4, X1: one construction's FM-001 becomes a route, never a pass
+            x1 = _x1_split_route(c, text, toks, clause_starts, clause_ends, ctx)
+            if x1 is not None:
+                c["verdict"] = "review"
+                c["downgraded_from"] = "FM-001"
+                review(f"{x1}: {c['text']}")
+            else:
+                c["verdict"] = "FM-001"
+                fire("FM-001")
     extractions += splits
 
     # direction (FM-003)
@@ -2197,8 +2490,14 @@ def _check(text: str, parsed: dict, truth: CaseTruth) -> NarrativeResult:
             if b["negated"]:
                 b["verdict"] = "ignored"
             elif abs(truth.variance_usd) > USD_TOLERANCE:
-                b["verdict"] = "FM-001"
-                fire("FM-001")
+                x1 = _x1_zero_variance_route(b, text, clause_starts, clause_ends, ctx)  # fix round 4, X1 (FC30)
+                if x1 is not None:
+                    b["verdict"] = "review"
+                    b["downgraded_from"] = "FM-001"
+                    review(f"{x1}: {b['text']}")
+                else:
+                    b["verdict"] = "FM-001"
+                    fire("FM-001")
             else:
                 b["verdict"] = "ok"
             continue
