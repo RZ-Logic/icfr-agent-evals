@@ -38,6 +38,7 @@ year", "first half of 2025") route to review.
 from __future__ import annotations
 
 import bisect
+import calendar
 import re
 import unicodedata
 from dataclasses import dataclass, field
@@ -1621,6 +1622,32 @@ def _split_claims(clause: str, offset: int) -> list[dict]:
     return out
 
 
+def _refused_band_request(clause: str, m_start: int, m_end: int) -> bool:
+    """Pattern D (fix round 2): the band is the object of a request ("the request
+    to write this up as M1") whose own first verb is negated ("is not supported",
+    "was rejected"). A request the clause accepts is not refused."""
+    before = re.split(r"[,;:]", clause[:m_start])[-1]
+    req = None
+    for r in _REFUSED_REQUEST_RE.finditer(before):
+        req = r
+    if req is None or not _REFUSED_TO_VERB_RE.search(before[req.end():]):
+        return False
+    if not _REFUSED_PREP_END_RE.search(before):
+        return False
+    after = re.split(r"[,;:]", clause[m_end:], maxsplit=1)[0]
+    v = _REFUSED_FIRST_VERB_RE.search(after)
+    if v is None:
+        return False
+    word, tail = v.group(0).lower(), after[v.end():]
+    if word == "cannot" or word.endswith(("n't", "n’t")):
+        return not _REFUSED_DOUBLE_RE.match(tail)
+    m = _REFUSED_NEG_TAIL_RE.match(tail)
+    if m is None:
+        return False
+    negator = m.group(0).strip().lower() in ("not", "never")
+    return not (negator and _REFUSED_DOUBLE_RE.match(tail[m.end():]))
+
+
 def _band_statements(clause: str, offset: int, amounts_at: dict[int, float]) -> list[dict]:
     """Band statements in one masked clause. Each carries the bands it is consistent
     with ("bands"), or a per-band verdict table for band words."""
@@ -1631,29 +1658,7 @@ def _band_statements(clause: str, offset: int, amounts_at: dict[int, float]) -> 
         return all(e <= a or s >= b for a, b in consumed)
 
     def refused(m_start: int, m_end: int) -> bool:
-        """Pattern D (fix round 2): the band is the object of a request ("the request
-        to write this up as M1") whose own first verb is negated ("is not supported",
-        "was rejected"). A request the clause accepts is not refused."""
-        before = re.split(r"[,;:]", clause[:m_start])[-1]
-        req = None
-        for r in _REFUSED_REQUEST_RE.finditer(before):
-            req = r
-        if req is None or not _REFUSED_TO_VERB_RE.search(before[req.end():]):
-            return False
-        if not _REFUSED_PREP_END_RE.search(before):
-            return False
-        after = re.split(r"[,;:]", clause[m_end:], maxsplit=1)[0]
-        v = _REFUSED_FIRST_VERB_RE.search(after)
-        if v is None:
-            return False
-        word, tail = v.group(0).lower(), after[v.end():]
-        if word == "cannot" or word.endswith(("n't", "n\u2019t")):
-            return not _REFUSED_DOUBLE_RE.match(tail)
-        m = _REFUSED_NEG_TAIL_RE.match(tail)
-        if m is None:
-            return False
-        negator = m.group(0).strip().lower() in ("not", "never")
-        return not (negator and _REFUSED_DOUBLE_RE.match(tail[m.end():]))
+        return _refused_band_request(clause, m_start, m_end)
 
     def emit(m_start: int, m_end: int, **rec) -> None:
         consumed.append((m_start, m_end))
@@ -1848,6 +1853,299 @@ def _non_latin(text: str) -> list[str]:
         elif cat == "Nd" and not ("0" <= ch <= "9"):
             bad.append(ch)
     return bad
+
+
+# --- Fix round 4, lane X2 (2026-11-09): band, direction, asset and period false codes ----------
+# Each guard below runs only where a statement's verdict is already FM-002, FM-003 or
+# FM-016, and turns that one verdict into a review with a route reason. None turns a
+# review into ok, none removes a route, none adds a code. A statement that lane F would
+# downgrade is left to lane F, so its route key does not move. Kept here so
+# narrative_vocab.py (and vocab_sha256) does not move.
+
+_X2_ITEM_NOUN = (
+    r"(?:fee|deposit|withdrawal|transfer|item|transaction|movement|payment|receipt|entr(?:y|ies)|adjustment"
+    r"|charge|credit|debit|sweep|outflow|inflow)s?"
+)
+# FC16: a band word used as an adjective of an item ("an immaterial sweep network fee"),
+# up to three modifier words between, none of them a variance or band word.
+_X2_BAND_WORD_ITEM_AFTER_RE = re.compile(
+    rf"^(?: (?!(?:variance|shortfall|surplus|deficit|difference|gap|excess|band|tier|range|amount|portion"
+    rf"|remainder|balance|position|misstatement|weakness|risk)(?![A-Za-z0-9]))[A-Za-z][A-Za-z-]*){{0,3}}"
+    rf" {_X2_ITEM_NOUN}(?![A-Za-z0-9])",
+    _I,
+)
+# FC16: "material" as a noun ("the supporting material")
+_X2_MATERIAL_NOUN_BEFORE_RE = re.compile(r"(?<![A-Za-z0-9])(?:supporting|source|background|underlying) $", _I)
+_X2_ITEM_BAND_WORDS_RE = re.compile(r"(?:im)?material|de minimis", _I)
+# FC11: a band label or band word right after a comparator ("below the reportable band",
+# "below M2"): a comparison with a band, not a band claim. "within" is not one.
+_X2_BAND_COMPARATOR_BEFORE_RE = re.compile(
+    r"(?<![A-Za-z0-9])(?:below|under|beneath|less than|lower than|above|over|exceed(?:s|ed|ing)?|greater than"
+    r"|more than|higher than|in excess of|beyond|short of)(?: the| a)? $",
+    _I,
+)
+# FC13: a band gloss right after a band label inside brackets ("M1 (below floor)")
+_X2_GLOSS_LABEL_BEFORE_RE = re.compile(rf"(?<![A-Za-z0-9])(?P<label>{V.BAND_LABEL}) \($")
+# FC10: a band comparison whose subject is the unexplained remainder
+_X2_REMAINDER_CUE = (
+    r"(?:unexplained|unreconciled|unaccounted for|remainder|residual|remaining|outstanding)"
+    r"(?: (?:amount|balance|portion|difference|variance|shortfall|surplus|part|gap))?"
+)
+_X2_REMAINDER_HEAD_RE = re.compile(rf"(?<![A-Za-z0-9]){_X2_REMAINDER_CUE}\s*$", _I)
+_X2_REMAINDER_REL_RE = re.compile(r"^\s*(?:which|that)(?: [A-Za-z-]+){0,5} $", _I)
+_X2_REMAINDER_SUBJECT_RE = re.compile(
+    r"^\s*(?:(?:and|but|so) )?(?:the |this |that )?(?:(?:unexplained|unreconciled|remaining|residual) "
+    r"(?:remainder|amount|balance|portion|difference|part)|remainder|residual)"
+    rf"(?: of)?(?: {_MASK_AMT}+)?(?: (?:alone|on its own|by itself|itself))? (?:is|was|sits|falls|stays|remains)"
+    r"(?: (?:well|still|comfortably|also))? $",
+    _I,
+)
+# FC17: "short of" whose object is a threshold or band ("well short of the M3 threshold")
+_X2_SHORT_OF_RE = re.compile(r"(?:(?:fell|falls|fall|falling) )?short of", _I)
+_X2_THRESHOLD_OBJECT_RE = re.compile(
+    rf"^ (?:the |a )?(?:{_MASK_AMT}+ )?(?:(?:{V.BAND_LABEL}|reportable|reporting|material[- ]risk|materiality"
+    r"|escalation) )?(?:thresholds?|floors?|limits?|ceilings?|bands?|boundar(?:y|ies)|levels?)(?![A-Za-z0-9])"
+    rf"|^ (?:the )?{V.BAND_LABEL}(?![A-Za-z0-9])",
+    _I,
+)
+# FC28: "true USD" as plain words before a variance noun, not the token TrueUSD
+_X2_TRUE_USD_RE = re.compile(r"[Tt]rue USD")
+_X2_TRUE_USD_AFTER_RE = re.compile(
+    r"^ (?:shortfall|surplus|variance|difference|deficit|gap|value|amount|figure|equivalent|exposure|terms"
+    r"|position)(?![A-Za-z0-9])",
+    _I,
+)
+# FK03, FK04: an other-asset ticker that describes a named item ("DP-1 (USDC",
+# "DP-1 is a USDC movement", "the USDC deposit DP-1")
+_X2_REF = r"[A-Z]{2,5}-[0-9A-Za-z-]*[0-9][0-9A-Za-z-]*"
+_X2_REF_PAREN_BEFORE_RE = re.compile(rf"(?<![A-Za-z0-9-])(?P<ref>{_X2_REF})\s*\(\s*(?:(?:an?|the)\s+)?$")
+_X2_REF_COLON_BEFORE_RE = re.compile(rf"(?<![A-Za-z0-9-])(?P<ref>{_X2_REF})\s*:\s*$")
+_X2_REF_COPULA_BEFORE_RE = re.compile(
+    rf"(?<![A-Za-z0-9-])(?P<ref>{_X2_REF})(?:\s*,\s*|\s+(?:is|was|being)\s+|\s*,\s*(?:which\s+)?(?:is|was)\s+)"
+    r"(?:an?|the|one)\s+(?:[a-z][a-z-]*\s+)?$"
+)
+_X2_ITEM_AFTER_RE = re.compile(rf"^[ -](?:[A-Za-z][A-Za-z-]* )?{_X2_ITEM_NOUN}(?![A-Za-z0-9])", _I)
+_X2_REF_AFTER_RE = re.compile(
+    rf"^[ -](?:[A-Za-z][A-Za-z-]* )?{_X2_ITEM_NOUN}\s*(?:\(\s*)?(?P<ref>{_X2_REF})(?![A-Za-z0-9])", _I
+)
+# FC27: "Oct-31", "Nov-01": a month and a day with a hyphen, read as a month and a year
+_X2_MON_DAY_RE = re.compile(rf"^(?P<mon>{_MONTH_ALT})-(?P<dd>[0-9]{{2}})$", _I)
+# FK05: an item date as the case file prints it ("dated 01-Nov-2025") or a month-year
+# that names an item ("the January 2026 item")
+_X2_DAY_HYPHEN_BEFORE_RE = re.compile(r"(?<![0-9A-Za-z-])(?P<dd>[0-9]{1,2})-$")
+_X2_PERIOD_ITEM_AFTER_RE = re.compile(rf"^ (?:[a-z][a-z-]* )?{_X2_ITEM_NOUN}(?![A-Za-z0-9])", _I)
+_X2_DATED_BEFORE_RE = re.compile(r"(?<![A-Za-z0-9])dated (?:on |in )?$", _I)
+# A sentence that relies on, counts or keeps an item ("so it is relied on", "is not excluded")
+_X2_AFFIRMED_RE = re.compile(
+    r"(?<![A-Za-z'’])(?:(?:is|are|was|were|be|been|being)\s+(?:relied|counted|included|used|kept)"
+    r"|(?:I|we)\s+(?:relied|counted|included|used|kept)|rel(?:y|ies)\s+on)(?![A-Za-z0-9])",
+    _I,
+)
+_X2_NOT_EXCLUDED_RE = re.compile(
+    r"(?<![A-Za-z0-9])(?:not|never)\s+(?:been\s+)?excluded|(?:is|was|are|were)n['’]t\s+excluded", _I)
+_X2_EXPLAIN_AFTER_RE = re.compile(
+    r"(?<![A-Za-z0-9])(?:explains?|explained|explaining|accounts?\s+for|accounted\s+for|offsets?|offsetting"
+    r"|covers?|covered|reconciles?)(?![A-Za-z0-9])",
+    _I,
+)
+
+
+def _x2_persons(truth: CaseTruth) -> frozenset:
+    return frozenset(x for x in truth.valid_entities if re.fullmatch(r"[A-Z]\. [A-Z][A-Za-z'’-]+", x))
+
+
+def _x2_joined_clause_start(text: str, clause_starts: list[int], pos: int, persons: frozenset) -> int:
+    """Start of the clause holding pos, joined back over clause breaks that fall after a
+    person's initial the case file names ("The request from E. Marsh to ..."). Equal to
+    the clause's own start when there is no such break."""
+    ci = bisect.bisect_right(clause_starts, pos) - 1
+    s = clause_starts[ci]
+    while ci > 0:
+        m = re.search(r"(?<![A-Za-z])([A-Z])\.\s*$", text[clause_starts[ci - 1]:s])
+        nxt = re.match(r"\s*([A-Z][A-Za-z'’-]+)", text[s:])
+        if not (m and nxt):
+            break
+        if m.group(1) + ". " + re.sub(r"['’]s$", "", nxt.group(1)) not in persons:
+            break
+        ci -= 1
+        s = clause_starts[ci]
+    return s
+
+
+def _x2_band_guard(b: dict, text: str, masked: str, clause_starts: list[int], clause_ends: list[int],
+                   bands: list[dict], truth: CaseTruth, persons: frozenset) -> tuple[str, bool] | None:
+    """(route key, emit) for one band statement whose verdict is FM-002, or None to keep
+    the FM. emit False: the statement restates a band label beside it (FC13), so the
+    label's own verdict and route decide and no reason is added for the gloss."""
+    s, e = b["start"], b["end"]
+    stmt = b.get("statement")
+    ci = bisect.bisect_right(clause_starts, s) - 1
+    cs, ce = clause_starts[ci], clause_ends[ci]
+    # FC13: "M1 (below floor)": a gloss that agrees with the label it follows, where the
+    # label is negated, refused or itself contradicts the case band
+    g = _X2_GLOSS_LABEL_BEFORE_RE.search(text[cs:s])
+    if g and stmt in ("word", "comparison"):
+        label_band = "M" + g.group("label")[-1]
+        label = next((x for x in bands if x.get("statement") == "label" and x["start"] == cs + g.start("label")), None)
+        if b.get("verdicts"):
+            agrees = b["verdicts"].get(label_band) == "ok"
+        else:
+            agrees = label_band in (b.get("bands") or [])
+        if label is not None and agrees and (label["negated"] or label_band != truth.materiality_band):
+            return "gloss_of_label", False
+    # FC11: a band label or band word right after a comparator, read as a comparison
+    # with that band; it routes only when that reading agrees with the case band
+    cmp_m = _X2_BAND_COMPARATOR_BEFORE_RE.search(masked[cs:s]) if stmt in ("label", "word") else None
+    if cmp_m:
+        if stmt == "label":
+            named = (b.get("bands") or [None])[0]
+        else:
+            oks = [m for m in BAND_ORDER if (b.get("verdicts") or {}).get(m) == "ok"]
+            named = oks[0] if len(oks) == 1 else None
+        if named in BAND_ORDER:
+            k = BAND_ORDER.index(named)
+            below = bool(re.match(r"(?:below|under|beneath|less|lower|short)", cmp_m.group(0), _I))
+            side = BAND_ORDER[:k] if below else BAND_ORDER[k + 1:]
+            if truth.materiality_band in side:
+                return "band_threshold_unresolved", True
+    # FC16: a band word that describes an item, or "material" as a noun
+    if stmt == "word" and _X2_ITEM_BAND_WORDS_RE.fullmatch(text[s:e]):
+        if _X2_BAND_WORD_ITEM_AFTER_RE.match(masked[e:ce]):
+            return "band_word_ambiguous", True
+        if text[s:e].lower() == "material" and _X2_MATERIAL_NOUN_BEFORE_RE.search(text[cs:s]):
+            return "band_word_ambiguous", True
+    # FC10: a threshold comparison whose subject is the unexplained remainder; it routes
+    # only when the comparison is true of the case's unexplained amount
+    thr = b.get("threshold")
+    rem = abs(truth.unexplained_usd)
+    if stmt == "comparison" and thr is not None and (
+            (b.get("side") == "below" and rem < thr - USD_TOLERANCE)
+            or (b.get("side") == "above" and rem > thr + USD_TOLERANCE)):
+        seg = masked[cs:s]
+        if "," in seg:
+            head, rel = seg.rsplit(",", 1)
+            if _X2_REMAINDER_REL_RE.match(rel) and _X2_REMAINDER_HEAD_RE.search(head):
+                return "band_statement_subject_unresolved", True
+        if _X2_REMAINDER_SUBJECT_RE.match(seg.rsplit(",", 1)[-1]):
+            return "band_statement_subject_unresolved", True
+    # FC26: a refused request whose clause was cut at a person's initial
+    # ("The request from E. Marsh to classify this as M1 was not applied")
+    js = _x2_joined_clause_start(text, clause_starts, s, persons)
+    if js < cs and _refused_band_request(masked[js:ce], s - js, e - js):
+        return "band_negated", True
+    return None
+
+
+def _x2_direction_guard(d: dict, masked: str, clause_ends: list[int], clause_starts: list[int]) -> str | None:
+    """Route key for one direction statement whose verdict is FM-003, or None. FC17:
+    "short of" whose object is a threshold or band states no direction."""
+    if not _X2_SHORT_OF_RE.fullmatch(d["text"]):
+        return None
+    ce = clause_ends[bisect.bisect_right(clause_starts, d["start"]) - 1]
+    if _X2_THRESHOLD_OBJECT_RE.match(masked[d["end"]:ce]):
+        return "direction_word_threshold_object"
+    return None
+
+
+def _x2_reliance_affirmed(text: str, s: int, e: int) -> bool:
+    """True when the sentence holding text[s:e] states that something is relied on,
+    counted, included or not excluded, or, after the ticker, that it explains or offsets
+    the variance, with no negation in the four words before (not across a comma, colon,
+    semicolon or bracket). Such a sentence may rely on
+    the other-asset item, so its ticker keeps the FM."""
+    lo = 0
+    for m in re.finditer(r"[.!?](?=\s|$)", text[:s]):
+        lo = m.end()
+    hi = re.search(r"[.!?](?=\s|$)", text[e:])
+    hi = e + hi.start() if hi else len(text)
+    sent = text[lo:hi]
+    rel_e = e - lo
+
+    def negated_before(pos: int) -> bool:
+        words = re.findall(r"[A-Za-z']+", re.split(r"[,;:()]", sent[:pos])[-1])[-4:]
+        return any(w.lower() in ("not", "never", "cannot", "no", "nor", "neither", "none") or w.lower().endswith("n't")
+                   for w in words)
+
+    for m in _X2_AFFIRMED_RE.finditer(sent):
+        if not negated_before(m.start()):
+            return True
+    if _X2_NOT_EXCLUDED_RE.search(sent):
+        return True
+    for m in _X2_EXPLAIN_AFTER_RE.finditer(sent, rel_e):
+        if not negated_before(m.start()):
+            return True
+    return False
+
+
+def _x2_asset_guard(a: dict, text: str, truth: CaseTruth, persons: frozenset) -> str | None:
+    """Route key for one asset statement whose verdict is FM-016, or None.
+    FC28: "the true USD shortfall" reads as plain words, not the token TrueUSD.
+    FK03, FK04: the ticker describes a named item ("DP-1 (USDC", "DP-1 is a USDC
+    movement", "the USDC deposit DP-1") and the case file gives that item this asset.
+    FC26: the ticker names an item inside an exclusion clause that a person's initial
+    cut in two ("DP-1, a USDC deposit flagged in D. Kowalczyk's note, is excluded")."""
+    s, e = a["start"], a["end"]
+    asset = str(a.get("asset", "")).upper()
+    if a.get("asset") == "TUSD" and _X2_TRUE_USD_RE.fullmatch(text[s:e]) and _X2_TRUE_USD_AFTER_RE.match(text[e:]):
+        return "asset_word_ambiguous"
+    before, after = text[:s], text[e:]
+    refs = []
+    for rx in (_X2_REF_PAREN_BEFORE_RE, _X2_REF_COLON_BEFORE_RE):
+        m = rx.search(before)
+        if m:
+            refs.append(m.group("ref"))
+    m = _X2_REF_COPULA_BEFORE_RE.search(before)
+    if m and _X2_ITEM_AFTER_RE.match(after):
+        refs.append(m.group("ref"))
+    m = _X2_REF_AFTER_RE.match(after)
+    if m:
+        refs.append(m.group("ref"))
+    if _x2_reliance_affirmed(text, s, e):
+        return None  # "DP-1 is a USDC deposit, so it is relied on": keep the FM
+    for ref in refs:
+        it = truth.item_by_reference(ref)
+        if it is not None and str(it.asset).upper() == asset and asset != str(truth.asset).upper():
+            return "asset_negated"
+    patched = text
+    for p in persons:
+        patched = re.sub(rf"(?<![A-Za-z]){re.escape(p[0])}\.(?= {re.escape(p[3:])})", p[0] + " ", patched)
+    if patched != text:
+        if any(lo <= s and e <= hi for lo, hi in exclusion_spans(patched)) and (
+                _EXCL_ITEM_AFTER_RE.match(patched[e:]) or _EXCL_ITEM_BEFORE_RE.search(patched[:s])):
+            return "asset_negated"
+    return None
+
+
+def _x2_period_guard(p: dict, text: str, truth: CaseTruth) -> str | None:
+    """Route key for one period statement whose verdict is FM-016, or None.
+    FC27: "Oct-31", "Nov-01": the cutoff day or the day after it, written month first
+    with a hyphen. FK05: a date in the month after the case period written as the
+    case file prints it ("dated 01-Nov-2025"), or a month-year in the month after that
+    names an item ("the January 2026 item", "dated November 2025")."""
+    if p.get("form") != "month_year":
+        return None
+    case_y, case_m = int(truth.period[:4]), int(truth.period[5:7])
+    next_ym = (case_y + case_m // 12, case_m % 12 + 1)
+    s, e = p["start"], p["end"]
+    m = _X2_MON_DAY_RE.match(text[s:e])
+    if m:
+        # only the cutoff day ("Oct-31" on an October case) and the day after it
+        # ("Nov-01"); "Dec-25" on a November case is December 2025 and keeps the FM
+        mon = _month_number(m.group("mon"))
+        dd = int(m.group("dd"))
+        if 2000 + dd in (case_y, next_ym[0]):
+            return None
+        if (mon, dd) in ((case_m, calendar.monthrange(case_y, case_m)[1]), (next_ym[1], 1)):
+            return "period_date_ambiguous"
+        return None
+    if p.get("period") != f"{next_ym[0]:04d}-{next_ym[1]:02d}":
+        return None
+    d = _X2_DAY_HYPHEN_BEFORE_RE.search(text[:s])
+    if d:
+        return "period_date_ambiguous" if 1 <= int(d.group("dd")) <= calendar.monthrange(*next_ym)[1] else None
+    if _X2_PERIOD_ITEM_AFTER_RE.match(text[e:]) or _X2_DATED_BEFORE_RE.search(text[:s]):
+        return "period_date_ambiguous"
+    return None
 
 
 # --- Lane F rule, revision 2 (2026-11-08): an FM fires only on a proven contradiction ----------
@@ -2083,6 +2381,7 @@ def _check(text: str, parsed: dict, truth: CaseTruth) -> NarrativeResult:
     for t in toks:
         by_clause[bisect.bisect_right(clause_starts, t.start) - 1].append(t)
 
+    persons = _x2_persons(truth)
     directions: list[dict] = []
     splits: list[dict] = []
     bands: list[dict] = []
@@ -2186,6 +2485,13 @@ def _check(text: str, parsed: dict, truth: CaseTruth) -> NarrativeResult:
         elif d["direction"] == truth.direction:
             d["verdict"] = "ok"
         else:
+            # fix round 4, lane X2 (FC17): "short of the M3 threshold" routes instead
+            why = _x2_direction_guard(d, masked, clause_ends, clause_starts)
+            if why is not None and _lane_f_statement_downgrade(d, text, clause_starts, truth) is None:
+                d["verdict"] = "review"
+                d["x2_downgraded_from"] = "FM-003"
+                review(f"{why}: {d['text']}")
+                continue
             d["verdict"] = "FM-003"
             fire("FM-003")
     extractions += directions
@@ -2212,6 +2518,16 @@ def _check(text: str, parsed: dict, truth: CaseTruth) -> NarrativeResult:
             b["verdict"] = "review"
         else:
             b["verdict"] = "ok" if truth.materiality_band in b["bands"] else "FM-002"
+        if b["verdict"] == "FM-002":
+            # fix round 4, lane X2 (FC10, FC11, FC13, FC16, FC26): route instead
+            x2 = _x2_band_guard(b, text, masked, clause_starts, clause_ends, bands, truth, persons)
+            if x2 is not None and _lane_f_statement_downgrade(b, text, clause_starts, truth) is None:
+                b["verdict"] = "review"
+                b["x2_downgraded_from"] = "FM-002"
+                b["x2_reason"] = x2[0]
+                if x2[1]:
+                    review(f"{x2[0]}: {b['text']}")
+                continue
         if b["verdict"] == "FM-002":
             # direction of the misstatement (ratified 2026-11-04): a band word claims
             # every band its table does not contradict
@@ -2254,12 +2570,18 @@ def _check(text: str, parsed: dict, truth: CaseTruth) -> NarrativeResult:
             a["verdict"] = "review"
         else:
             a["verdict"] = "FM-016"
+            # fix round 4, lane X2 (FC26, FC28, FK03, FK04): route instead
+            why = _x2_asset_guard(a, text, truth, persons)
+            if why is not None and _lane_f_statement_downgrade(a, text, clause_starts, truth) is None:
+                a["verdict"] = "review"
+                a["x2_downgraded_from"] = "FM-016"
+                review(f"{why}: {a['text']}")
     if others:
         if gas_only:
             review(f"gas_asset_named: {gas}")
         elif truth.asset in named_assets:
             review("second_asset_named: " + ",".join(sorted(others)))
-        else:
+        elif any(a.get("verdict") == "FM-016" for a in assets):
             fire("FM-016")
     extractions += assets
 
@@ -2323,10 +2645,16 @@ def _check(text: str, parsed: dict, truth: CaseTruth) -> NarrativeResult:
             p["verdict"] = "review"
         else:
             p["verdict"] = "FM-016"
+            # fix round 4, lane X2 (FC27, FK05): route instead
+            why = _x2_period_guard(p, text, truth)
+            if why is not None and _lane_f_statement_downgrade(p, text, clause_starts, truth) is None:
+                p["verdict"] = "review"
+                p["x2_downgraded_from"] = "FM-016"
+                review(f"{why}: {p['text']}")
     if other_periods:
         if truth.period in named_periods:
             review("second_period_named: " + ",".join(sorted(other_periods)))
-        else:
+        elif any(p.get("verdict") == "FM-016" for p in periods):
             fire("FM-016")
     extractions += periods
 
