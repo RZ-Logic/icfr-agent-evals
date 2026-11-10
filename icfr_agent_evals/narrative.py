@@ -2322,6 +2322,123 @@ def _x2_band_guard(b: dict, text: str, masked: str, clause_starts: list[int], cl
     return None
 
 
+# Fix round 4b, lane Y2 (2026-11-09): held-out false codes FC12, FC14 and FC15, right
+# narratives that fire FM-002. Like the X2 guards, _y2_band_guard runs only where a band
+# statement's verdict is already FM-002 and turns that one verdict into a review with a
+# route reason. Each trigger is tied to a case fact, so the same words on a case where
+# the fact does not hold keep the code. Kept here so narrative_vocab.py does not move.
+
+# FC12 (a): two adjacent band labels that name the boundary between them, right after
+# "on" or "at" ("sits exactly on the M1/M2 boundary", "on the boundary between M1 and
+# M2"). It routes only when the case variance is within the tolerance of that boundary.
+_Y2_BOUNDARY_NOUN = r"(?:boundar(?:y|ies)|line|border|divide|cut-?off|threshold|edge|cusp)"
+_Y2_ON_BEFORE = r"(?<![A-Za-z0-9])(?:on|at|astride|straddl(?:es|ing|ed|e)) (?:the )?(?:(?:exact|very) )?"
+_Y2_SLASH_PAIR_RE = re.compile(
+    rf"{_Y2_ON_BEFORE}(?P<a>{V.BAND_LABEL}) ?/ ?(?P<b>{V.BAND_LABEL})(?: bands?)? {_Y2_BOUNDARY_NOUN}(?![A-Za-z0-9])"
+)
+_Y2_BETWEEN_PAIR_RE = re.compile(
+    rf"{_Y2_ON_BEFORE}{_Y2_BOUNDARY_NOUN} between (?:the )?(?P<a>{V.BAND_LABEL})(?: band)? and (?:the )?"
+    rf"(?P<b>{V.BAND_LABEL})(?![A-Za-z0-9])"
+)
+# FC12 (b): a band label stated of the rounded figure ("the rounded figure on the summary
+# tab would read as M2", "rounding ... does not bring the shortfall down to M2"). The
+# label must follow a rounding word in the same comma-free stretch, with a would, could,
+# might or a negation between them. It routes only when the variance rounded to the
+# dollar falls in the named band and the exact variance does not.
+_Y2_ROUND_RE = re.compile(r"(?<![A-Za-z0-9])round(?:ed|ing|s)?(?![A-Za-z0-9])", _I)
+_Y2_ROUND_MODAL_RE = re.compile(
+    r"(?<![A-Za-z0-9'’])(?:would|could|might|not|never)(?![A-Za-z0-9])|n['’]t(?![A-Za-z0-9])", _I
+)
+_Y2_ROUND_STOP_RE = re.compile(
+    r"[,;:()]|(?<![A-Za-z0-9])(?:but|so|and|because|since|while|whereas|though|although|therefore|hence|thus)"
+    r"(?![A-Za-z0-9])",
+    _I,
+)
+_Y2_ROUND_SPAN = 80  # characters at most from the rounding word to the label
+# FC14: a band word after "too small to be" or "not large enough to be" ("too small to
+# be reportable"). It routes only when the case band sits below every band the word
+# states; a negation before "too" ("not too small to be") keeps the code.
+_Y2_TOO_SMALL_RE = re.compile(
+    r"(?<![A-Za-z0-9])(?:too (?:small|low|minor|little)|not (?:large|big|high|significant) enough"
+    r"|n['’]t (?:large|big|high|significant) enough) to (?:be (?:considered |treated as |classed as |deemed )?"
+    r"|count as |qualify as |rank as )(?:an? |the )?(?:in (?:the )?)?$",
+    _I,
+)
+_Y2_NEG_BEFORE_TOO_RE = re.compile(r"(?<![A-Za-z0-9])(?:not|never)\s+$|n['’]t\s+$", _I)
+# FC15: a below-type comparison whose figure is the case variance to the cent, followed by
+# a variance noun of the case direction ("well under the $250,000.01 shortfall"), after an
+# explain verb in the same clause ("Together they explain $X, well under ..."). The figure
+# is the variance, not a threshold. It routes only when the explained total does not
+# exceed the variance; a threshold noun after the variance noun keeps the code.
+_Y2_VARIANCE_NOUN_AFTER_RE = re.compile(
+    r"^ (?:(?:net|total|full|whole|entire|overall|reported) )?(?P<noun>shortfalls?|deficits?|surplus(?:es)?"
+    r"|excess|variances?|differences?|gap)(?![A-Za-z0-9])(?! (?:thresholds?|floors?|limits?|ceilings?|bands?"
+    r"|levels?|boundar(?:y|ies)|tiers?|ranges?)(?![A-Za-z0-9]))",
+    _I,
+)
+_Y2_NOUN_DIRECTION = {"shortfall": "shortfall", "deficit": "shortfall", "surplus": "surplus", "excess": "surplus"}
+
+
+def _y2_band_guard(b: dict, text: str, masked: str, clause_starts: list[int], clause_ends: list[int],
+                   truth: CaseTruth) -> str | None:
+    """Route key for one band statement whose verdict is FM-002 and that no X2 guard
+    took, or None to keep the FM."""
+    s, e = b["start"], b["end"]
+    stmt = b.get("statement")
+    ci = bisect.bisect_right(clause_starts, s) - 1
+    cs, ce = clause_starts[ci], clause_ends[ci]
+    variance = abs(truth.variance_usd)
+    if stmt == "label":
+        named = (b.get("bands") or [None])[0]
+        # FC12 (a): the label is one end of the boundary the variance sits on
+        for rx in (_Y2_SLASH_PAIR_RE, _Y2_BETWEEN_PAIR_RE):
+            for m in rx.finditer(text, cs, ce):
+                if s not in (m.start("a"), m.start("b")):
+                    continue
+                pair = sorted({"M" + m.group("a")[-1], "M" + m.group("b")[-1]})
+                if pair == ["M1", "M2"]:
+                    line = M1_CEILING
+                elif pair == ["M2", "M3"]:
+                    line = M3_FLOOR
+                else:
+                    continue
+                if truth.materiality_band in pair and abs(variance - line) <= USD_TOLERANCE:
+                    return "band_threshold_unresolved"
+        # FC12 (b): the label is the band of the rounded figure, not of the variance
+        if named in BAND_ORDER and named != truth.materiality_band:
+            rounded = round(variance)
+            rounded_band = "M1" if rounded < M1_CEILING else ("M2" if rounded <= M3_FLOOR else "M3")
+            if rounded_band == named:
+                cue = None
+                for r in _Y2_ROUND_RE.finditer(text, cs, s):
+                    cue = r
+                if cue is not None and s - cue.end() <= _Y2_ROUND_SPAN:
+                    between = masked[cue.end():s]
+                    if _Y2_ROUND_MODAL_RE.search(between) and not _Y2_ROUND_STOP_RE.search(between):
+                        return "band_statement_subject_unresolved"
+    # FC14: "too small to be reportable" on a case whose band sits below the word's bands
+    if stmt == "word" and b.get("verdicts"):
+        m = _Y2_TOO_SMALL_RE.search(masked[cs:s])
+        if m and not _Y2_NEG_BEFORE_TOO_RE.search(masked[cs:cs + m.start()]):
+            oks = [BAND_ORDER.index(x) for x in BAND_ORDER if b["verdicts"].get(x) == "ok"]
+            if oks and BAND_ORDER.index(truth.materiality_band) < min(oks):
+                return "band_negated"
+    # FC15: "well under the $250,000.01 shortfall": the compared figure is the variance
+    if (stmt == "comparison" and b.get("side") == "below" and b.get("threshold") is not None
+            and masked[e - 1:e] == V.AMOUNT_PLACEHOLDER
+            and round(abs(b["threshold"]), 2) == round(variance, 2)
+            and abs(truth.explained_usd) <= variance + USD_TOLERANCE
+            and _X2_EXPLAIN_AFTER_RE.search(masked[cs:s])):
+        n = _Y2_VARIANCE_NOUN_AFTER_RE.match(masked[e:ce])
+        if n:
+            noun = n.group("noun").lower()
+            stem = re.sub(r"(?:es|s)$", "", noun) if noun not in ("surplus", "excess") else noun
+            want = _Y2_NOUN_DIRECTION.get(stem)
+            if want is None or want == truth.direction:
+                return "band_threshold_unresolved"
+    return None
+
+
 def _x2_direction_guard(d: dict, masked: str, clause_ends: list[int], clause_starts: list[int]) -> str | None:
     """Route key for one direction statement whose verdict is FM-003, or None. FC17:
     "short of" whose object is a threshold or band states no direction."""
@@ -2826,6 +2943,14 @@ def _check(text: str, parsed: dict, truth: CaseTruth) -> NarrativeResult:
                 b["x2_reason"] = x2[0]
                 if x2[1]:
                     review(f"{x2[0]}: {b['text']}")
+                continue
+            # fix round 4b, lane Y2 (FC12, FC14, FC15): route instead
+            y2 = _y2_band_guard(b, text, masked, clause_starts, clause_ends, truth)
+            if y2 is not None and _lane_f_statement_downgrade(b, text, clause_starts, truth) is None:
+                b["verdict"] = "review"
+                b["y2_downgraded_from"] = "FM-002"
+                b["y2_reason"] = y2
+                review(f"{y2}: {b['text']}")
                 continue
         if b["verdict"] == "FM-002":
             # direction of the misstatement (ratified 2026-11-04): a band word claims
