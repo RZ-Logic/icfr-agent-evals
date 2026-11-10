@@ -25,6 +25,8 @@ from icfr_agent_evals.roster import (
     CALIBRATOR,
     FIRST_PARTY_BASE_URLS,
     GRADER,
+    GRADER_STEP2,
+    GRADER_STEP3,
     SCOUT_SCANNER,
     WORKER,
     RosterError,
@@ -265,7 +267,7 @@ def test_serving_endpoints_records_each_model():
 
 # --- The setup solver ---------------------------------------------------------------------
 
-def _run_roster_check(monkeypatch, evaluated, roles: dict):
+def _run_roster_check(monkeypatch, evaluated, roles: dict, grader_step: int = 1):
     """Run the roster_check solve function with get_model and model_roles stubbed to
     hand back prebuilt models; returns the info events it recorded."""
     import inspect_ai.model as inspect_model
@@ -281,7 +283,7 @@ def _run_roster_check(monkeypatch, evaluated, roles: dict):
     monkeypatch.setattr(inspect_model, "model_roles", lambda: dict(roles))
     t = Transcript()
     init_transcript(t)
-    solver = roster_check()
+    solver = roster_check(grader_step=grader_step)
     sentinel = object()
     assert asyncio.run(solver(sentinel, None)) is sentinel
     return [e for e in t.events if e.event == "info"]
@@ -306,6 +308,54 @@ def test_roster_check_stops_a_rerouted_run(var, monkeypatch):
     with pytest.raises(RosterError, match="serving guard"):
         _run_roster_check(monkeypatch, _model(WORKER),
                           {"grader": _model(GRADER), "calibrator": _model(CALIBRATOR)})
+
+
+@pytest.mark.parametrize("model", [GRADER_STEP2, GRADER_STEP3])
+def test_terra_and_sol_are_served_exactly_like_luna(model):
+    # Same provider, same first-party endpoint, same record shape.
+    assert model_serving(_model(model)) == {"model": model, "base_url": "https://api.openai.com/v1/"}
+    assert validate_serving("openai", OPENAI, model=model) == OPENAI
+
+
+@pytest.mark.parametrize("step, model", [(2, GRADER_STEP2), (3, GRADER_STEP3)])
+def test_roster_check_records_the_endpoint_of_a_step_two_or_three_grader(step, model, monkeypatch):
+    events = _run_roster_check(monkeypatch, _model(WORKER),
+                               {"grader": _model(model), "calibrator": _model(CALIBRATOR)}, grader_step=step)
+    (event,) = events
+    assert event.data["serving_endpoints"]["grader"] == {"model": model, "base_url": "https://api.openai.com/v1/"}
+
+
+@pytest.mark.parametrize("step, model", [(2, GRADER_STEP2), (3, GRADER_STEP3)])
+@pytest.mark.parametrize("var", ["OPENAI_BASE_URL", "INSPECT_EVAL_MODEL_BASE_URL", "OPENAI_CUSTOM_HEADERS"])
+def test_roster_check_still_stops_a_rerouted_step_two_or_three_grader(step, model, var, monkeypatch):
+    monkeypatch.setenv(var, "http://localhost:4000")
+    with pytest.raises(RosterError, match="serving guard"):
+        _run_roster_check(monkeypatch, _model(WORKER),
+                          {"grader": _model(model), "calibrator": _model(CALIBRATOR)}, grader_step=step)
+
+
+def test_roster_check_rejects_terra_at_step_one_and_luna_at_step_two(monkeypatch):
+    with pytest.raises(RosterError, match="not its pin"):
+        _run_roster_check(monkeypatch, _model(WORKER),
+                          {"grader": _model(GRADER_STEP2), "calibrator": _model(CALIBRATOR)}, grader_step=1)
+    with pytest.raises(RosterError, match="not its pin"):
+        _run_roster_check(monkeypatch, _model(WORKER),
+                          {"grader": _model(GRADER), "calibrator": _model(CALIBRATOR)}, grader_step=2)
+
+
+def test_roster_check_rejects_a_step_four_grader(monkeypatch):
+    with pytest.raises(RosterError, match="grader_step"):
+        _run_roster_check(monkeypatch, _model(WORKER),
+                          {"grader": _model(GRADER_STEP3), "calibrator": _model(CALIBRATOR)}, grader_step=4)
+
+
+def test_roster_check_rejects_a_grader_equal_to_the_evaluated_model(monkeypatch):
+    # The workers' vendor is Anthropic, so only a mock-free equal-name case can arise;
+    # the rule still fires at every ladder step.
+    for step in (1, 2, 3):
+        with pytest.raises(RosterError, match="equals the evaluated model"):
+            _run_roster_check(monkeypatch, _model(WORKER),
+                              {"grader": _model(WORKER), "calibrator": _model(CALIBRATOR)}, grader_step=step)
 
 
 def test_roster_check_rejects_a_list_bound_role_with_the_real_role_lookup():

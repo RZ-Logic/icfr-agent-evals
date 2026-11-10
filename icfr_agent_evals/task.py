@@ -97,8 +97,9 @@ def variance_commentary(
         epochs: repeats per sample. Default 4 = the unified run design: the same
             four generations serve Sample-Consistency calibration and the k = 4
             trials for content-pass^4.
-        grader_step: 1, or 2 once step 2 of the judge remedy order (section 7)
-            moves the grader to its escalation pin.
+        grader_step: 1, 2 or 3: the step of the grader ladder (section 5). 2 is
+            GPT-6.1 Terra and 3 is GPT-6.1 Sol, reached only through the judge
+            remedy order (section 7); steps 2 and 3 run on the OpenAI Batch API.
         subset: None (the whole split) or 'pilot' (the 20 dev cases flagged for
             the section 13 pilot; split must be 'dev'). Checked before the split
             is built.

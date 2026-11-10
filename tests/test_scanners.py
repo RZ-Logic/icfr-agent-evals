@@ -212,7 +212,7 @@ def test_llm_scanner_passes_model_to_llm_scanner(name, monkeypatch):
 
 
 @pytest.mark.parametrize("name", ["eval_awareness", "refusal_classifier"])
-@pytest.mark.parametrize("bad", ["openai/gpt-6.1-sol", "anthropic/claude-opus-5-5", WORKER, ""])
+@pytest.mark.parametrize("bad", ["openai/gpt-6.1-terra", "openai/gpt-6.1-sol", "anthropic/claude-opus-5-5", WORKER, ""])
 def test_llm_scanner_rejects_off_pin_models(name, bad):
     with pytest.raises(ScannerModelError):
         getattr(_module(name), name)(model=bad)

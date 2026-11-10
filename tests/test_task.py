@@ -37,6 +37,7 @@ from icfr_agent_evals.roster import (
     RETIREMENT_FLOORS_RECORDED,
     SERVING_PLATFORMS,
     WORKER,
+    RosterError,
 )
 from icfr_agent_evals.rubric import WIRED_SCORERS
 from icfr_agent_evals.solver import WORKER_PROMPT_SHA256, WORKER_PROMPT_VERSION
@@ -105,9 +106,28 @@ def test_task_binds_no_model_and_sets_no_sampling_parameter(unit_dataset):
     assert t.setup is not None
 
 
-def test_grader_step_two_records_the_escalation_pin(unit_dataset):
+def test_grader_step_two_records_the_terra_pin(unit_dataset):
     t = task_module.variance_commentary(split="dev", grader_step=2)
+    assert t.metadata["roster"]["roles"]["grader"] == "openai/gpt-6.1-terra"
+    assert t.metadata["roster"]["grader_generate_config"] == {"batch": True}
+
+
+def test_grader_step_three_records_the_sol_pin(unit_dataset):
+    t = task_module.variance_commentary(split="dev", grader_step=3)
     assert t.metadata["roster"]["roles"]["grader"] == "openai/gpt-6.1-sol"
+    assert t.metadata["roster"]["grader_generate_config"] == {"batch": True}
+    assert t.config.batch is None  # the batch pin is the grader's, never the eval-wide config
+
+
+def test_grader_step_one_records_luna_without_batch(unit_dataset):
+    t = task_module.variance_commentary(split="dev")
+    assert t.metadata["roster"]["roles"]["grader"] == "openai/gpt-6-luna"
+    assert t.metadata["roster"]["grader_generate_config"] == {}
+
+
+def test_grader_step_four_is_refused(unit_dataset):
+    with pytest.raises(RosterError, match="grader_step"):
+        task_module.variance_commentary(split="dev", grader_step=4)
 
 
 def test_package_source_never_names_a_sampling_parameter():
