@@ -3,7 +3,7 @@
 Usage:
   python scripts/compare_runs.py --baseline A.eval --candidate B.eval [--candidate C.eval ...]
                                  [--ladder R1|R2|R3] [--ladder-record PATH] [--json out.json]
-                                 [--max-tokens-pin N]
+                                 [--max-tokens-pin N] [--pr N --content-key SHA256 [--signoff PATH]]
 
 Every --candidate is a run of the same gated content; they pool (section 10(d)).
 The choice among R1, R2 and R3 is made once from the A/A estimate
@@ -35,6 +35,17 @@ revision, so a mock-degraded candidate can be compared with a real baseline. Tas
 names compare by registry name without the package prefix: the CLI records
 "variance_commentary" and an eval() call "icfr_agent_evals/variance_commentary".
 
+Sign-off (section 10(c), section 13 row 26; icfr_agent_evals/signoff.py and
+docs/evidence/regression/SIGNOFF-FORMAT.md): with --pr and --content-key (the
+candidate's gated-content key, section 10(d)) the script reads the sign-off file
+of that PR and key, by default docs/evidence/regression/signoffs/pr-<N>-<first 12
+hex of the key>.csv under the repository root, or --signoff PATH. Pending sign-off
+cases are cleared only by a valid file for that exact run pair: the same PR, key,
+baseline eval_id and candidate eval_id(s), one of the four outcomes for every
+triggered case and no other case, with the run pair's counts. A file that fails
+any check is refused. With no file, the cases stay pending. Without --pr and
+--content-key no file is read and sign-off cases always leave exit 2.
+
 Every log must pass the run configuration check (contract C2,
 roster.check_run_config through reliability.require_run_config) before any record
 is read: status success, no --limit or --sample-id, epochs 4, and plan.config and
@@ -44,16 +55,18 @@ only at --max-tokens-pin when the owner pins it). The template baseline log is o
 of that check's scope; a template candidate is refused by the task match above.
 
 Exit codes (ratified 2026-11-03):
-  0  pass: no automatic block and no sign-off case
+  0  pass: no automatic block, and no sign-off case or every one signed in a valid sign-off file
   1  automatic block: a Holm rejection in 10(a) or a fabrication rejection in 10(b)
-  2  no automatic block, sign-off cases pending under 10(c)
+  2  no automatic block, sign-off cases pending under 10(c) (no sign-off file for the run pair)
   3  refused: a --ladder that disagrees with the recorded rung, a ladder record
      that cannot be read, an evaluation-split log, a truncated run (--limit, --sample-id, or
      scored samples short of the dataset's count), runs whose split, seed, subset,
      Task version or dataset content (version and hashes) differ, a candidate on
      another task or worker prompt, pooled candidates that differ in model, task,
      revision or worker prompt, a log off the section 5 run configuration, a help request,
-     a --json path that cannot be written, or any other input the gates cannot read
+     a --json path that cannot be written, --pr without --content-key or the reverse,
+     --signoff without both, a sign-off file that fails signoff.check_signoff_file,
+     or any other input the gates cannot read
 """
 
 from __future__ import annotations
@@ -81,10 +94,12 @@ from icfr_agent_evals.regression import (
     resolve_ladder,
 )
 from icfr_agent_evals.reliability import PREREGISTERED_K, GateError, require_run_config
+from icfr_agent_evals.signoff import RunPair, SignoffRecord, check_content_key, check_signoff_file, signoff_path
 
 EXIT_PASS, EXIT_BLOCK, EXIT_SIGNOFF, EXIT_REFUSED = 0, 1, 2, 3
 MATCHED_TASK_ARGS = ("split", "seed", "subset")
-DEFAULT_LADDER_RECORD = Path(__file__).resolve().parents[1] / LADDER_RECORD_RELPATH
+REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_LADDER_RECORD = REPO_ROOT / LADDER_RECORD_RELPATH
 
 
 class _Parser(argparse.ArgumentParser):
@@ -184,8 +199,26 @@ def _fmt_directions(counts: dict[str, int]) -> str:
     return ", ".join(f"{d} {n}" for d, n in counts.items()) or "none"
 
 
+def run_pair(args: argparse.Namespace, base_log: Any, cand_logs: Sequence[Any]) -> RunPair | None:
+    """The run pair a sign-off file must name, or None without --pr and --content-key."""
+    if args.pr is None and args.content_key is None:
+        if args.signoff is not None:
+            raise GateError("--signoff needs --pr and --content-key")
+        return None
+    if args.pr is None or args.content_key is None:
+        raise GateError("--pr and --content-key go together: a sign-off is recorded per PR and gated-content key")
+    if args.pr < 1:
+        raise GateError(f"--pr {args.pr} is not a positive integer")
+    check_content_key(args.content_key)
+    ids = [getattr(log.eval, "eval_id", None) for log in (base_log, *cand_logs)]
+    if not all(isinstance(i, str) and i for i in ids):
+        raise GateError("a log records no eval_id; a sign-off file cannot be matched to the run pair")
+    return RunPair(args.pr, args.content_key, ids[0], tuple(ids[1:]))
+
+
 def render(report: GateReport, ladder: str, instances: Sequence[FabricationInstance],
-           headers: Sequence[str] = ()) -> str:
+           headers: Sequence[str] = (), record: SignoffRecord | None = None,
+           signoff_note: str | None = None) -> str:
     lines = [*headers, "Section 10(a) paired rule (Holm, m = 6)"]
     for name in (*DIMENSIONS, PASS4):
         t = report.paired[name]
@@ -206,14 +239,25 @@ def render(report: GateReport, ladder: str, instances: Sequence[FabricationInsta
         if c.trigger == "FM-002":  # by direction beside the total (ratified 2026-11-04)
             row += (f"  by direction: baseline ({_fmt_directions(c.baseline_by_direction)})"
                     f" -> candidate ({_fmt_directions(c.candidate_by_direction)})")
+        if record is not None:
+            row += f"  signed: {record.outcomes[(c.sample_id, c.trigger)]}"
         lines.append(row)
+    if record is not None:
+        counts = ", ".join(f"{o} {n}" for o, n in record.counts().items())
+        lines.append(f"  sign-off file {record.path} (pr-{record.pair.pr}, gated content {record.pair.content_key}): {counts}")
+        for sid, code in record.policy_decisions():
+            lines.append(f"  policy decision: accepted trade-off on fabrication code {code} at {sid}")
+    elif signoff_note:
+        lines.append(f"  {signoff_note}")
     if report.notes:
         lines.append("Notes")
         lines.extend(f"  {n}" for n in report.notes)
     if report.blocked:
         lines.append("RESULT: BLOCKED (automatic)")
-    elif report.signoff:
+    elif report.signoff and record is None:
         lines.append("RESULT: SIGN-OFF PENDING")
+    elif report.signoff:
+        lines.append("RESULT: PASS (every sign-off case signed)")
     else:
         lines.append("RESULT: PASS")
     return "\n".join(lines)
@@ -235,6 +279,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--max-tokens-pin", type=int, default=None,
                         help="the owner's max_tokens pin, when one is set (default: no --max-tokens flag; the evaluated "
                              "model's events may carry Inspect's documented default 48,000)")
+    parser.add_argument("--pr", type=int, default=None,
+                        help="the pull request number; with --content-key, pending sign-off cases are cleared only by "
+                             "a valid sign-off file for this run pair (section 10(c))")
+    parser.add_argument("--content-key", default=None,
+                        help="the candidate's gated-content key (section 10(d)), 64 lowercase hex characters")
+    parser.add_argument("--signoff", default=None,
+                        help="the sign-off file (default docs/evidence/regression/signoffs/pr-<N>-<key12>.csv "
+                             "under the repository root)")
     args = parser.parse_args(argv)
 
     # Everything runs inside the try, the --json write included, and the report
@@ -251,10 +303,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         report = compare(baseline, candidates, k=PREREGISTERED_K, ladder=ladder)
         report = replace(report, notes=(*report.notes, ladder_note))
         instances = fabrication_instances(candidates)
+        pair = run_pair(args, base_log, cand_logs)
+        record, signoff_file, signoff_note = None, None, None
+        if pair is not None:
+            signoff_file = Path(args.signoff) if args.signoff else signoff_path(REPO_ROOT, pair.pr, pair.content_key)
+            if signoff_file.exists():
+                record = check_signoff_file(signoff_file, pair, report.signoff)
+            else:
+                signoff_note = f"no sign-off file at {signoff_file}"
         run_headers = [("baseline", args.baseline, run_header(base_log))]
         run_headers += [(f"candidate {i + 1}", p, run_header(log)) for i, (p, log) in enumerate(zip(args.candidate, cand_logs))]
-        text = render(report, ladder, instances, [format_header(*h) for h in run_headers])
-        code = EXIT_BLOCK if report.blocked else EXIT_SIGNOFF if report.signoff else EXIT_PASS
+        text = render(report, ladder, instances, [format_header(*h) for h in run_headers], record, signoff_note)
+        code = EXIT_BLOCK if report.blocked else EXIT_SIGNOFF if report.signoff and record is None else EXIT_PASS
         if args.json_out:
             payload = {
                 "baseline": args.baseline,
@@ -266,6 +326,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "runs": [{"label": label, "path": path, **head} for label, path, head in run_headers],
                 **asdict(report),
                 "fabrication_instances": [asdict(f) for f in instances],
+                "signoff_file": None if signoff_file is None else str(signoff_file),
+                "signoff_record": None if record is None else {
+                    "path": record.path, "pr": record.pair.pr, "gated_content_sha256": record.pair.content_key,
+                    "baseline_eval_id": record.pair.baseline_eval_id,
+                    "candidate_eval_ids": sorted(record.pair.candidate_eval_ids),
+                    "outcome_counts": record.counts(),
+                    "outcomes": [{"sample_id": s, "trigger": t, "outcome": o}
+                                 for (s, t), o in sorted(record.outcomes.items())],
+                    "policy_decisions": [{"sample_id": s, "code": c} for s, c in record.policy_decisions()],
+                },
             }
             body = json.dumps(payload, indent=2, sort_keys=True)
             try:
