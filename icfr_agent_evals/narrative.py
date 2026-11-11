@@ -1017,6 +1017,11 @@ class _Context:
     cited_any: frozenset   # item references cited in reconciling_items, eligible or not
     explained: float       # computed from the cited items (casefile.explained_from_citations)
     unexplained: float
+    # fix round 5: every clause's tokens and start offsets, set by _check, so a rule on
+    # one amount can read the figures of the other clauses
+    clauses: list = field(default_factory=list)
+    clause_starts: list = field(default_factory=list)
+    fix5_nets: list | None = None  # starts of figures that state the explained total, computed on first use
 
     def quantities(self) -> dict[str, float]:
         """Every role-specific quantity an amount could ground against."""
@@ -1157,6 +1162,8 @@ def _check_amount(toks: list[_Tok], i: int, binding: dict, ctx: _Context) -> dic
         x1 = _x1_amount_route(toks, i, binding, rec, ctx)
         if x1 is None:
             x1 = _y1_amount_route(toks, i, binding, rec, ctx)  # fix round 4b, Y1 (FC02, FC07, FC29)
+        if x1 is None:
+            x1 = _fix5_amount_route(toks, i, binding, rec, ctx)  # fix round 5 (P1 to P3)
         if x1 is not None:
             rec.pop("review", None)
             rec.update(x1, downgraded_from="FM-001")
@@ -1912,6 +1919,208 @@ _N2_UNEXPLAINED_BEFORE_RE = re.compile(
     _I,
 )
 
+
+# fix round 5 (2026-11-10): the dev audit rows the owner ruled extractor errors (Opus 5.5
+# O3 to O6, Sonnet 5 S6 to S9). One family: an item's own amount, or a subtotal of relied
+# items, read as the explained total or the variance when the narrative also states the
+# correct net. Three shapes, each needing its own words and a fact check:
+#   P1  the figure is one cited eligible item's own amount, and that item is the subject
+#       of the figure ("DP-1 ... accounts for $X of shortfall", "a deposit (DP-1) of $X",
+#       "offset by a $X timing difference (DP-1)");
+#   P2  the figure is one leg of a netting bracket ("Netting these items ($A minus $B)
+#       accounts for the entire $N shortfall"): both legs are cited eligible items' own
+#       amounts, their difference is the explained total and the first figure after
+#       the bracket states it;
+#   P3  the figure is the sum of the amounts the previous clause states for two or more
+#       cited eligible items, not all of them ("Together they add $S to the surplus").
+# P1 and P3 also need another figure in the narrative, bound to the explained role, equal
+# to the explained total from the cited items and in the truth record. Each rule only
+# turns an FM-001 into a route on an existing key; it never passes a figure, and when a
+# fact does not hold the FM-001 stands.
+_FIX5_REASONS = {"explained": "explained_amount_mismatch", "variance": "variance_amount_mismatch"}
+# words that make a figure's subject a group of items, or a total, rather than one item
+_FIX5_TOTALIZERS = frozenset({
+    "together", "total", "totals", "totaling", "totalling", "totalled", "totaled", "net", "nets", "netted",
+    "netting", "combined", "combine", "combines", "both", "all", "entire", "full", "overall", "aggregate",
+    "sum", "jointly", "collectively", "they", "these", "those", "items", "each",
+})
+_FIX5_NETTING_WORDS = frozenset({"netting", "net", "netted", "nets"})
+_FIX5_LEG_WORDS = frozenset({"minus", "less"})
+_FIX5_SUBTOTAL_LEADS = frozenset({"together", "combined", "jointly", "collectively"})
+_FIX5_ARTICLES = frozenset({"a", "an"})
+_FIX5_NEGATION_RE = re.compile(r"(?<![A-Za-z0-9])(?:not|never|no)(?![A-Za-z0-9])|n['’]t(?![A-Za-z0-9])", _I)
+_FIX5_NETTING_SPAN = 6  # tokens at most from the netting word to the bracket
+_FIX5_NOUN_SPAN = 8     # tokens at most from "a $X" to the bracketed reference that names it
+_FIX5_NEG_SPAN = 40     # characters before a net figure searched for a negation
+
+
+def _fix5_cited(t: _Tok, ctx: _Context):
+    """The cited eligible item a reference token names, or None."""
+    if t.kind != "ref":
+        return None
+    it = ctx.truth.item_by_reference(t.text)
+    return it if it is not None and it.reference in ctx.cited and it.amount_usd is not None else None
+
+
+def _fix5_net_starts(ctx: _Context) -> list[int]:
+    """Start offsets of the figures, in any clause, bound to the explained role and equal
+    to the explained total from the cited items and in the truth record, with no negation
+    just before them."""
+    if ctx.fix5_nets is None:
+        nets: list[int] = []
+        if abs(ctx.explained) > USD_TOLERANCE:
+            for ctoks in ctx.clauses:
+                clause = None
+                for k, t in enumerate(ctoks):
+                    if t.kind != "amount" or t.data["bare"] or not _x1_portion_fits(t.data["value"], "explained", ctx):
+                        continue
+                    if clause is None:
+                        clause = _Clause.of(ctoks)
+                    if _resolve_role(clause, k, ctx).get("role") != "explained":
+                        continue
+                    lo = max(ctoks[0].start, t.start - _FIX5_NEG_SPAN)
+                    if _FIX5_NEGATION_RE.search(ctx.text[lo:t.start]):
+                        continue
+                    nets.append(t.start)
+        ctx.fix5_nets = nets
+    return ctx.fix5_nets
+
+
+def _fix5_net_stated(ctx: _Context, skip: int) -> bool:
+    return any(s != skip for s in _fix5_net_starts(ctx))
+
+
+def _fix5_item_subject(toks: list[_Tok], i: int, ctx: _Context):
+    """P1: the cited eligible item whose own amount the figure is, when that item is the
+    figure's subject; else None."""
+    value = toks[i].data["value"]
+    # (a) the only reference since the previous figure (or the clause start), before the
+    # figure, with no word between them that makes the subject a group or a total
+    prev = max((k for k in range(i) if toks[k].kind == "amount"), default=-1)
+    refs = [k for k in range(prev + 1, i) if toks[k].kind == "ref"]
+    if len(refs) == 1:
+        k = refs[0]
+        it = _fix5_cited(toks[k], ctx)
+        if (it is not None and _near(value, it.amount_usd)
+                and not any(t.kind in ("word", "cue") and t.low in _FIX5_TOTALIZERS for t in toks[k + 1:i])):
+            return it
+    # (b) "a $X <noun words> (REF)": the bracketed reference names the noun the figure heads
+    if i >= 1 and toks[i - 1].kind == "word" and toks[i - 1].low in _FIX5_ARTICLES:
+        j = i + 1
+        while j < len(toks) and j - i <= _FIX5_NOUN_SPAN:
+            t = toks[j]
+            if t.kind in ("word", "cue") and t.low not in _FIX5_TOTALIZERS:
+                j += 1
+            elif t.kind == "punct" and t.text == "-":
+                j += 1
+            else:
+                break
+        if j > i + 1 and j + 1 < len(toks) and toks[j].text == "(" and toks[j + 1].kind == "ref":
+            it = _fix5_cited(toks[j + 1], ctx)
+            if it is not None and _near(value, it.amount_usd):
+                return it
+    return None
+
+
+def _fix5_netting_leg(toks: list[_Tok], i: int, ctx: _Context):
+    """P2: the cited eligible item whose own amount the figure is, as one leg of a netting
+    bracket that the clause follows with the explained total; else None."""
+    o = max((k for k in range(i) if toks[k].kind == "punct" and toks[k].text in "()"), default=-1)
+    if o < 0 or toks[o].text != "(":
+        return None
+    c = next((k for k in range(i + 1, len(toks)) if toks[k].kind == "punct" and toks[k].text in "()"), None)
+    if c is None or toks[c].text != ")":
+        return None
+    legs = [k for k in range(o + 1, c) if toks[k].kind == "amount"]
+    if len(legs) != 2 or i not in legs or any(toks[k].data["bare"] for k in legs):
+        return None
+    if any(t.kind == "ref" for t in toks[o + 1:c]):
+        return None
+    if not any(t.kind in ("word", "cue") and t.low in _FIX5_LEG_WORDS for t in toks[legs[0] + 1:legs[1]]):
+        return None
+    lead = next((k for k in range(o - 1, max(-1, o - 1 - _FIX5_NETTING_SPAN), -1)
+                 if toks[k].kind in ("word", "cue") and toks[k].low in _FIX5_NETTING_WORDS), None)
+    if lead is None or any(t.kind in ("amount", "ref") for t in toks[lead + 1:o]):
+        return None
+    a, b = (toks[k].data["value"] for k in legs)
+    items = []
+    for value in (a, b):
+        it = next((x for ref, x in ctx.cited.items() if x.amount_usd is not None and _near(value, x.amount_usd)
+                   and all(x.reference != y.reference for y in items)), None)
+        if it is None:
+            return None
+        items.append(it)
+    net = round(abs(abs(a) - abs(b)), 2)
+    if not _x1_portion_fits(net, "explained", ctx):
+        return None
+    after = next((k for k in range(c + 1, len(toks)) if toks[k].kind == "amount"), None)
+    if after is None or toks[after].data["bare"] or not _x1_portion_fits(toks[after].data["value"], "explained", ctx):
+        return None
+    if any(t.kind == "ref" for t in toks[c + 1:after]) or _FIX5_NEGATION_RE.search(
+            ctx.text[toks[c].end:toks[after].start]):
+        return None
+    return items[legs.index(i)]
+
+
+def _fix5_relied_subtotal(toks: list[_Tok], i: int, ctx: _Context) -> list | None:
+    """P3: the cited eligible items, two or more but not all of the cited ones, whose
+    amounts the previous clause states and whose sum the figure is; else None."""
+    if any(t.kind in ("amount", "ref") for t in toks[:i]):
+        return None
+    if not any(t.kind in ("word", "cue") and t.low in _FIX5_SUBTOTAL_LEADS for t in toks[:i]):
+        return None
+    ci = bisect.bisect_right(ctx.clause_starts, toks[i].start) - 1
+    if ci < 1 or ci > len(ctx.clauses):
+        return None
+    prev = ctx.clauses[ci - 1]
+    stated = [t.data["value"] for t in prev if t.kind == "amount" and not t.data["bare"]]
+    items = []
+    for t in prev:
+        if t.kind != "ref":
+            continue
+        it = _fix5_cited(t, ctx)
+        if it is None:
+            return None
+        if all(it.reference != n.reference for n in items):
+            items.append(it)
+    if len(items) < 2 or len(items) >= len(ctx.cited):
+        return None
+    if not all(any(_near(v, n.amount_usd) for v in stated) for n in items):
+        return None
+    total = round(sum(abs(n.amount_usd) for n in items), 2)
+    if not _near(toks[i].data["value"], total):
+        return None
+    return items
+
+
+def _fix5_amount_route(toks: list[_Tok], i: int, binding: dict, rec: dict, ctx: _Context) -> dict | None:
+    """Route instead of FM-001 for one amount (fix round 5, P1 to P3), or None to keep the FM."""
+    if rec.get("verdict") != "FM-001" or rec.get("review"):
+        return None
+    amt = toks[i]
+    if amt.data["bare"] or not ctx.clauses:
+        return None
+    role = binding.get("role")
+    if role not in _FIX5_REASONS or rec.get("reason") != _FIX5_REASONS[role]:
+        return None
+    if _lane_f_amount_downgrade(toks, i, binding, rec, ctx) is not None:
+        return None  # lane F routes this figure on its own key, later in _check
+    it = _fix5_netting_leg(toks, i, ctx)
+    if it is not None:
+        return {"verdict": "review", "reason": "item_effect_unverified", "reference": it.reference,
+                "expected": abs(it.amount_usd), "fix5_rule": "P2"}
+    if not _fix5_net_stated(ctx, amt.start):
+        return None
+    it = _fix5_item_subject(toks, i, ctx)
+    if it is not None:
+        return {"verdict": "review", "reason": "item_effect_unverified", "reference": it.reference,
+                "expected": abs(it.amount_usd), "fix5_rule": "P1"}
+    items = _fix5_relied_subtotal(toks, i, ctx)
+    if items is not None:
+        return {"verdict": "review", "reason": "item_effect_sum_unverified",
+                "expected": round(sum(abs(n.amount_usd) for n in items), 2),
+                "references": [n.reference for n in items], "fix5_rule": "P3"}
+    return None
 
 def _n2_clause_of(pos: int, clause_starts: list[int], clause_ends: list[int]) -> int:
     return bisect.bisect_right(clause_starts, pos) - 1
@@ -2995,6 +3204,8 @@ def _check(text: str, parsed: dict, truth: CaseTruth) -> NarrativeResult:
     for t in toks:
         by_clause[bisect.bisect_right(clause_starts, t.start) - 1].append(t)
 
+    ctx.clauses = by_clause
+    ctx.clause_starts = clause_starts
     persons = _x2_persons(truth)
     directions: list[dict] = []
     splits: list[dict] = []
