@@ -195,7 +195,7 @@ def test_format_spec_names_every_column_and_outcome():
     spec = (REPO / "docs/evidence/regression/SIGNOFF-FORMAT.md").read_text(encoding="utf-8")
     for name in (*so.SIGNOFF_COLUMNS, *so.OUTCOMES, so.SIGNOFF_DIR_RELPATH):
         assert f"`{name}`" in spec, name
-    assert "—" not in spec and "–" not in spec
+    assert "\u2014" not in spec and "\u2013" not in spec
 
 
 # --- Part B: compare_runs.py on a run pair with sign-off cases ---------------------------
