@@ -93,6 +93,7 @@ EXPECTED_DEFAULT = [
     "anthropic/claude-sonnet-5",
     "anthropic/claude-opus-5-5",
     "openai/gpt-6-luna",
+    "openai/gpt-6.1-terra",
     "openai/gpt-6.1-sol",
 ]
 
@@ -101,7 +102,7 @@ def test_default_models_are_every_distinct_roster_model_in_stable_order():
     models = smoke_live.default_models()
     assert models == EXPECTED_DEFAULT
     assert len(models) == len(set(models))
-    roles = {roster.WORKER, *roster.BASELINES, roster.GRADER, roster.GRADER_ESCALATION, roster.CALIBRATOR}
+    roles = {roster.WORKER, *roster.BASELINES, *roster.GRADER_BY_STEP.values(), roster.CALIBRATOR}
     assert set(models) == roles
     assert smoke_live.default_models() == models  # stable across calls
 

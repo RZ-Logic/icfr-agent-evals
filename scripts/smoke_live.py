@@ -13,7 +13,7 @@ Per model:
     with the grader and calibrator roles bound to their step-1 pins, so the roster
     check and the serving guard run exactly as in the pilot (the roles are bound,
     never called);
-  - any other model (the grader GPT-6 Luna, the escalation grader GPT-6.1 Sol, or a
+  - any other model (the grader GPT-6 Luna, the ladder graders GPT-6.1 Terra and GPT-6.1 Sol, or a
     model the owner names, D15) fails the roster check as a worker, so it runs a
     one-sample task under the same sample id with a fixed one-line prompt that holds
     no case content, after roster.model_serving checks its endpoint.
@@ -46,9 +46,9 @@ SPLIT, SUBSET = "dev", "pilot"
 
 
 def default_models() -> list[str]:
-    """Every distinct model of the roster's worker, baselines, grader, escalation
-    grader and calibrator, in that order (D15 reading: six models)."""
-    ordered = [roster.WORKER, *roster.BASELINES, roster.GRADER, roster.GRADER_ESCALATION, roster.CALIBRATOR]
+    """Every distinct model of the roster's worker, baselines, the three grader ladder
+    steps and calibrator, in that order (D15 reading: seven models)."""
+    ordered = [roster.WORKER, *roster.BASELINES, *roster.GRADER_BY_STEP.values(), roster.CALIBRATOR]
     return list(dict.fromkeys(ordered))
 
 

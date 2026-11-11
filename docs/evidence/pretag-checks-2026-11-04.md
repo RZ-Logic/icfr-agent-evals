@@ -50,7 +50,7 @@ Each condition in the section 13 row, with the unit tests in `tests/test_roster.
 | Evaluated model off the roster | `test_evaluated_model_off_the_roster_is_rejected`, `test_floating_alias_is_rejected`, `test_partner_platform_service_prefix_is_rejected`, `test_none_model_is_rejected_by_the_main_roster_check` |
 | Judge role off the roster | `test_role_not_on_the_roster_is_rejected`, `test_judge_role_bound_off_the_roster_is_rejected` |
 | Unbound role | `test_unbound_required_role_is_rejected`, `test_offline_mode_still_requires_bound_roles` |
-| Role rebound away from its pinned ID | `test_grader_bound_away_from_its_pin_is_rejected`, `test_calibrator_bound_away_from_its_pin_is_rejected`, `test_escalation_grader_only_at_step_two` |
+| Role rebound away from its pinned ID | `test_grader_bound_away_from_its_pin_is_rejected`, `test_calibrator_bound_away_from_its_pin_is_rejected`, `test_step_two_binds_terra_and_step_three_binds_sol`, `test_each_step_accepts_only_its_own_grader_pin` |
 | Grader equal to the evaluated model | `test_grader_equal_to_evaluated_model_is_rejected` (all four roster models, grader steps 1 and 2) |
 
 Through `inspect eval`, `tests/test_task.py` (`test_bad_role_fails_the_run`, `test_unbound_role_fails_the_run`) shows each run ending in error with no sample scored. The template baseline's `none/none` exception is enforced by `baseline.baseline_check` on its own Task and tested in `tests/test_template_baseline.py`; the main check rejects `none/none`.

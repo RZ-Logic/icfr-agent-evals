@@ -59,15 +59,26 @@ BASELINES: tuple[str, ...] = (
 )
 EVALUATED_MODELS: tuple[str, ...] = (WORKER, *BASELINES)
 
-GRADER = "openai/gpt-6-luna"             # an alias (ADR-0004); each response records the model that served it
-GRADER_ESCALATION = "openai/gpt-6.1-sol"  # step 2 of the judge remedy order (section 7)
+# The grader ladder (section 5, judge remedy order in section 7; ADR-0006, owner decision
+# D-T1, 2026-11-09). Each pin is an alias; each response records the model that served it.
+GRADER = "openai/gpt-6-luna"             # step 1 (ADR-0004)
+GRADER_STEP2 = "openai/gpt-6.1-terra"    # step 2 (ADR-0006), on the OpenAI Batch API
+GRADER_STEP3 = "openai/gpt-6.1-sol"      # step 3 (ADR-0006), on the OpenAI Batch API
 CALIBRATOR = "anthropic/claude-opus-5-5"  # its sample skips the outputs of the Opus 5.5 baseline run
 SCOUT_SCANNER = "openai/gpt-6-luna"       # named in each scan config; not an eval role
 
 GRADER_ROLE = "grader"
 CALIBRATOR_ROLE = "calibrator"
 REQUIRED_ROLES: tuple[str, ...] = (GRADER_ROLE, CALIBRATOR_ROLE)
-GRADER_STEPS: tuple[int, ...] = (1, 2)
+GRADER_STEPS: tuple[int, ...] = (1, 2, 3)
+# The grader pin at each ladder step. Every step is OpenAI, the workers' vendor is
+# Anthropic, so no step is a same-vendor substitution.
+GRADER_BY_STEP: dict[int, str] = {1: GRADER, 2: GRADER_STEP2, 3: GRADER_STEP3}
+# The grader generate config is pinned per step. Steps 2 and 3 run on the OpenAI Batch
+# API (inspect-ai 0.3.278 GenerateConfig.batch, Responses endpoint for these models);
+# step 1 runs interactively. It applies to the grader role only: the worker and the
+# calibrator are called as before.
+GRADER_BATCH_STEPS: tuple[int, ...] = (2, 3)
 
 # One effort setting for each Anthropic model in the roster, whatever role it holds.
 REASONING_EFFORT = "high"
@@ -154,9 +165,18 @@ def role_pins(grader_step: int = 1) -> dict[str, str]:
     if grader_step not in GRADER_STEPS:
         raise RosterError(f"grader_step must be one of {GRADER_STEPS}, got {grader_step!r}")
     return {
-        GRADER_ROLE: GRADER if grader_step == 1 else GRADER_ESCALATION,
+        GRADER_ROLE: GRADER_BY_STEP[grader_step],
         CALIBRATOR_ROLE: CALIBRATOR,
     }
+
+
+def grader_generate_config_args(grader_step: int = 1) -> dict[str, Any]:
+    """GenerateConfig fields pinned for the grader role at a ladder step: batch True at
+    steps 2 and 3, nothing at step 1. Pure (no Inspect import); pass the result to
+    GenerateConfig(**args) where the grader is called, never to the worker or calibrator."""
+    if grader_step not in GRADER_STEPS:
+        raise RosterError(f"grader_step must be one of {GRADER_STEPS}, got {grader_step!r}")
+    return {"batch": True} if grader_step in GRADER_BATCH_STEPS else {}
 
 
 def calibrator_may_sample(evaluated_model: str) -> bool:
@@ -174,7 +194,8 @@ def validate_roster(evaluated_model: str, roles: Mapping[str, str | None], grade
     evaluated_model: the --model the run evaluates, as "provider/name".
     roles: every role bound for the run (role -> "provider/name"); None or a
         missing key means unbound.
-    grader_step: 1, or 2 after step 2 of the judge remedy order moves the grader.
+    grader_step: 1, 2 or 3: the step of the grader ladder (section 5), moved past 1
+        only by the judge remedy order (section 7).
     """
     pins = role_pins(grader_step)
     unbound = [r for r in REQUIRED_ROLES if not roles.get(r)]
@@ -374,8 +395,9 @@ def roster_metadata(grader_step: int = 1) -> dict:
         "worker": WORKER,
         "baselines": list(BASELINES),
         "roles": role_pins(grader_step),
-        "grader_escalation": GRADER_ESCALATION,
+        "grader_ladder": [GRADER_BY_STEP[s] for s in GRADER_STEPS],
         "grader_step": grader_step,
+        "grader_generate_config": grader_generate_config_args(grader_step),
         "scout_scanner": SCOUT_SCANNER,
         "reasoning_effort": REASONING_EFFORT,
         "serving_platforms": dict(SERVING_PLATFORMS),

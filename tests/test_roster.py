@@ -13,7 +13,11 @@ from icfr_agent_evals.roster import (
     CALIBRATOR,
     EVALUATED_MODELS,
     GRADER,
-    GRADER_ESCALATION,
+    GRADER_BATCH_STEPS,
+    GRADER_BY_STEP,
+    GRADER_STEP2,
+    GRADER_STEP3,
+    GRADER_STEPS,
     NOTICE_POLICIES,
     RETIREMENT_FLOORS,
     RETIREMENT_FLOORS_RECORDED,
@@ -22,6 +26,8 @@ from icfr_agent_evals.roster import (
     WORKER,
     RosterError,
     calibrator_may_sample,
+    grader_generate_config_args,
+    role_pins,
     retirement_metadata,
     roster_metadata,
     validate_roster,
@@ -34,7 +40,10 @@ MOCK = "mockllm/model"
 def test_pins_match_the_pre_registration():
     assert WORKER == "anthropic/claude-sonnet-5-5"
     assert BASELINES == ("anthropic/claude-haiku-5-5", "anthropic/claude-sonnet-5", "anthropic/claude-opus-5-5")
-    assert GRADER == "openai/gpt-6-luna" and GRADER_ESCALATION == "openai/gpt-6.1-sol"
+    assert GRADER == "openai/gpt-6-luna"
+    assert GRADER_STEP2 == "openai/gpt-6.1-terra" and GRADER_STEP3 == "openai/gpt-6.1-sol"
+    assert GRADER_STEPS == (1, 2, 3)
+    assert GRADER_BY_STEP == {1: GRADER, 2: GRADER_STEP2, 3: GRADER_STEP3}
     assert CALIBRATOR == "anthropic/claude-opus-5-5"
     assert RETIREMENT_FLOORS == {
         "anthropic/claude-sonnet-5": "2027-06-30",
@@ -73,12 +82,45 @@ def test_grader_bound_away_from_its_pin_is_rejected():
         validate_roster(WORKER, {**PINNED, "grader": "openai/gpt-6"})
 
 
-def test_escalation_grader_only_at_step_two():
-    with pytest.raises(RosterError, match="not its pin"):
-        validate_roster(WORKER, {**PINNED, "grader": GRADER_ESCALATION}, grader_step=1)
-    validate_roster(WORKER, {**PINNED, "grader": GRADER_ESCALATION}, grader_step=2)
-    with pytest.raises(RosterError, match="not its pin"):
-        validate_roster(WORKER, PINNED, grader_step=2)
+def test_step_two_binds_terra_and_step_three_binds_sol():
+    assert role_pins(1)["grader"] == GRADER
+    assert role_pins(2)["grader"] == "openai/gpt-6.1-terra"
+    assert role_pins(3)["grader"] == "openai/gpt-6.1-sol"
+    validate_roster(WORKER, {**PINNED, "grader": GRADER_STEP2}, grader_step=2)
+    validate_roster(WORKER, {**PINNED, "grader": GRADER_STEP3}, grader_step=3)
+
+
+@pytest.mark.parametrize("step", GRADER_STEPS)
+def test_each_step_accepts_only_its_own_grader_pin(step):
+    for other, model in GRADER_BY_STEP.items():
+        if other == step:
+            validate_roster(WORKER, {**PINNED, "grader": model}, grader_step=step)
+        else:
+            with pytest.raises(RosterError, match="not its pin"):
+                validate_roster(WORKER, {**PINNED, "grader": model}, grader_step=step)
+
+
+def test_every_ladder_grader_is_openai_so_none_is_a_same_vendor_substitution():
+    assert all(m.startswith("openai/") for m in GRADER_BY_STEP.values())
+    assert not WORKER.startswith("openai/")
+
+
+def test_grader_batch_is_pinned_for_steps_two_and_three_only():
+    assert GRADER_BATCH_STEPS == (2, 3)
+    assert grader_generate_config_args(1) == {}
+    assert grader_generate_config_args(2) == {"batch": True}
+    assert grader_generate_config_args(3) == {"batch": True}
+    with pytest.raises(RosterError, match="grader_step"):
+        grader_generate_config_args(4)
+
+
+@pytest.mark.parametrize("step", GRADER_STEPS)
+def test_grader_generate_config_builds_a_real_inspect_config(step):
+    from inspect_ai.model import GenerateConfig
+
+    config = GenerateConfig(**grader_generate_config_args(step))
+    assert (config.batch is True) == (step in GRADER_BATCH_STEPS)
+    assert config.temperature is None and config.reasoning_effort is None
 
 
 def test_calibrator_bound_away_from_its_pin_is_rejected():
@@ -87,7 +129,7 @@ def test_calibrator_bound_away_from_its_pin_is_rejected():
 
 
 @pytest.mark.parametrize("model", EVALUATED_MODELS)
-@pytest.mark.parametrize("step", [1, 2])
+@pytest.mark.parametrize("step", [1, 2, 3])
 def test_grader_equal_to_evaluated_model_is_rejected(model, step):
     with pytest.raises(RosterError, match="equals the evaluated model"):
         validate_roster(model, {**PINNED, "grader": model}, grader_step=step)
@@ -128,7 +170,7 @@ def test_role_not_on_the_roster_is_rejected():
         validate_roster(WORKER, {**PINNED, "scanner": GRADER})
 
 
-@pytest.mark.parametrize("step", [0, 3, "2"])
+@pytest.mark.parametrize("step", [0, 4, "2"])
 def test_unknown_grader_step_is_rejected(step):
     with pytest.raises(RosterError, match="grader_step"):
         validate_roster(WORKER, PINNED, grader_step=step)
@@ -167,7 +209,12 @@ def test_calibrator_never_samples_opus_baseline():
 def test_roster_metadata_records_pins_and_effort():
     meta = roster_metadata()
     assert meta["roles"] == PINNED and meta["reasoning_effort"] == "high"
-    assert roster_metadata(2)["roles"]["grader"] == GRADER_ESCALATION
+    assert roster_metadata(2)["roles"]["grader"] == GRADER_STEP2
+    assert roster_metadata(3)["roles"]["grader"] == GRADER_STEP3
+    assert meta["grader_ladder"] == [GRADER, GRADER_STEP2, GRADER_STEP3]
+    assert meta["grader_generate_config"] == {}
+    assert roster_metadata(2)["grader_generate_config"] == {"batch": True}
+    assert roster_metadata(3)["grader_step"] == 3
     assert meta["serving_platforms"] == SERVING_PLATFORMS
 
 
@@ -186,7 +233,7 @@ def test_retirement_floors_recorded_date_is_iso_and_not_before_first_read():
 
 
 def test_every_roster_provider_has_a_serving_platform_and_notice_policy():
-    providers = {m.split("/", 1)[0] for m in (*EVALUATED_MODELS, GRADER, GRADER_ESCALATION, CALIBRATOR, SCOUT_SCANNER)}
+    providers = {m.split("/", 1)[0] for m in (*EVALUATED_MODELS, *GRADER_BY_STEP.values(), CALIBRATOR, SCOUT_SCANNER)}
     assert providers == set(SERVING_PLATFORMS) == set(NOTICE_POLICIES) == {"anthropic", "openai"}
     assert "first-party" in SERVING_PLATFORMS["anthropic"] and "Claude API" in SERVING_PLATFORMS["anthropic"]
     assert "first-party" in SERVING_PLATFORMS["openai"] and "OpenAI API" in SERVING_PLATFORMS["openai"]
