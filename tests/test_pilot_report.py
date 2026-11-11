@@ -20,10 +20,12 @@ review records are synthetic: every verdict row says it is not a review.
 from __future__ import annotations
 
 import csv
+import hashlib
 import importlib.util
 import json
 import os
 import re
+import shutil
 import sys
 import uuid
 from pathlib import Path
@@ -395,8 +397,12 @@ def _figure_lines(text: str) -> dict[str, str]:
     return got
 
 
+SITTING = ("2026-11-10T09:00:00+00:00", "2026-11-10T10:00:00+00:00")
+
+
 def _freeze(packet_dir: Path, rows: list[dict]) -> None:
-    """Write verdicts.csv and fm_audit.csv the way review_freeze.freeze does (no manifest)."""
+    """Write verdicts.csv, fm_audit.csv and sittings.csv the way review_freeze.freeze does
+    (the manifest is written apart, by _write_manifest, once every file is final)."""
     from icfr_agent_evals import review_schema as rs
 
     rf = pr.load_review_freeze()
@@ -405,6 +411,22 @@ def _freeze(packet_dir: Path, rows: list[dict]) -> None:
     rec = rf.load_record(str(packet_dir), str(filled))
     rs.write_rb7_csv(packet_dir / rs.RECORD_FILES["verdicts"], rf.record_rows(rec, ("finding", "narrative")))
     rs.write_rb7_csv(packet_dir / rs.RECORD_FILES["fm_audit"], rf.record_rows(rec, ("fm_audit",)))
+    rs.write_csv(packet_dir / rs.RECORD_FILES["sittings"], rf.SITTINGS_COLUMNS,
+                 [{"start": SITTING[0], "end": SITTING[1]}])
+
+
+def _write_manifest(packet_dir: Path, path: Path) -> None:
+    """The public freeze manifest the way review_freeze.freeze writes it, outside the packet."""
+    rf = pr.load_review_freeze()
+    rec = rf.load_frozen_record(str(packet_dir))
+    man = rf.build_manifest(rec, run_id=str(rec.meta["run_id"]), run_commit="0000000", reviewer="SYNTHETIC-TEST",
+                            sittings=[SITTING], freeze_date="2026-11-10")
+    rf._write_json(path, man)
+
+
+def _rec(records, name: str) -> list[str]:
+    """--review-record and --review-manifest for one of the fixture's records."""
+    return ["--review-record", getattr(records, name), "--review-manifest", getattr(records, f"{name}_manifest")]
 
 
 @pytest.fixture(scope="module")
@@ -463,7 +485,11 @@ def records(logs, tmp_path_factory):
     for info in data.values():
         info["eval_id"] = "not-a-log-given-to-the-report"
     runs_path.write_text(json.dumps(data), encoding="utf-8", newline="\n")
-    return NS(**{k: str(v) for k, v in out.items()}, wrong_case=case_of[wrong_unit])
+    manifests = {}
+    for name in ("correct", "wrong", "incomplete", "elsewhere"):  # `unfrozen` has no record files to hash
+        manifests[f"{name}_manifest"] = root / f"{name}-manifest.json"
+        _write_manifest(out[name], manifests[f"{name}_manifest"])
+    return NS(**{k: str(v) for k, v in {**out, **manifests}.items()}, wrong_case=case_of[wrong_unit])
 
 
 def test_without_a_record_prints_route_blind_and_code_only_and_says_the_record_is_needed(logs, capsys):
@@ -488,7 +514,7 @@ def test_without_a_record_prints_route_blind_and_code_only_and_says_the_record_i
 def test_with_a_record_prints_all_four_figures_labeled_and_fm008_on_the_review_settled_trial(logs, records, capsys,
                                                                                                tmp_path):
     path = tmp_path / "report.json"
-    code, out, err = _main(capsys, *_base(logs), "--review-record", records.correct, "--json", path)
+    code, out, err = _main(capsys, *_base(logs), *_rec(records, "correct"), "--json", path)
     assert code == pr.EXIT_OK, err
     sonnet = _block(out, "sonnet")
     assert f"frozen review record {records.correct}, run R1):" in sonnet
@@ -518,8 +544,12 @@ def test_with_a_record_prints_all_four_figures_labeled_and_fm008_on_the_review_s
     assert {k: v["passed"] for k, v in figs["figures"].items()} == {
         "review_settled": 20, "audit_adjusted": 20, "route_blind": 20, "code_only": 20}
     assert figs["fm008"] == {"trial": "review_settled", "samples": []}
+    sha = hashlib.sha256(Path(records.correct_manifest).read_bytes()).hexdigest()
     assert data["review_record"] == {"packet_dir": records.correct,
-                                     "run_ids": {"sonnet": "R1", "haiku": None, "template": None}}
+                                     "run_ids": {"sonnet": "R1", "haiku": None, "template": None},
+                                     "manifest": {"path": records.correct_manifest, "sha256": sha}}
+    assert (f"Frozen review record {records.correct}: every file it lists hashes to its manifest "
+            f"{records.correct_manifest} (sha256 {sha})") in out
     assert data["runs"]["haiku"]["content_pass4_figures"]["score_of_record"] is None
 
 
@@ -527,7 +557,7 @@ def test_review_settled_reads_the_verdicts_and_the_code_only_figure_is_not_the_s
     """A whole-narrative `wrong` (D-I) fails one hard case on the score of record; the
     route-blind and code-only figures, which read the log alone, do not move."""
     path = tmp_path / "report.json"
-    code, out, err = _main(capsys, *_base(logs), "--review-record", records.wrong, "--json", path)
+    code, out, err = _main(capsys, *_base(logs), *_rec(records, "wrong"), "--json", path)
     assert code == pr.EXIT_OK, err
     lines = _figure_lines(_block(out, "sonnet"))
     assert "19/20 = 0.950" in lines["review-settled"] and "19/20 = 0.950" in lines["audit-adjusted"]
@@ -539,14 +569,15 @@ def test_review_settled_reads_the_verdicts_and_the_code_only_figure_is_not_the_s
     # The printed figures are trials.figures() on the same log and frozen record.
     from icfr_agent_evals import trials
 
-    ref = trials.figures(read_eval_log(logs["sonnet"]), pr.load_review_record(records.wrong))
+    record, _manifest = pr.load_review_record(records.wrong, records.wrong_manifest)
+    ref = trials.figures(read_eval_log(logs["sonnet"]), record)
     for kind, row in ref["figures"].items():
         assert (figs["figures"][kind]["passed"], figs["figures"][kind]["ci95"]) == (row["passed"], row["ci95"])
 
 
 @pytest.mark.parametrize("with_record", [False, True])
 def test_code_only_figure_is_never_printed_as_the_score(logs, records, capsys, with_record):
-    extra = ["--review-record", records.wrong] if with_record else []
+    extra = _rec(records, "wrong") if with_record else []
     code, out, err = _main(capsys, *_base(logs), *extra)
     assert code == pr.EXIT_OK, err
     names = tuple(f"{n} content-pass^4" for n in pr.FIGURE_NAMES.values())
@@ -570,14 +601,83 @@ def test_refuses_a_missing_or_unfrozen_record(logs, capsys, records, tmp_path):
     assert code == pr.EXIT_REFUSED and out == "" and "unreadable" in err and "verdicts.csv" in err
 
 
+def _copy_record(records, tmp_path) -> tuple[Path, Path]:
+    """A copy of the `correct` record and its manifest, safe to tamper with."""
+    packet = tmp_path / "copy"
+    shutil.copytree(records.correct, packet)
+    manifest = tmp_path / "copy-manifest.json"
+    shutil.copyfile(records.correct_manifest, manifest)
+    return packet, manifest
+
+
+def _redump_json(path: Path) -> None:
+    """Same JSON content, different bytes."""
+    path.write_text(json.dumps(json.loads(path.read_text(encoding="utf-8")), indent=1), encoding="utf-8",
+                    newline="\n")
+
+
+def _flip_a_verdict(path: Path) -> None:
+    text = path.read_text(encoding="utf-8")
+    assert ",none_wrong," in text
+    path.write_text(text.replace(",none_wrong,", ",wrong,", 1), encoding="utf-8", newline="\n")
+
+
+def test_a_clean_copy_of_a_frozen_record_passes_the_frozen_record_check(logs, capsys, records, tmp_path):
+    packet, manifest = _copy_record(records, tmp_path)
+    code, out, err = _main(capsys, *_base(logs), "--review-record", packet, "--review-manifest", manifest)
+    assert code == pr.EXIT_OK, err
+    assert f"Frozen review record {packet}: every file it lists hashes to its manifest {manifest}" in out
+    assert "SCORE OF RECORD" in out
+
+
+@pytest.mark.parametrize("rel, tamper", [
+    ("verdicts.csv", _flip_a_verdict),
+    ("sealed/runs.json", _redump_json),
+    ("packet-meta.json", _redump_json),
+])
+def test_refuses_a_tampered_record(logs, capsys, records, tmp_path, rel, tamper):
+    """review_freeze.check_record_files (the check second-look-draw runs) refuses a record
+    whose files no longer hash to its manifest, before any figure is computed."""
+    packet, manifest = _copy_record(records, tmp_path)
+    tamper(packet / rel)
+    code, out, err = _main(capsys, *_base(logs), "--review-record", packet, "--review-manifest", manifest)
+    assert code == pr.EXIT_REFUSED and out == ""
+    assert "fails the frozen-record check" in err
+    assert f"private file {rel} does not hash to the manifest" in err
+
+
+def test_refuses_a_record_whose_manifest_is_missing_or_not_its_own(logs, capsys, records, tmp_path):
+    # No --review-manifest: the default docs/evidence/reviews/<run-id>-manifest.json is not there.
+    assert not (pr.REPO_ROOT / "docs" / "evidence" / "reviews" / "pilot-report-test-manifest.json").exists()
+    code, out, err = _main(capsys, *_base(logs), "--review-record", records.correct)
+    assert code == pr.EXIT_REFUSED and out == ""
+    assert "fails the frozen-record check" in err and "manifest pilot-report-test-manifest.json not found" in err
+    # A manifest for another run.
+    packet, manifest = _copy_record(records, tmp_path)
+    man = json.loads(manifest.read_text(encoding="utf-8"))
+    manifest.write_text(json.dumps({**man, "run_id": "another-run"}), encoding="utf-8", newline="\n")
+    code, out, err = _main(capsys, *_base(logs), "--review-record", packet, "--review-manifest", manifest)
+    assert code == pr.EXIT_REFUSED and out == "" and "the manifest is not this packet's freeze manifest" in err
+    # A manifest that leaves the frozen verdicts out of its private files.
+    files = {k: v for k, v in man["private_files"].items() if k != "verdicts.csv"}
+    manifest.write_text(json.dumps({**man, "private_files": files}), encoding="utf-8", newline="\n")
+    code, out, err = _main(capsys, *_base(logs), "--review-record", packet, "--review-manifest", manifest)
+    assert code == pr.EXIT_REFUSED and out == "" and "the manifest does not list private file verdicts.csv" in err
+
+
+def test_review_manifest_needs_a_review_record(logs, capsys, records):
+    code, out, err = _main(capsys, *_base(logs), "--review-manifest", records.correct_manifest)
+    assert code == pr.EXIT_REFUSED and out == "" and "--review-manifest needs --review-record" in err
+
+
 def test_refuses_a_record_that_names_none_of_the_logs(logs, capsys, records):
-    code, out, err = _main(capsys, *_base(logs), "--review-record", records.elsewhere)
+    code, out, err = _main(capsys, *_base(logs), *_rec(records, "elsewhere"))
     assert code == pr.EXIT_REFUSED and out == ""
     assert "names none of the sonnet, haiku or template logs" in err and "not-a-log-given-to-the-report" in err
 
 
 def test_refuses_a_record_that_does_not_cover_its_run(logs, capsys, records):
-    code, out, err = _main(capsys, *_base(logs), "--review-record", records.incomplete)
+    code, out, err = _main(capsys, *_base(logs), *_rec(records, "incomplete"))
     assert code == pr.EXIT_REFUSED and out == ""
     assert "the frozen review record does not cover run R1 (" in err
 

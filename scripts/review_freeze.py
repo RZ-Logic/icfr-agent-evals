@@ -964,20 +964,37 @@ def check_private_files(packet_dir: str, manifest: Mapping[str, Any]) -> list[st
     return gaps
 
 
-def check_frozen(packet_dir: str, *, freeze_commit: str, repo: str, manifest: str | None,
-                 now: datetime) -> tuple[Record, dict, datetime, Path]:
-    """Shared by second-look-draw and blind-check-draw. Refuses with every gap."""
+def check_record_files(packet_dir: str, *, repo: str, manifest: str | None) -> tuple[dict, bytes, Path, list[str]]:
+    """The packet's freeze manifest and every gap between the frozen record's files and it:
+    the manifest is this packet's review_freeze manifest, it lists every packet file and
+    every record file, and each file it lists exists and hashes to it. Returns (manifest,
+    its bytes, its path, gaps); refuses only when the manifest cannot be found or read.
+    Shared by check_frozen and scripts/pilot_report.py --review-record."""
     meta = _read_json(Path(packet_dir) / rs.PACKET_FILES["meta"])
-    run_id = str(meta.get("run_id", ""))
+    run_id = str(meta.get("run_id", "")) if isinstance(meta, dict) else ""
     mpath = Path(manifest) if manifest else _default_manifest(repo, run_id)
     if not mpath.is_file():
         raise Refused(f"manifest {mpath.name} not found")
     mbytes = mpath.read_bytes()
     man = _read_json(mpath)
+    if not isinstance(man, dict):
+        raise Refused(f"manifest {mpath.name} is not a JSON object")
     gaps: list[str] = []
     if man.get("kind") != "review_freeze" or man.get("run_id") != run_id:
         gaps.append("the manifest is not this packet's freeze manifest")
+    listed = man.get("private_files")
+    if isinstance(listed, dict) and listed:
+        for rel in (*rs.PACKET_FILES.values(), *rs.RECORD_FILES.values()):
+            if rel not in listed:
+                gaps.append(f"the manifest does not list private file {rel}")
     gaps.extend(check_private_files(packet_dir, man))
+    return man, mbytes, mpath, gaps
+
+
+def check_frozen(packet_dir: str, *, freeze_commit: str, repo: str, manifest: str | None,
+                 now: datetime) -> tuple[Record, dict, datetime, Path]:
+    """Shared by second-look-draw and blind-check-draw. Refuses with every gap."""
+    man, mbytes, mpath, gaps = check_record_files(packet_dir, repo=repo, manifest=manifest)
     if not _SHA_RE.match(freeze_commit or ""):
         gaps.append(f"--freeze-commit {freeze_commit!r} is not a hex commit hash")
         freeze_time = None

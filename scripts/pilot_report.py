@@ -4,7 +4,7 @@ Usage:
   python scripts/pilot_report.py --sonnet S.eval --haiku H.eval --template T.eval
          [--reading-b i|ii|iii|all] [--regression-baseline B.eval --regression-candidate C.eval]
          [--json out.json] [--review-csv out.csv] [--max-tokens-pin N]
-         [--review-record PACKET_DIR]
+         [--review-record PACKET_DIR [--review-manifest MANIFEST]]
 
 Reads the three pilot legs (pre-registration section 13, pilot row; 20 dev-split
 cases, epochs = 4) and prints, per run: sample count and epochs; the content-pass^4
@@ -36,6 +36,13 @@ and the report says that the review-settled and audit-adjusted figures need a fr
 review record. The code-only FM-008 is printed as extractor health only. The McNemar
 floor line and the regression line count the route-blind content-pass^4, the trial
 section 10(a) reads (owner decision D-E5).
+
+The record is checked against its freeze manifest before any figure is computed, through
+scripts/review_freeze.py check_record_files (the check second-look-draw runs too). The
+manifest must be this packet's review_freeze manifest and list every packet and record
+file, and every file it lists must hash to it. The manifest is --review-manifest, by
+default docs/evidence/reviews/<run-id>-manifest.json in this repo. The freeze commit
+itself (its age, trailer and ancestry) is not checked here.
 
 Every worker log (Sonnet, Haiku and both regression logs) must pass the run
 configuration check (contract C2): roster.check_run_config with 20 samples, epochs 4
@@ -78,7 +85,8 @@ Exit codes:
      another task or worker prompt, a template
      log that is not the template baseline (or a worker log that is), a regression
      pair compare_runs.py refuses, a help request, an output path that cannot be
-     written, a review record that cannot be read, that names none of the three
+     written, a review record that cannot be read, that has no freeze manifest or
+     fails the check against it (every gap counted), that names none of the three
      pilot logs or that does not cover a run it names (trials.RecordError, every gap
      listed), or any other input the report cannot read
 """
@@ -88,6 +96,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import csv
+import hashlib
 import importlib.util
 import io
 import json
@@ -148,6 +157,7 @@ VERDICTS: tuple[str, ...] = review_schema.FINDING_VERDICTS
 TEMPLATE_CONSISTENCY_LINE = "template: deterministic, agreement 1 by construction; Sample Consistency not reported"
 COMPARE_SCRIPT = Path(__file__).resolve().parent / "compare_runs.py"
 REVIEW_FREEZE_SCRIPT = Path(__file__).resolve().parent / "review_freeze.py"
+REPO_ROOT = Path(__file__).resolve().parent.parent  # the default manifest is under its docs/evidence/reviews
 
 # The four content-pass^4 figures (section 6 and section 8), in print order, each with
 # its short name and the role it plays. Only the review-settled figure is the score of
@@ -251,8 +261,8 @@ def check_same_content(logs: dict[str, Any]) -> dict[str, Any]:
 
 @lru_cache(maxsize=1)
 def load_review_freeze() -> Any:
-    """scripts/review_freeze.py, for load_frozen_record only (under a private module name,
-    so the module other callers load by path stays untouched)."""
+    """scripts/review_freeze.py, for load_frozen_record and check_record_files only (under a
+    private module name, so the module other callers load by path stays untouched)."""
     name = "review_freeze_for_pilot_report"
     spec = importlib.util.spec_from_file_location(name, REVIEW_FREEZE_SCRIPT)
     mod = importlib.util.module_from_spec(spec)
@@ -265,16 +275,31 @@ def load_review_freeze() -> Any:
     return mod
 
 
-def load_review_record(packet_dir: str) -> Any:
+def load_review_record(packet_dir: str, manifest: str | None = None) -> tuple[Any, dict[str, str]]:
     """The frozen review record: the packet and its frozen verdicts.csv and fm_audit.csv,
-    read through review_freeze.load_frozen_record. A record that cannot be read is refused."""
+    read through review_freeze.load_frozen_record, then checked against its freeze
+    manifest through review_freeze.check_record_files (the manifest is this packet's, lists
+    every packet and record file, and every file it lists hashes to it). The manifest is
+    `manifest`, or by default docs/evidence/reviews/<run-id>-manifest.json in this repo.
+    Returns (record, {"path", "sha256"} of the manifest). A record that cannot be read, has
+    no manifest or fails the check is refused, every gap counted and the first ones listed."""
     if not Path(packet_dir).is_dir():
         raise Refused(f"review record not found: {packet_dir} is not a packet directory")
     rf = load_review_freeze()
     try:
-        return rf.load_frozen_record(str(packet_dir))
+        record = rf.load_frozen_record(str(packet_dir))
     except rf.Refused as e:
         raise Refused(f"review record {packet_dir} unreadable: {e}") from e
+    try:
+        _man, mbytes, mpath, gaps = rf.check_record_files(str(packet_dir), repo=str(REPO_ROOT), manifest=manifest)
+    except rf.Refused as e:
+        raise Refused(f"review record {packet_dir} fails the frozen-record check: {e}") from e
+    if gaps:
+        shown = "; ".join(gaps[:MAX_GAPS_SHOWN])
+        more = f"; and {len(gaps) - MAX_GAPS_SHOWN} more" if len(gaps) > MAX_GAPS_SHOWN else ""
+        raise Refused(f"review record {packet_dir} fails the frozen-record check against {mpath} "
+                      f"({len(gaps)} gap(s)): {shown}{more}")
+    return record, {"path": str(mpath), "sha256": hashlib.sha256(mbytes).hexdigest()}
 
 
 def record_run_id(record: Any, log: Any) -> str | None:
@@ -853,6 +878,8 @@ def _margin_lines(label: str, margin: dict[str, Any]) -> list[str]:
 def build_report(args: argparse.Namespace) -> tuple[str, dict[str, Any], list[dict[str, str]]]:
     if (args.regression_baseline is None) != (args.regression_candidate is None):
         raise Refused("--regression-baseline and --regression-candidate go together")
+    if args.review_manifest is not None and args.review_record is None:
+        raise Refused("--review-manifest needs --review-record")
     pin = args.max_tokens_pin
     paths = {"sonnet": args.sonnet, "haiku": args.haiku, "template": args.template}
     logs = {role: load_pilot_log(p, role, pin) for role, p in paths.items()}
@@ -871,12 +898,17 @@ def build_report(args: argparse.Namespace) -> tuple[str, dict[str, Any], list[di
     payload: dict[str, Any] = {"fingerprint": fingerprint, "runs": {}, "reading_of_record": args.reading_b}
     rows: list[dict[str, str]] = []
     record_dir = args.review_record
-    record = load_review_record(record_dir) if record_dir is not None else None
+    record, manifest = (load_review_record(record_dir, args.review_manifest) if record_dir is not None
+                        else (None, None))
     run_ids = {role: record_run_id(record, log) if record is not None else None for role, log in logs.items()}
     if record is not None and not any(run_ids.values()):
         raise Refused(f"the review record {record_dir} names none of the sonnet, haiku or template logs "
                       f"(its runs.json eval ids: {sorted(str((i or {}).get('eval_id')) for i in record.runs.values())})")
-    payload["review_record"] = ({"packet_dir": record_dir, "run_ids": run_ids} if record is not None else None)
+    if record is not None:
+        lines.append(f"Frozen review record {record_dir}: every file it lists hashes to its manifest "
+                     f"{manifest['path']} (sha256 {manifest['sha256']})")
+    payload["review_record"] = ({"packet_dir": record_dir, "run_ids": run_ids, "manifest": manifest}
+                                if record is not None else None)
     for role, log in logs.items():
         block, data, run_rows = run_block(role, log, paths[role], record=record, run_id=run_ids[role],
                                           record_dir=record_dir)
@@ -976,7 +1008,11 @@ def parser() -> argparse.ArgumentParser:
                    help="the frozen review record: a packet directory holding its frozen verdicts.csv and "
                         "fm_audit.csv (scripts/review_freeze.py load_frozen_record). With it, every run the record "
                         "names gets the review-settled figure (the score of record) and the audit-adjusted figure; "
-                        "without it only the route-blind and code-only figures print")
+                        "without it only the route-blind and code-only figures print. The record is refused "
+                        "unless every file its freeze manifest lists hashes to it")
+    p.add_argument("--review-manifest", default=None, metavar="MANIFEST",
+                   help="the record's freeze manifest (default: docs/evidence/reviews/<run-id>-manifest.json in "
+                        "this repo); needs --review-record")
     return p
 
 

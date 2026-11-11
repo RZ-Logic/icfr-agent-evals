@@ -38,6 +38,13 @@ version G in the section 13 generator row):
     tree gives the same value; generator_dirty lists set files with uncommitted
     or untracked changes, and last_generator_commit is the newest commit that
     touched any set file (stable when a later commit records section 13 values).
+
+Scorer source set (the code the score of record depends on): the same rule from two
+roots, icfr_agent_evals.scorers (the run-time scorers) and icfr_agent_evals.trials (the
+settlement behind trials.figures). It is reported with its combined SHA-256, the files
+outside the generator set, dirty files and the last commit, like the generator set. A
+file whose SHA-256 is not the value section 13 records (RECORDED_FILE_SHA256) is a
+warning, since section 13 re-records it at the tag.
 """
 
 from __future__ import annotations
@@ -57,6 +64,12 @@ from importlib import metadata
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 PACKAGE = "icfr_agent_evals"
 CLOSURE_ROOT = "icfr_agent_evals.dataset"
+SCORER_ROOTS = ("icfr_agent_evals.scorers", "icfr_agent_evals.trials")
+# File SHA-256 values section 13 records before the tag, each re-recorded at the tag; a
+# difference is a warning (re-record it), not a mismatch.
+RECORDED_FILE_SHA256 = {
+    "icfr_agent_evals/narrative.py": "985a01df13700c96959aaf2520269848100be38162521177c8f87d05698942e2",
+}
 SPLITS = ("dev", "ci", "eval")
 
 # Values the pre-registration states, checked against what the code produces.
@@ -145,6 +158,19 @@ def generator_source_files(root: pathlib.Path = ROOT, start: str = CLOSURE_ROOT)
     if start not in seen:
         raise FileNotFoundError(f"closure root {start!r} not found under {root}")
     return sorted(p.relative_to(root).as_posix() for p in seen.values())
+
+
+def scorer_source_files(root: pathlib.Path = ROOT) -> list[str]:
+    """Repo-relative paths of the scorer source set: the static import closures of the run-time
+    scorers and of the settlement that computes the score of record (trials.figures), by the
+    generator set's rule. It overlaps the generator set; scorer_only lists the files outside it."""
+    return sorted(set().union(*(generator_source_files(root, start) for start in SCORER_ROOTS)))
+
+
+def recorded_file_warnings(hashes: dict[str, str]) -> list[str]:
+    """One warning per file whose SHA-256 is not the value section 13 records for it."""
+    return [f"{rel} SHA-256 {hashes.get(rel)} is not the section 13 value {want}; re-record it at the tag"
+            for rel, want in RECORDED_FILE_SHA256.items() if hashes.get(rel) != want]
 
 
 def combine_hashes(file_hashes: dict[str, str]) -> str:
@@ -240,6 +266,18 @@ def collect(root: pathlib.Path = ROOT) -> dict:
         if "-" in value.partition("-")[2]:
             warnings.append(f"{name} {value} carries a pre-release label")
 
+    spaths = scorer_source_files(root)
+    shashes = file_hashes(spaths, root)
+    sgit = git_facts(spaths, root)
+    scorer = {"source_files": shashes, "source_sha256": combine_hashes(shashes),
+              "scorer_only": sorted(set(spaths) - set(paths)), "last_scorer_commit": sgit["last_generator_commit"],
+              "scorer_dirty": sgit["generator_dirty"], "head_source_sha256": sgit["head_source_sha256"]}
+    if scorer["scorer_dirty"]:
+        warnings.append(f"scorer source files have uncommitted changes: {scorer['scorer_dirty']}")
+    if scorer["head_source_sha256"] and scorer["head_source_sha256"] != scorer["source_sha256"]:
+        warnings.append("working-tree scorer source SHA-256 differs from HEAD")
+    warnings.extend(recorded_file_warnings(shashes))
+
     seeds = {"eval_seed": EVAL_SEED, "split_seeds": {s: split_seed(s, EVAL_SEED) for s in ALL_SPLITS}}
     if EVAL_SEED != PREREGISTERED["eval_seed"]:
         mismatches.append(f"EVAL_SEED {EVAL_SEED} != pre-registered {PREREGISTERED['eval_seed']}")
@@ -320,6 +358,7 @@ def collect(root: pathlib.Path = ROOT) -> dict:
 
     return {
         "generator": generator,
+        "scorer": scorer,
         "seeds": seeds,
         "splits": splits,
         "dataset": dataset,
@@ -351,6 +390,10 @@ def to_markdown(v: dict) -> str:
          f"is the owner's entry"),
         ("Extractor vocabulary (rubric row)",
          f"vocab_sha256() {v['related']['vocab_sha256']}"),
+        ("Scorer source set (proposed rubric row sentence)",
+         f"scorer source SHA-256 {v['scorer']['source_sha256']} over {len(v['scorer']['source_files'])} files, "
+         f"defined in `scripts/tag_values.py`; last scorer commit {v['scorer']['last_scorer_commit']}; outside the "
+         "generator set: " + ", ".join(f"`{f}` {v['scorer']['source_files'][f]}" for f in v["scorer"]["scorer_only"])),
     ]
     out = ["| Item | Value at tag (draft) |", "|---|---|"]
     out += [f"| {item} | {value} |" for item, value in rows]
