@@ -119,7 +119,7 @@ def classify(units, members):
     return units, members
 
 
-def build(tmp_path, *, n_runs=2, fm_route="none", name="packet", narr_only=False):
+def build(tmp_path, *, n_runs=2, fm_route="none", name="packet", narr_only=False, scope="hard"):
     """A synthetic packet. Every run: case-a epoch 1 (narrative A with a sweep finding and an
     amount finding, shared by all runs) and its own case-u<i> narrative with one amount
     finding. Run R1 also: case-a epoch 2 (same narrative and findings), case-b epoch 1 (only
@@ -127,7 +127,8 @@ def build(tmp_path, *, n_runs=2, fm_route="none", name="packet", narr_only=False
     or "skip" adds case-d epoch 1 on R1: FM-001 with an amount route, as a finding or skipped.
     narr_only adds narrative-only units (no route, no code): case-h on R1 epochs 1 and 2 with
     one narrative, and the same narrative again on R2 epoch 1 (one unit across both runs), and
-    case-i on R1 epoch 1 with a different narrative (a second unit)."""
+    case-i on R1 epoch 1 with a different narrative (a second unit). scope is the recorded
+    whole-narrative scope: hard by default (D-J option b); routed packets are refused at freeze."""
     tmp_path = Path(tmp_path)
     tmp_path.mkdir(parents=True, exist_ok=True)
     runs, units, members = [], [], []
@@ -190,7 +191,7 @@ def build(tmp_path, *, n_runs=2, fm_route="none", name="packet", narr_only=False
             members.append(_member(n_h.unit_id, "narrative", runs[1].run_id, "case-h", 1))
     units, members = classify(units, members)
     cases = tuple(sorted({u.case_id for u in units}))
-    packet = rp.Packet(run_id="dev-test-run", seed=SEED, scope="hard" if narr_only else "routed",
+    packet = rp.Packet(run_id="dev-test-run", seed=SEED, scope=scope,
                        fm_epoch_routes="skip" if fm_route == "skip" else "findings", runs=tuple(runs),
                        case_order=cases, units=tuple(units), members=rp._sort_members(members),
                        case_facts={c: () for c in cases}, case_inputs={c: f"Case file text for {c}." for c in cases})
@@ -1185,6 +1186,40 @@ def test_manifest_counts_narrative_units_by_class(tmp_path, monkeypatch, capsys)
     assert sum(c["narrative_members_by_class"].values()) == c["narrative_members"]
     assert man["whole_narrative_scope"] == "hard"
     assert set(man["verdict_distribution_by_route_class"]) == {"narrative_sweep", "code_review"}
+
+
+@pytest.mark.parametrize("narr_only", [False, True])
+def test_d_j_freeze_refuses_a_routed_scope_packet(tmp_path, monkeypatch, capsys, narr_only):
+    env = build(tmp_path, scope="routed", narr_only=narr_only)
+    filled = fill(env)
+    gaps = gaps_of(env, filled)
+    assert len(gaps) == 1 and gaps[0].startswith("D-J:") and "'routed'" in gaps[0]
+    assert "hard or all" in gaps[0]
+    # validate gates the freeze, so both commands refuse and nothing is written
+    assert rf.main(["validate", "--packet-dir", str(env.dir), "--filled", str(filled)]) == rf.EXIT_REFUSED
+    assert "D-J" in capsys.readouterr().err
+    code, _, err = do_freeze(monkeypatch, capsys, env, filled)
+    assert code == rf.EXIT_REFUSED and "D-J" in err and "whole-narrative scope is 'routed'" in err
+    for rel in rs.RECORD_FILES.values():
+        assert not (env.dir / rel).exists()
+    assert not (mdir(env) / "dev-test-run-manifest.json").exists()
+
+
+@pytest.mark.parametrize("scope", ["hard", "all"])
+def test_d_j_freeze_accepts_hard_and_all(tmp_path, monkeypatch, capsys, scope):
+    env = build(tmp_path, scope=scope)
+    code, _, err = do_freeze(monkeypatch, capsys, env)
+    assert code == 0, err
+    man = json.loads((mdir(env) / "dev-test-run-manifest.json").read_text(encoding="utf-8"))
+    assert man["whole_narrative_scope"] == scope
+
+
+def test_d_j_scope_check_is_skipped_for_the_second_look_packet(tmp_path):
+    env = build(tmp_path, scope="routed")
+    rec = rf.load_record(str(env.dir), str(fill(env)))
+    assert rf.check_packet_scope(rec) and not rf.validate_record(rec, packet_checks=False)
+    blank = dataclasses.replace(rec, meta={k: v for k, v in rec.meta.items() if k != "scope"})
+    assert "None" in rf.check_packet_scope(blank)[0]
 
 
 def test_a_wrong_narrative_class_is_refused(tmp_path, monkeypatch, capsys):
