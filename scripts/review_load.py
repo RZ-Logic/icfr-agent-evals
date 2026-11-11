@@ -17,15 +17,26 @@ Inputs, all read only:
   --sittings    sittings.csv saved from the review page (columns start,end), read and
                 checked with scripts/review_freeze.py's own sittings code. Without it the
                 script prints the D-G time model on this packet's counts, marked not measured.
-  --answers     optional: the filled answers file. Only the row kind, the date and whether
-                a verdict is filled are read; no verdict value is read or printed. It is
+  --answers     optional: the filled answers file. Only the row kind, the unit id, the date
+                and whether a verdict is blank, not_reviewed or something else are read;
+                no other verdict value is read, and no verdict value is printed. Rows left
+                blank and finding rows marked not_reviewed (the review desk's "Mark the rest
+                not_reviewed" button stamps that day's date on every unanswered finding at
+                once) are not reviewed work: they are left out of the fit by date and out
+                of the dev packet weights the measured time is shared over. The file is
                 used to fit minutes per finding, narrative and audit unit from the time on
-                each date, when the dates allow it.
+                each date, when the dates allow it. Answers saved in the review desk before
+                its 2026-11-11 fix may hold findings the desk filled automatically when
+                their narrative was answered; those carry a date but no review time of
+                their own, and the file cannot tell them apart, so the fit by date is a
+                weak diagnostic and is never used in the range.
 
 How the measured rate is used. The sittings give one total time. The D-G time model
-(section 5 assumptions: 15 to 30 seconds plus 60 to 120 words a minute per narrative,
-30 to 90 seconds per grouped unit, 90 to 180 seconds of case facts per case, 30 to 120
-seconds per audit row) gives each unit kind a weight. The measured total is shared out
+(section 5 and LOAD.md section 3 assumptions: 15 to 30 seconds plus 60 to 120 words a
+minute per narrative; 30 to 90 seconds per flagged sentence, that is per group of finding
+units on one narrative unit and one routed sentence set, plus 10 to 20 seconds for each
+further finding unit on it; 90 to 180 seconds of case facts per case with a route; 30 to
+120 seconds per audit row) gives each unit kind a weight. The measured total is shared out
 by those weights, once with the low weights and once with the high ones, so both splits
 add up to the measured time on the dev packet. Each split is then scaled to the full run:
 per stratum (standard, hard) from the dev case counts to the evaluation split's 146 and 54
@@ -69,10 +80,12 @@ DEV_CASES_DEFAULT: dict[str, int] = {"standard": 8, "hard": 12}   # the 20-case 
 STATED_RANGE_HOURS = (78.0, 259.0)          # section 5, D-G
 STATED_DJ_HOURS = (5.0, 11.0)               # section 5, D-J
 
-# Section 5 (D-G) time assumptions, in seconds, low and high.
+# Section 5 (D-G) time assumptions, in seconds, low and high (LOAD.md section 3): "finding"
+# is the verdict per flagged sentence (one group of finding units), "further_key" each
+# further finding unit on that same sentence.
 TIME_MODEL: dict[str, dict[str, float]] = {
-    "low": {"read_fixed": 15, "wpm": 120, "finding": 30, "case": 90, "audit": 30},
-    "high": {"read_fixed": 30, "wpm": 60, "finding": 90, "case": 180, "audit": 120},
+    "low": {"read_fixed": 15, "wpm": 120, "finding": 30, "further_key": 10, "case": 90, "audit": 30},
+    "high": {"read_fixed": 30, "wpm": 60, "finding": 90, "further_key": 20, "case": 180, "audit": 120},
 }
 # D-G volume assumptions per worker (LOAD.md section 4): route volume against the dev
 # worker, and the high audit rows per worker run.
@@ -113,11 +126,72 @@ class PacketCounts:
     run_id: str
     scope: str
     runs: int
-    by_stratum: dict[str, dict[str, float]]   # stratum -> finding, routed, only, audit, cases, words_routed, words_only
+    # stratum -> finding, finding_groups, routed, only, audit, cases, cases_routed, words_routed, words_only
+    by_stratum: dict[str, dict[str, float]]
     findings: int                             # finding members (before grouping), from summary.json
+    rows: tuple[Mapping[str, str], ...] = ()  # the packet.csv rows the counts come from
 
     def total(self, key: str) -> float:
         return sum(s[key] for s in self.by_stratum.values())
+
+    def without(self, unit_ids: frozenset[str]) -> "PacketCounts":
+        """The same packet with the given units left out (units not reviewed)."""
+        kept = tuple(r for r in self.rows if r["unit_id"] not in unit_ids)
+        by, _, _ = count_rows(kept)
+        return PacketCounts(run_id=self.run_id, scope=self.scope, runs=self.runs, by_stratum=by,
+                            findings=self.findings, rows=kept)
+
+
+def finding_group_key(row: Mapping[str, str]) -> tuple[str, str]:
+    """LOAD.md section 3 groups finding units by flagged sentence: the narrative unit(s) and the
+    routed sentence(s) of the unit, as packet.csv writes them. A unit that routes no sentence is
+    its own group."""
+    sentences = row.get("routed_sentences", "").strip()
+    narratives = row.get("narrative_unit_ids", "").strip()
+    if not sentences or sentences == "[]" or not narratives or narratives == "[]":
+        return ("unit", row["unit_id"])
+    return (narratives, sentences)
+
+
+def count_rows(rows: Sequence[Mapping[str, str]]) -> tuple[dict[str, dict[str, float]], dict[str, set[str]], Counter]:
+    """Counts by stratum, cases with any unit by stratum, and units by row kind."""
+    blank = {"finding": 0.0, "finding_groups": 0.0, "routed": 0.0, "only": 0.0, "audit": 0.0,
+             "words_routed": 0.0, "words_only": 0.0}
+    by: dict[str, dict[str, float]] = {s: dict(blank) for s in EVAL_CASES}
+    cases: dict[str, set[str]] = defaultdict(set)
+    routed_cases: dict[str, set[str]] = defaultdict(set)
+    groups: dict[str, set[tuple[str, str]]] = defaultdict(set)
+    kinds: Counter = Counter()
+    for row in rows:
+        kind = row["row_kind"]
+        if kind not in UNIT_KINDS:
+            raise Refused(f"packet.csv row {row['unit_id']}: unknown row kind {kind!r}")
+        kinds[kind] += 1
+        s = stratum_of(row["case_id"])
+        cases[s].add(row["case_id"])
+        if kind == "finding":
+            by[s]["finding"] += 1
+            groups[s].add(finding_group_key(row))
+            routed_cases[s].add(row["case_id"])
+        elif kind == "fm_audit":
+            by[s]["audit"] += 1
+            routed_cases[s].add(row["case_id"])
+        else:
+            words = len(row["narrative"].split())
+            if row["route_class"] in ROUTED_CLASSES:
+                by[s]["routed"] += 1
+                by[s]["words_routed"] += words
+                routed_cases[s].add(row["case_id"])
+            elif row["route_class"] == rs.NARRATIVE_CLASS_ONLY:
+                by[s]["only"] += 1
+                by[s]["words_only"] += words
+            else:
+                raise Refused(f"packet.csv row {row['unit_id']}: unknown narrative class {row['route_class']!r}")
+    for s in by:
+        by[s]["cases"] = float(len(cases[s]))
+        by[s]["cases_routed"] = float(len(routed_cases[s]))
+        by[s]["finding_groups"] = float(len(groups[s]))
+    return by, cases, kinds
 
 
 def stratum_of(case_id: str) -> str:
@@ -139,33 +213,7 @@ def read_packet(packet_dir: str | Path) -> PacketCounts:
     except (OSError, ValueError) as e:
         raise Refused(f"cannot read the packet in {root}: {e}") from e
     totals = summary.get("totals") or {}
-    blank = {"finding": 0.0, "routed": 0.0, "only": 0.0, "audit": 0.0, "words_routed": 0.0, "words_only": 0.0}
-    by: dict[str, dict[str, float]] = {s: dict(blank) for s in EVAL_CASES}
-    cases: dict[str, set[str]] = defaultdict(set)
-    kinds: Counter = Counter()
-    for row in rows:
-        kind = row["row_kind"]
-        if kind not in UNIT_KINDS:
-            raise Refused(f"packet.csv row {row['unit_id']}: unknown row kind {kind!r}")
-        kinds[kind] += 1
-        s = stratum_of(row["case_id"])
-        cases[s].add(row["case_id"])
-        if kind == "finding":
-            by[s]["finding"] += 1
-        elif kind == "fm_audit":
-            by[s]["audit"] += 1
-        else:
-            words = len(row["narrative"].split())
-            if row["route_class"] in ROUTED_CLASSES:
-                by[s]["routed"] += 1
-                by[s]["words_routed"] += words
-            elif row["route_class"] == rs.NARRATIVE_CLASS_ONLY:
-                by[s]["only"] += 1
-                by[s]["words_only"] += words
-            else:
-                raise Refused(f"packet.csv row {row['unit_id']}: unknown narrative class {row['route_class']!r}")
-    for s in by:
-        by[s]["cases"] = float(len(cases[s]))
+    by, cases, kinds = count_rows(rows)
     gaps = []
     for kind, key in (("finding", "finding_units"), ("narrative", "narrative_units"), ("fm_audit", "audit_units")):
         if totals.get(key) != kinds[kind]:
@@ -182,7 +230,7 @@ def read_packet(packet_dir: str | Path) -> PacketCounts:
         raise Refused("the packet does not match its summary: " + "; ".join(gaps))
     runs = len([k for k in summary if k != "totals"])
     return PacketCounts(run_id=str(meta.get("run_id")), scope=str(meta.get("scope")), runs=runs,
-                        by_stratum=by, findings=int(totals.get("findings") or 0))
+                        by_stratum=by, findings=int(totals.get("findings") or 0), rows=tuple(rows))
 
 
 # --- Sittings and the optional answers file ------------------------------------------------
@@ -200,17 +248,48 @@ def read_sittings(path: str | Path) -> tuple[list[tuple[str, str]], float]:
     return pairs, rf._review_hours(pairs)
 
 
-def answered_by_date(path: str | Path) -> dict[str, Counter]:
-    """Answered rows per date and row kind. Reads row_kind, date and whether verdict is blank."""
+NOT_REVIEWED = "not_reviewed"
+
+
+@dataclass(frozen=True)
+class Answers:
+    """What the answers file says about review work: reviewed rows per date and kind, and the
+    unit ids that were not reviewed (left blank, or a finding marked not_reviewed)."""
+    by_date: dict[str, Counter]
+    not_reviewed_ids: frozenset[str]
+    blank: int
+    marked_not_reviewed: int
+
+
+def read_answers(path: str | Path) -> Answers:
+    """Reads row_kind, unit_id, date and whether verdict is blank or not_reviewed; nothing else of
+    the verdict. A finding marked not_reviewed is not reviewed work (the desk's bulk button
+    stamps that day's date on every unanswered finding at once), so it is not counted."""
     try:
         rows = rs.read_csv(path, rs.RB7_COLUMNS)
     except (OSError, ValueError) as e:
         raise Refused(f"cannot read the answers file: {e}") from e
     out: dict[str, Counter] = defaultdict(Counter)
+    skipped: set[str] = set()
+    blank = marked = 0
     for row in rows:
-        if row["row_kind"] in UNIT_KINDS and row["verdict"].strip():
+        if row["row_kind"] not in UNIT_KINDS:
+            continue
+        verdict = row["verdict"].strip()
+        if not verdict:
+            blank += 1
+            skipped.add(row["unit_id"])
+        elif verdict == NOT_REVIEWED:
+            marked += 1
+            skipped.add(row["unit_id"])
+        else:
             out[row["date"]][row["row_kind"]] += 1
-    return dict(out)
+    return Answers(by_date=dict(out), not_reviewed_ids=frozenset(skipped), blank=blank, marked_not_reviewed=marked)
+
+
+def answered_by_date(path: str | Path) -> dict[str, Counter]:
+    """Reviewed rows per date and row kind: blank and not_reviewed rows are not counted."""
+    return read_answers(path).by_date
 
 
 def seconds_by_date(pairs: Sequence[tuple[str, str]]) -> dict[str, float]:
@@ -259,26 +338,37 @@ def narrative_seconds(words: float, units: float, m: Mapping[str, float]) -> flo
     return units * m["read_fixed"] + words / m["wpm"] * 60
 
 
+def finding_seconds(pc: PacketCounts, m: Mapping[str, float]) -> float:
+    """LOAD.md section 3: the verdict rate per flagged sentence (group), plus the further-key
+    rate for each further finding unit on that sentence."""
+    groups, units = pc.total("finding_groups"), pc.total("finding")
+    return groups * m["finding"] + (units - groups) * m["further_key"]
+
+
 def dev_model_seconds(pc: PacketCounts, m: Mapping[str, float]) -> dict[str, float]:
-    """The D-G model's seconds for the dev packet as one sitting set: case facts once per case."""
+    """The D-G model's seconds for the dev packet as one sitting set: case facts once per case
+    with a route."""
     return {
         "narrative_routed": narrative_seconds(pc.total("words_routed"), pc.total("routed"), m),
         "narrative_only": narrative_seconds(pc.total("words_only"), pc.total("only"), m),
-        "finding": pc.total("finding") * m["finding"],
-        "case": pc.total("cases") * m["case"],
+        "finding": finding_seconds(pc, m),
+        "case": pc.total("cases_routed") * m["case"],
         "audit": pc.total("audit") * m["audit"],
     }
 
 
 def unit_seconds(pc: PacketCounts, m: Mapping[str, float], scale: float) -> dict[str, float]:
-    """Seconds per unit of each kind: the model's, times the measured scale (1 when unmeasured)."""
+    """Seconds per unit of each kind: the model's, times the measured scale (1 when unmeasured).
+    A finding unit's seconds are the packet's mean under the per-sentence rule, so the projection
+    keeps this packet's share of further keys."""
     def per(words_key: str, units_key: str) -> float:
         n = pc.total(units_key)
         return narrative_seconds(pc.total(words_key), n, m) / n if n else m["read_fixed"]
+    n_find = pc.total("finding")
     return {
         "narrative_routed": per("words_routed", "routed") * scale,
         "narrative_only": per("words_only", "only") * scale,
-        "finding": m["finding"] * scale,
+        "finding": (finding_seconds(pc, m) / n_find if n_find else m["finding"]) * scale,
         "case": m["case"] * scale,
         "audit": m["audit"] * scale,
     }
@@ -293,7 +383,7 @@ def projected_per_worker(pc: PacketCounts, dev_cases: Mapping[str, int]) -> dict
         if counts["cases"] > dev_cases[s]:
             raise Refused(f"the packet holds {int(counts['cases'])} {s} cases, more than --dev-cases {dev_cases[s]}")
         f = EVAL_CASES[s] / dev_cases[s]
-        for key in ("finding", "routed", "only", "audit", "cases"):
+        for key in ("finding", "routed", "only", "audit", "cases", "cases_routed"):
             out[key] += counts[key] * f
     return dict(out)
 
@@ -311,10 +401,10 @@ def project(pc: PacketCounts, per_unit: Mapping[str, Mapping[str, float]],
             k = ROUTE_MULTIPLIER[case][w]
             routed, findings = p["routed"] * k, p["finding"] * k
             if case == "low":
-                case_s = p["cases"] * t["case"] / len(WORKERS)   # read once per case for all four workers
+                case_s = p["cases_routed"] * t["case"] / len(WORKERS)   # once per routed case for all four
                 audit_rows = p["audit"]
             else:
-                case_s = p["cases"] * t["case"]                  # once per case per worker
+                case_s = p["cases_routed"] * t["case"]                  # once per routed case per worker
                 audit_rows = max(p["audit"] * k, HIGH_AUDIT_ROWS[w])
             n2 = max(SECOND_LOOK_FLOOR, math.ceil(SECOND_LOOK_SHARE * routed))
             parts = {
@@ -334,12 +424,18 @@ def project(pc: PacketCounts, per_unit: Mapping[str, Mapping[str, float]],
 
 
 def derive(pc: PacketCounts, sittings: Sequence[tuple[str, str]] | None, hours: float | None,
-           dev_cases: Mapping[str, int], answered: Mapping[str, Counter] | None = None) -> dict[str, Any]:
+           dev_cases: Mapping[str, int], answers: Answers | None = None) -> dict[str, Any]:
     measured = sittings is not None
-    units_dev = pc.total("finding") + pc.total("routed") + pc.total("only") + pc.total("audit")
+    # The measured time is shared over the work done: units the answers file leaves blank or
+    # marks not_reviewed are left out of the dev weights (never out of the projection).
+    reviewed = pc.without(answers.not_reviewed_ids) if (measured and answers is not None) else pc
+    units_dev = (reviewed.total("finding") + reviewed.total("routed") + reviewed.total("only")
+                 + reviewed.total("audit"))
+    if measured and units_dev <= 0:
+        raise Refused("the answers file leaves every packet unit unreviewed; no measured rate can be derived")
     per_unit, scales, dev_model_hours = {}, {}, {}
     for case, m in TIME_MODEL.items():
-        dev_s = dev_model_seconds(pc, m)
+        dev_s = dev_model_seconds(reviewed, m)
         dev_model_hours[case] = sum(dev_s.values()) / 3600
         scale = (hours * 3600 / sum(dev_s.values())) if measured else 1.0
         scales[case] = scale
@@ -348,6 +444,7 @@ def derive(pc: PacketCounts, sittings: Sequence[tuple[str, str]] | None, hours: 
         "basis": "measured" if measured else "model only (no sittings: the D-G assumptions, not measured)",
         "packet": {"run_id": pc.run_id, "scope": pc.scope, "worker_runs": pc.runs,
                    "finding_units": pc.total("finding"), "findings": pc.findings,
+                   "finding_groups": pc.total("finding_groups"), "cases_routed": pc.total("cases_routed"),
                    "narrative_units_routed": pc.total("routed"), "narrative_units_only": pc.total("only"),
                    "audit_units": pc.total("audit"), "cases": pc.total("cases"),
                    "mean_words_routed": pc.total("words_routed") / pc.total("routed") if pc.total("routed") else 0,
@@ -362,9 +459,13 @@ def derive(pc: PacketCounts, sittings: Sequence[tuple[str, str]] | None, hours: 
         "projection": project(pc, per_unit, dev_cases),
         "stated": {"range_hours": STATED_RANGE_HOURS, "dj_hours": STATED_DJ_HOURS},
         "fit": None,
+        "answers": None,
     }
-    if measured and answered is not None:
-        result["fit"] = fit_by_date(sittings, answered)
+    if measured and answers is not None:
+        result["fit"] = fit_by_date(sittings, answers.by_date)
+        result["answers"] = {"blank": answers.blank, "marked_not_reviewed": answers.marked_not_reviewed,
+                             "units_left_out_of_weights": len(pc.rows) - len(reviewed.rows),
+                             "reviewed_units": units_dev}
     return result
 
 
@@ -387,13 +488,17 @@ def format_report(r: Mapping[str, Any]) -> str:
     L.append("")
     L.append("| Unit kind | Standard | Hard | All |")
     L.append("|---|---:|---:|---:|")
-    names = (("finding", "Finding units"), ("routed", "Narrative units, routed or FM-coded"),
-             ("only", "Narrative units, narrative-only (D-J)"), ("audit", "Audit units"), ("cases", "Cases"))
+    names = (("finding", "Finding units"), ("finding_groups", "Flagged sentences (finding units grouped)"),
+             ("routed", "Narrative units, routed or FM-coded"),
+             ("only", "Narrative units, narrative-only (D-J)"), ("audit", "Audit units"), ("cases", "Cases"),
+             ("cases_routed", "Cases with a route"))
     for key, label in names:
         st, hd = pk["by_stratum"]["standard"][key], pk["by_stratum"]["hard"][key]
         L.append(f"| {label} | {st:.0f} | {hd:.0f} | {st + hd:.0f} |")
     L.append("")
-    L.append(f"{pk['findings']} findings sit in {pk['finding_units']:.0f} finding units. Mean words per narrative: "
+    L.append(f"{pk['findings']} findings sit in {pk['finding_units']:.0f} finding units on "
+             f"{pk['finding_groups']:.0f} flagged sentences (narrative unit and routed sentences, as packet.csv "
+             "writes them; a unit that routes no sentence is its own). Mean words per narrative: "
              f"{pk['mean_words_routed']:.1f} routed, {pk['mean_words_only']:.1f} narrative-only.")
     L.append("")
     L.append("## Rates")
@@ -405,8 +510,18 @@ def format_report(r: Mapping[str, Any]) -> str:
                  f"{r['measured_to_model']['low']:.2f} times the low model and "
                  f"{r['measured_to_model']['high']:.2f} times the high model.")
         L.append("")
-        L.append(f"Blended: {r['blended_minutes_per_unit']:.2f} minutes per unit over every finding, narrative "
-                 "and audit unit, case facts included.")
+        L.append(f"Blended: {r['blended_minutes_per_unit']:.2f} minutes per unit over every reviewed finding, "
+                 "narrative and audit unit, case facts included.")
+        ans = r.get("answers")
+        if ans is not None:
+            L.append("")
+            L.append(f"Answers file: {ans['marked_not_reviewed']} finding row(s) marked not reviewed and "
+                     f"{ans['blank']} row(s) left blank are not reviewed work. They are left out of the fit by date "
+                     f"and out of the dev weights the measured time is shared over ({ans['reviewed_units']:.0f} "
+                     "reviewed units). They stay in the projection, since a full run reviews every unit.")
+        else:
+            L.append("")
+            L.append("No answers file: every packet unit is taken as reviewed in the sittings' time.")
     else:
         L.append(f"No sittings file: no time is measured yet. The D-G model gives "
                  f"{r['dev_model_hours']['low']:.2f} hours (low) to {r['dev_model_hours']['high']:.2f} hours "
@@ -414,9 +529,10 @@ def format_report(r: Mapping[str, Any]) -> str:
     L.append("")
     L.append("| Minutes per unit | Low split | High split |")
     L.append("|---|---:|---:|")
-    labels = (("finding", "Finding unit (verdict)"), ("narrative_routed", "Narrative unit, routed (whole read)"),
+    labels = (("finding", "Finding unit (verdict; mean of sentence and further-key rates)"),
+              ("narrative_routed", "Narrative unit, routed (whole read)"),
               ("narrative_only", "Narrative unit, narrative-only (D-J)"), ("audit", "Audit unit"),
-              ("case", "Case facts, per case"))
+              ("case", "Case facts, per case with a route"))
     for key, label in labels:
         L.append(f"| {label} | {r['minutes_per_unit']['low'][key]:.2f} | {r['minutes_per_unit']['high'][key]:.2f} |")
     L.append("")
@@ -434,13 +550,19 @@ def format_report(r: Mapping[str, Any]) -> str:
                      f"{fit['rms_residual_minutes']:.1f} minutes per date. Shown beside the range, not used in it.")
         else:
             L.append(f"Fit by date not possible: {fit['why']}.")
+        L.append("")
+        L.append("The fit is a weak diagnostic. Answers saved in the review desk before its 2026-11-11 fix may "
+                 "hold findings the desk filled automatically when their narrative was answered. Those rows carry "
+                 "the day's date but no review time of their own, and the answers file cannot tell them apart from "
+                 "findings answered by hand.")
     L.append("")
     L.append("## Scaled to a full run (four workers, 200 cases, 4 epochs)")
     L.append("")
     p = proj["per_worker_units"]
     L.append(f"Per worker run, at the dev worker's routing: {p['finding']:,.0f} finding units, "
              f"{p['routed']:,.0f} routed narratives, {p['only']:,.0f} narrative-only narratives, "
-             f"{p['audit']:,.0f} audit rows, {p['cases']:,.0f} cases with units.")
+             f"{p['audit']:,.0f} audit rows, {p['cases']:,.0f} cases with units, {p['cases_routed']:,.0f} of them "
+             "with a route.")
     L.append("")
     L.append("| Worker | Low hours | High hours |")
     L.append("|---|---:|---:|")
@@ -466,7 +588,9 @@ def format_report(r: Mapping[str, Any]) -> str:
     L.append("")
     L.append("Assumptions: each stratum scaled from its dev cases to 146 standard and 54 hard evaluation cases; "
              "route volume 1.00 for every worker (low) or 1.00, 1.05, 1.25 and 1.25 for Sonnet 5.5, Haiku 5.5, "
-             "Sonnet 5 and Opus 5.5 (high); case facts once per case for all four workers (low) or per worker "
+             "Sonnet 5 and Opus 5.5 (high); finding verdicts at 30 or 90 s per flagged sentence plus 10 or 20 s "
+             "per further key on it (LOAD.md section 3), at this packet's share of further keys; case facts once "
+             "per case with a route for all four workers (low) or per worker "
              "(high); audit rows as scaled (low) or at least 70, 200, 70 and 70 (high); second look max(100, 10 "
              "percent) routed narrative units per worker run, each with its findings; narrative-only reads not "
              "scaled by route volume. Not included: transcript reading, breaks, the review tool's code work.")
@@ -523,8 +647,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise Refused("--answers needs --sittings")
         pc = read_packet(args.packet_dir)
         pairs, hours = read_sittings(args.sittings) if args.sittings else (None, None)
-        answered = answered_by_date(args.answers) if args.answers else None
-        result = derive(pc, pairs, hours, args.dev_cases, answered)
+        answers = read_answers(args.answers) if args.answers else None
+        result = derive(pc, pairs, hours, args.dev_cases, answers)
         text = format_report(result)
         if args.json_out:
             Path(args.json_out).write_text(json.dumps(result, indent=1, sort_keys=True, default=str) + "\n",
