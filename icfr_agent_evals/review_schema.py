@@ -31,15 +31,25 @@ ERROR_TYPES: tuple[str, ...] = (
 )
 AUDIT_VERDICTS: tuple[str, ...] = ("real_error", "extractor_error")  # note always required
 WHOLE_NARRATIVE_SCOPES: tuple[str, ...] = ("routed", "hard", "all")
-DEFAULT_WHOLE_NARRATIVE_SCOPE = "routed"  # D-J, open
+DEFAULT_WHOLE_NARRATIVE_SCOPE = "hard"  # D-J option (b), ruled 2026-11-10: routed, FM-coded and every hard-case epoch
 FM_EPOCH_ROUTE_MODES: tuple[str, ...] = ("findings", "skip")
-DEFAULT_FM_EPOCH_ROUTES = "findings"  # D-H, open
+DEFAULT_FM_EPOCH_ROUTES = "findings"  # D-H, ruled 2026-11-10
 MEMBER_KINDS: tuple[str, ...] = ("finding", "narrative", "fm_audit", "unsettleable", "fm_epoch_route_skipped")
 MEMBER_COLUMNS: tuple[str, ...] = (
     "unit_id", "member_kind", "run_id", "sample_id", "epoch", "route_key",
     "route_class", "scorers", "reasons", "fm_codes",
 )
 UNIT_PREFIX: dict[str, str] = {"finding": "F", "narrative": "N", "fm_audit": "A"}
+# Class of a narrative unit or narrative member, written in the route_class column of packet.csv
+# and members.csv (a finding keeps narrative_sweep or code_review). Per epoch: routed when the
+# epoch carries a finding or an unsettleable route; fm_coded when it carries an FM code and no
+# such route; narrative_only when it has neither (a D-J unit on a difficulty-bearing case, read
+# whole with no findings, never sampled for the second look). A narrative unit takes the first
+# class, in this order, that any of its member epochs has.
+NARRATIVE_CLASS_ROUTED = "routed"
+NARRATIVE_CLASS_FM_CODED = "fm_coded"
+NARRATIVE_CLASS_ONLY = "narrative_only"
+NARRATIVE_CLASSES: tuple[str, ...] = (NARRATIVE_CLASS_ROUTED, NARRATIVE_CLASS_FM_CODED, NARRATIVE_CLASS_ONLY)
 
 FORBIDDEN_FACT_WORDS: frozenset[str] = frozenset({
     "correct", "correctly", "incorrect", "wrong", "right", "true", "false", "likely", "unlikely",
@@ -112,6 +122,23 @@ def model_hint_hits(text: str) -> list[str]:
     """MODEL_HINT_WORDS found as whole words (no letter or digit either side),
     case-insensitive; given lower-case, sorted, distinct."""
     return sorted({m.group(0).casefold() for m in _MODEL_HINT_RE.finditer(str(text))})
+
+
+def epoch_narrative_class(routed: bool, fm_coded: bool) -> str:
+    """The narrative class of one epoch: routed, else fm_coded, else narrative_only."""
+    if routed:
+        return NARRATIVE_CLASS_ROUTED
+    return NARRATIVE_CLASS_FM_CODED if fm_coded else NARRATIVE_CLASS_ONLY
+
+
+def unit_narrative_class(member_classes: Iterable[str]) -> str:
+    """The class of a narrative unit from the classes of its member epochs: the first of
+    NARRATIVE_CLASSES any member has. A blank or unknown class raises ValueError."""
+    classes = set(member_classes)
+    unknown = classes - set(NARRATIVE_CLASSES)
+    if unknown or not classes:
+        raise ValueError(f"narrative member classes must be drawn from {NARRATIVE_CLASSES}, got {sorted(classes)}")
+    return next(c for c in NARRATIVE_CLASSES if c in classes)
 
 
 def unit_id(seed: int, row_kind: str, group_key: str) -> str:

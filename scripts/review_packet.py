@@ -2,8 +2,8 @@
 
 Usage:
   python scripts/review_packet.py --run LABEL=PATH [--run LABEL=PATH ...] --out DIR --seed INT --run-id ID
-         [--whole-narrative-scope routed|hard|all]   default routed (D-J, open)
-         [--fm-epoch-routes findings|skip]           default findings (D-H, open)
+         [--whole-narrative-scope routed|hard|all]   default hard (D-J option b, ruled 2026-11-10)
+         [--fm-epoch-routes findings|skip]           default findings (D-H, ruled 2026-11-10)
 
 Pre-registration section 6 (Review settlement, Whole-narrative read, mandatory code
 audit) and section 8 (Review record and freeze). The packet is what the reviewer
@@ -11,7 +11,13 @@ reads: every settleable review route on every epoch is a finding member; members
 with the same case, route key, routed sentence text, reasons, cited items and
 structured fields form one finding unit, shown once, given one verdict. Every
 routed or FM-coded epoch's narrative is read whole once per distinct narrative,
-and every (FM-coded epoch, code) gets its own audit unit.
+and every (FM-coded epoch, code) gets its own audit unit. With the default scope
+(hard, owner decision D-J option b) every unrouted, uncoded epoch of the 54
+difficulty-bearing cases also gets a narrative-only unit: one per distinct narrative,
+a whole-narrative row and no findings. Narrative units and narrative members say what
+they are in the route_class column of packet.csv and members.csv: routed, fm_coded or
+narrative_only (review_schema.NARRATIVE_CLASSES). The scope routed keeps routed and
+FM-coded epochs only; all adds every epoch of every case.
 
 What this script never does: it never sets, suggests or pre-selects a verdict; it
 never shows a comparison between a worker claim and the case file (facts come from
@@ -452,7 +458,8 @@ def _is_hard_case(sample: Any) -> bool:
     return consistency.SUBSET_OF_KIND.get(kind) == consistency.DIFFICULTY_BEARING
 
 
-def build_packet(runs: Sequence[RunInput], *, run_id: str, seed: int, scope: str = "routed",
+def build_packet(runs: Sequence[RunInput], *, run_id: str, seed: int,
+                 scope: str = rs.DEFAULT_WHOLE_NARRATIVE_SCOPE,
                  fm_epoch_routes: str = "findings") -> Packet:
     """Group every run's routes, narratives and FM codes into review units. Pure apart
     from one stderr line per unlisted route key; never sets a verdict."""
@@ -511,8 +518,14 @@ def build_packet(runs: Sequence[RunInput], *, run_id: str, seed: int, scope: str
             route_members.append(Member("", kind, run.run_id, sid, ep, key, str(g["cls"]),
                                         tuple(sorted(g["scorers"])), reasons, fm_codes))
 
-    # Whole-narrative scope (D-J).
+    # Whole-narrative scope (D-J, option b). A routed epoch is one carrying a finding or an
+    # unsettleable route; a skipped FM-epoch route sits on an FM-coded epoch, so that epoch
+    # is fm_coded. An epoch with neither a route nor a code is narrative_only.
     routed = {(m.run_id, m.sample_id, m.epoch) for m in route_members}
+    routed_for_class = {(m.run_id, m.sample_id, m.epoch) for m in route_members
+                        if m.member_kind in ("finding", "unsettleable")}
+    class_of = {ident: rs.epoch_narrative_class(ident in routed_for_class, bool(e.fm_codes))
+                for ident, e in epochs.items()}
     in_scope: list[tuple[str, str, int]] = []
     for ident, e in epochs.items():
         if scope == "all" or ident in routed or e.fm_codes or (scope == "hard" and hard_case[e.case_id]):
@@ -549,9 +562,12 @@ def build_packet(runs: Sequence[RunInput], *, run_id: str, seed: int, scope: str
                               m.scorers, m.reasons, m.fm_codes))
 
     # Narrative members.
+    unit_classes: dict[str, set[str]] = defaultdict(set)
     for ident in in_scope:
         e = epochs[ident]
-        members.append(Member(narr_key_of[ident], "narrative", e.run_id, e.case_id, e.epoch, fm_codes=e.fm_codes))
+        unit_classes[narr_key_of[ident]].add(class_of[ident])
+        members.append(Member(narr_key_of[ident], "narrative", e.run_id, e.case_id, e.epoch,
+                              route_class=class_of[ident], fm_codes=e.fm_codes))
 
     # Audit units: one per (run, sample, epoch, FM code), never grouped (pre-reg section 6).
     # The id hashes the narrative unit, the code and a member ordinal, never the run or the
@@ -574,6 +590,7 @@ def build_packet(runs: Sequence[RunInput], *, run_id: str, seed: int, scope: str
         e = g["epoch"]
         built[uid] = Unit(
             unit_id=uid, row_kind="narrative", case_id=e.case_id, narrative=e.text,
+            route_class=rs.unit_narrative_class(unit_classes[uid]),
             sentences=rs.narrative_sentences(e.text), parsed_ok=e.parsed is not None,
             structured=_structured(e.parsed), allowed_verdicts=rs.NARRATIVE_VERDICTS,
             facts=tuple(rf.output_facts(case_meta[e.case_id], e.parsed)),
@@ -737,6 +754,19 @@ def blank_verdict_rows(packet: Packet) -> list[dict[str, str]]:
 
 # --- Summary (sealed) -------------------------------------------------------------------------
 
+def _by_narrative_class(counter: Mapping[str, int]) -> dict[str, int]:
+    return {c: int(counter.get(c, 0)) for c in rs.NARRATIVE_CLASSES}
+
+
+def _units_by_narrative_class(narr: Sequence[Member]) -> dict[str, int]:
+    """Distinct narrative units by class; a unit's class comes from its member epochs
+    among `narr` (so a per-run count reads that run's members only)."""
+    classes: dict[str, set[str]] = defaultdict(set)
+    for m in narr:
+        classes[m.unit_id].add(m.route_class)
+    return _by_narrative_class(Counter(rs.unit_narrative_class(c) for c in classes.values()))
+
+
 def _counts(members: Sequence[Member]) -> dict[str, Any]:
     findings = [m for m in members if m.member_kind == "finding"]
     narr = [m for m in members if m.member_kind == "narrative"]
@@ -749,7 +779,9 @@ def _counts(members: Sequence[Member]) -> dict[str, Any]:
         "finding_units_touching_run": len(units),
         "grouping_ratio": round(len(findings) / len(units), 3) if units else None,
         "narrative_members": len(narr),
+        "narrative_members_by_class": _by_narrative_class(Counter(m.route_class for m in narr)),
         "narrative_units_touching_run": len({m.unit_id for m in narr}),
+        "narrative_units_by_class": _units_by_narrative_class(narr),
         "fm_audit_rows": sum(1 for m in members if m.member_kind == "fm_audit"),
         "unsettleable_by_key": dict(sorted(Counter(m.route_key for m in members
                                                    if m.member_kind == "unsettleable").items())),
@@ -1527,9 +1559,12 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--seed", type=int, required=True, help="packet seed (case order, unit order, unit ids)")
     p.add_argument("--run-id", required=True, help="record id; names no model")
     p.add_argument("--whole-narrative-scope", default=rs.DEFAULT_WHOLE_NARRATIVE_SCOPE,
-                   choices=rs.WHOLE_NARRATIVE_SCOPES, help="D-J (open): which epochs get the whole-narrative read")
+                   choices=rs.WHOLE_NARRATIVE_SCOPES,
+                   help="D-J option b (ruled 2026-11-10), default hard: routed and FM-coded epochs on every case "
+                        "plus every unrouted, uncoded epoch of the 54 difficulty-bearing cases (narrative-only "
+                        "units); routed is routed and FM-coded only; all is every epoch")
     p.add_argument("--fm-epoch-routes", default=rs.DEFAULT_FM_EPOCH_ROUTES, choices=rs.FM_EPOCH_ROUTE_MODES,
-                   help="D-H (open): routes on an FM-coded epoch are findings, or skipped")
+                   help="D-H (ruled 2026-11-10): routes on an FM-coded epoch are findings, or skipped")
     return p
 
 
@@ -1571,7 +1606,8 @@ def _totals_lines(packet: Packet) -> list[str]:
         f"findings: {t['findings']} on {t['route_keys']} route keys; finding units: {t['finding_units']}; "
         f"grouping ratio: {t['grouping_ratio']}",
         f"unsettleable route members: {unsettleable}; skipped FM-epoch route members: {t['fm_epoch_routes_skipped']}",
-        f"narrative members: {t['narrative_members']}; narrative units: {t['narrative_units']}",
+        f"narrative members: {t['narrative_members']}; narrative units: {t['narrative_units']}; "
+        f"narrative units by class: {t['narrative_units_by_class']}",
         f"audit units: {t['audit_units']}; cases with units: {t['cases_with_units']}",
         f"scope: {packet.scope}; fm-epoch routes: {packet.fm_epoch_routes}",
     ]
