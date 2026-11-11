@@ -1,0 +1,102 @@
+{
+  "manifest_version": "1",
+  "kind": "review_freeze",
+  "run_id": "pilot-2026-11-11",
+  "run_commit": "5655380700d4cf149ad9cc12d4ffc137b5e5df71",
+  "vocab_sha256": "460469b6bfe2bdafa3c75f5c45bc2be394dc52bfeb02b602272e6d76a7300a26",
+  "settlement_table_sha256": "17734db8dc6c68a039fbbdc4d2d3d3ff6011c76f90a15e99418ff1b49253323f",
+  "settlement_py_sha256": "743ca4d81fc8e8fdc11201d0dc586242af57e95749fc85c553bf4535dba5c8a5",
+  "tool_sha256": {
+    "review_schema.py": "34d949e36fbc1bc5a974cf2f531a7d67fa0cd05d64628eac7bc84d6f3fb22d0e",
+    "review_packet.py": "ada6c51737cb585ccd5decb61a1a2fcd0370016589f7acb15cdd68ee02928278",
+    "review_facts.py": "1a1dddccada5f7a9f0212e84a37fcaf8b2d988f5914a779ddf3e37f7495b29c7",
+    "review_freeze.py": "ee5a2c1b572a0f7ea3e9505e66cbef649ea53acb914f8911e09ef7bbf58fbdd9"
+  },
+  "logs": [
+    {
+      "file_name": "sonnet55-v004.eval",
+      "sha256": "308302c7257a2b834f73d788219f2d8b9febb650725e235a2965345e92cd6586",
+      "eval_id": "JPZf3MBBpQVNR9UseNDS2Q",
+      "log_revision_commit": "59128ba"
+    }
+  ],
+  "private_files": {
+    "reviewer/packet.html": "c128f3ef4e754f98de930e3fff6e3f2be28c18058bad9a21bed0e1605714adcb",
+    "reviewer/packet.csv": "c27003edcfb2294120875604e7a63fe73a7de66d52cf2233cbdde903990d6096",
+    "reviewer/cases.csv": "65350e61d6c951373af5ea76197633c01ffc512dbc72afb3df1e34b2bab0686d",
+    "reviewer/verdicts-blank.csv": "0b73d6d653e0101a30f198c5f4b1afd92f904736fe4e9c99943e77d70aeea240",
+    "sealed/members.csv": "1e4c20502e2f73bc12899c0cc0ba5af0cd7af1c3a2b5d4f7074fcb4eaf4748fb",
+    "sealed/runs.json": "2b897917361fd1838a03e405e2258f28defaac1553538c2bb6c1f8122bfc4645",
+    "sealed/summary.json": "06f04c2e3a39932823826c1513bfe7133d02638adda30b236a42282627583d77",
+    "packet-meta.json": "f3ff39dab6714ac4966619b304a05e66906b665f6b01c418ae306bc165c8b18c",
+    "verdicts.csv": "aa1d4af52b54161778e2735fbc064464cc64d4ba8807427dd41f0d35234a30b8",
+    "fm_audit.csv": "4f4943465c3f76d2f2ff13d4a4aaf653ea71249d03a573fb21d43d4f6403e091",
+    "sittings.csv": "524dda276cce2933b4a4021ae397e38f6f10d0f3dc7c8a591cfaceda568133e3"
+  },
+  "packet_seed": 20261111,
+  "whole_narrative_scope": "hard",
+  "fm_epoch_routes": "findings",
+  "counts": {
+    "finding_units_by_route_class": {
+      "code_review": 91,
+      "narrative_sweep": 12
+    },
+    "findings_by_route_class": {
+      "code_review": 94,
+      "narrative_sweep": 12
+    },
+    "narrative_units": 75,
+    "narrative_members": 75,
+    "narrative_units_by_class": {
+      "fm_coded": 1,
+      "narrative_only": 17,
+      "routed": 57
+    },
+    "narrative_members_by_class": {
+      "fm_coded": 1,
+      "narrative_only": 17,
+      "routed": 57
+    },
+    "fm_audit_rows": 1,
+    "unsettleable_by_row": {}
+  },
+  "verdict_distribution_by_route_class": {
+    "code_review": {
+      "cannot_settle": 0,
+      "citation_omission": 0,
+      "correct": 94,
+      "not_reviewed": 0,
+      "wrong": 0
+    },
+    "narrative_sweep": {
+      "cannot_settle": 0,
+      "citation_omission": 1,
+      "correct": 11,
+      "not_reviewed": 0,
+      "wrong": 0
+    }
+  },
+  "narrative_records": {
+    "none_wrong": 75,
+    "wrong": 0
+  },
+  "fm_audit": {
+    "extractor_error": 0,
+    "real_error": 1
+  },
+  "reviewer": "Rizwan Ahmed",
+  "freeze_date": "2026-11-11",
+  "sittings": [
+    {
+      "start": "2026-11-11T14:48:21-05:00",
+      "end": "2026-11-11T15:22:16-05:00"
+    },
+    {
+      "start": "2026-11-11T15:24:14-05:00",
+      "end": "2026-11-11T17:25:16-05:00"
+    }
+  ],
+  "review_hours": 2.583,
+  "expanded_csv_sha256": null,
+  "statement": "Every verdict in this record was recorded before any review-settled figure of the run was computed."
+}
