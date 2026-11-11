@@ -22,7 +22,7 @@ Commands are single lines that run in Git Bash or PowerShell from the repository
 ## Rules for every command
 
 - No `--epochs`, `--limit`, `--sample-id`, `--reasoning-effort`, `--temperature`, `--top-p`, `--top-k`, `--seed`, or `--max-tokens` (unless D6 pins a value, and then exactly that value). [F1-02]
-- No `--model-role` beyond the two pins: `grader=openai/gpt-6-luna` and `calibrator=anthropic/claude-opus-5-5`.
+- No `--model-role` beyond the two pins: `grader=openai/gpt-6-luna` and `calibrator=anthropic/claude-opus-5-5`. These are the step 1 pins; GPT-6.1 Terra and GPT-6.1 Sol enter only at remedy steps 2 and 3 of the pre-registration (owner decision D-T1, 2026-11-09) and are not part of the pilot.
 - Never `--no-fail-on-error` and never a fractional `--fail-on-error`. A fractional threshold leaves errored epochs inside a status-success log as failed trials, which pass^4 and reading (i) of difficulty check (b) both count. [F1-03]
 - Always `-T split=dev -T subset=pilot`. The task and the template baseline refuse `split=eval` unless `-T allow_evaluation_split=true` is passed, and only the tagged evaluation run passes it. The refusal is raised while Inspect loads the task, before any case is built: a command that reaches `split=eval` without the unlock exits non-zero with the `ValueError` on stderr and writes no log. Inspect parses `-T` values as YAML, so only `true`, `yes` or `on` unlock; `1`, a YAML-quoted string or a mistyped key stays locked. Inspect drops an unknown `-T` key, so a typo such as `-T splt=dev` falls back to the default split and is refused at load the same way, and a mistyped subset runs the whole dev split, which `pilot_report.py` refuses as not the pilot subset. [F1-01, F5-01]
 - Both paid legs carry `--max-connections 4 --max-retries 6 --timeout 1800 --retry-on-error 2`. Inspect's defaults retry a 429 without end; these bound the retries, the request time, the sample retries and the in-flight loss when `fail_on_error` cancels a run. [F1-03, F4-05]
@@ -37,7 +37,7 @@ Each decision is set before the step that needs it and written into the pilot re
 
 | ID | Decision | Default in force | Before step | Author's choice |
 |---|---|---|---|---|
-| D1 | Reading of record for difficulty check (b): (i) literal; (ii) excluding format breaks, errored or missing epochs and narrative-sweep provisional zeros; (iii) settled anchor scores and non-format FM codes only | `pilot_report.py` prints all three; the reading of record is chosen before the Haiku leg | 6 | |
+| D1 | Reading of record for difficulty check (b): (i) literal; (ii) excluding format breaks, errored or missing epochs and narrative-sweep provisional zeros; (iii) non-provisional code anchor scores and non-format FM codes only | `pilot_report.py` prints all three; the reading of record is chosen before the Haiku leg | 6 | |
 | D2 | What "caught" means for the deliberate regression, and its form: (i) the real Sonnet baseline against the mock-degraded candidate from `rehearse_regression.py`, $0; (ii) a second real Sonnet run on a weakened prompt | Caught: `compare_runs.py` exits 1 on (pilot baseline, regressed candidate) with the rejecting test named (text in step 8). Form: not defaulted; (ii) needs a weakened-prompt code path that is not built | 8 |Form (i), keyless: compare_runs.py exit 1 on (pilot Sonnet log, rehearse_regression.py degraded candidate) with the rejecting test named. Decided 2026-11-06. |
 | D3 | Evaluation-split unlock | The task argument `allow_evaluation_split`, default `False` | 0 | |
 | D4 | Timing of the extractor review-route fixes | Land before the pilot | 0 | |
@@ -45,13 +45,13 @@ Each decision is set before the step that needs it and written into the pilot re
 | D6 | `max_tokens` | No pin in code; the cost table shows the 48,000 default and a 16,000 pin | 5 |No pin; the 48,000 default is recorded; pilot_report.py's generation-stop and output-token lines decide whether it stands for the full run. Decided 2026-11-06. |
 | D7 | `--batch` or interactive | Interactive; `check_run_config` allows batch (step 5 has the option) | 5 |Interactive. Decided 2026-11-06. |
 | D8 | Generator labels | Keep `-dev.1` through the tag | 0 | |
-| D9 | A hedged or suffix-rounded figure ("approximately USD 34.3k", "USD 1.1 million") that agrees with its target within its stated precision | Routes to review: never a pass, never FM-001 (needs a §6 sentence) | 0 | |
+| D9 | A hedged or suffix-rounded figure ("approximately USD 34.3k", "USD 1.1 million") that agrees with its target within its stated precision | Routes to review, never FM-001; passes only on a frozen human verdict of `correct` (review settlement, 2026-11-08) | 0 | |
 | D10 | Elicitation before or after the pilot | None; a pilot on the draft prompt leaves (b), the false-fail rate and the judge-development outputs on the draft prompt hash | 5 |Pilot first on v0.0.3-draft; elicitation after the pilot; the judge-development set is regenerated under the locked prompt if its hash differs (sequence step 8). Decided 2026-11-06. |
 | D11 | Scope of "every transcript read" | None; step 11 states the proposed scope | 11 | |
 | D12 | Judge-development set: pilot outputs, or regenerated under the locked prompt | None; the proposed rule is in the sequence, step 8 | sequence 8 | |
 | D13 | 0 to 3 anchors for the two LLM-graded sub-dimensions written before the judge-development grading | None; proposed as sequence step 7 | sequence 7 | |
 | D14 | Row 227 clause recording the review-routing and false-fail rate per run | None; proposed text awaits approval | sequence 12 | |
-| D15 | Smoke scope ("one live single-sample call per roster model") | `smoke_live.py` accepts any model list; its default is every distinct pinned model | sequence 11 | |
+| D15 | Smoke scope ("one live single-sample call per roster model") | `smoke_live.py` accepts any model list; its default is every distinct pinned model, the escalation graders GPT-6.1 Terra and GPT-6.1 Sol included (owner decision D-T1, 2026-11-09) | sequence 11 | |
 | D16 | Row 228 calibrator cost | None; inferred from the pilot's per-call tokens at Opus 5.5 prices unless a paid dev run measures it | sequence 3 | |
 | D17 | An off-contract structured value whose canonical content equals the truth ("November 2025" for `2025-11`, "M2 (reportable)", a signed variance) | Routes to review | 0 | |
 | D18 | An exclusion sentence that states the decoy's amount | Keeps firing FM-001 by the §6 rule, disclosed | 0 | |
@@ -100,7 +100,7 @@ python -m inspect_ai eval icfr_agent_evals/task.py@variance_commentary -T split=
 python -m inspect_ai eval-retry <PILOT_LOGS>/sonnet/<log>.eval --max-connections 4 --max-retries 6 --timeout 1800 --retry-on-error 2 --log-dir <PILOT_LOGS>/sonnet
 ```
 
-- **Batch option (D7).** [F4-04] Adding `--batch` halves the price ($39.93 worst case for three runs) and keeps epochs, per-sample logs and the first-party endpoint. It turns off adaptive concurrency and streaming, adds a 15 s send delay and poll tick on top of an unmeasured vendor queue, and adds a run-config field that `check_run_config` allows. Whether `--timeout 1800` leaves a queued batch request alone was not verified: with `--batch`, drop `--timeout` or verify it on a single dev sample first.
+- **Batch option (D7).** [F4-04] Adding `--batch` halves the price ($39.93 worst case for three runs) and keeps epochs, per-sample logs and the first-party endpoint. It turns off adaptive concurrency and streaming, adds a 15 s send delay and poll tick on top of an unmeasured vendor queue, and adds a run-config field that `check_run_config` allows. `--batch` is eval-wide, so it would batch the Anthropic worker too; the grader Batch of the pre-registration's escalation ladder (owner decision D-T1, 2026-11-09) is a separate matter, set on the grader role only. Whether `--timeout 1800` leaves a queued batch request alone was not verified: with `--batch`, drop `--timeout` or verify it on a single dev sample first.
 
 **6. Haiku leg (keyed; after D1).** Step 3 with `--model anthropic/claude-haiku-5-5`, then step 5's command with `--model anthropic/claude-haiku-5-5 --log-dir <PILOT_LOGS>/haiku`. Same flags, same recovery.
 
@@ -129,7 +129,7 @@ Form (ii), keyed: step 3's pre-flight, then a second Sonnet leg on a weakened-pr
 - Caught means `compare_runs.py` exits 1 on the pair (pilot Sonnet baseline, regressed candidate), with the rejecting test named in its output. Exit 0 is not caught, and exit 2 is not caught; `pilot_report.py` prints those two as `MISSED (no automatic block)` and prints `caught` only on exit 1.
 - Size the regression from the baseline's own per-case results. The exact one-sided McNemar test on content-pass^4 under Holm with m = 6 blocks only from 7 one-way discordant cases with no reversal, 10 with one; a regression that turns fewer passing cases can be caught only by the paired t-tests, at the floor `pilot_report.py` prints.
 - A baseline passing pass^4 on fewer than 7 of 20 cases is recorded as "only the t-tests can catch it".
-- A regression confined to reconciling-item omission fires no FM code and no review route, so at n = 20 it can pass the gates with no sign-off case. It is a declared blind spot of the regression at pilot size.
+- A regression confined to reconciling-item omission or citation omission fires no FM code and no review route, so at n = 20 it can pass the gates with no sign-off case. It is a declared blind spot of the regression at pilot size.
 - Exit 2 on a no-change pair or a pooled pair is a measurement of review volume, not a gate failure. At a 2 percent per-epoch route rate, a no-change pair of real runs exits 2 with probability about 0.78 on 20 cases [inferred]; pooling identical runs makes exit 2 certain whenever a code fires.
 
 **9. Pilot report (keyless).**
@@ -149,14 +149,14 @@ scout scan icfr_agent_evals/scanners/jobs.py@all_logs_scan -S logs=<PILOT_LOGS>/
 
 Record the scanner model's input and output tokens and calls in the pilot record. Scanner counts stay exploratory.
 
-**11. Transcript reading (author).** [F4-03, F5-10, D11] Proposed scope:
+**11. Review verdicts, then transcript reading (author).** [F4-03, F5-10, D11] Give every verdict, whole-narrative record and audit row before reading any transcript or thinking summary, which names the model, and freeze the record first (pre-registration §8, §9). Proposed scope:
 - the 20 case files, once (about 2 hours);
 - all 80 Sonnet transcripts with their thinking summaries (about 5.3 hours);
 - every Haiku hard-case epoch scoring below 3 on an anchor or firing an FM code, since (b) rests on Haiku failing a hard case and a reader must confirm the failure is not a format break (up to 80 epochs, about 4 hours);
 - the 20 distinct template outputs (its 4 epochs are identical);
-- a verdict on every row of the review CSV: `correct_route`, `false_fail` or `confirmed_failure`, with reviewer and date (about 5 minutes each).
+- a verdict on every finding of the review CSV: `correct`, `wrong`, `citation_omission`, `cannot_settle` or `not_reviewed`; one whole-narrative row (`none_wrong`, or `wrong` with sentence number, error type and note) per distinct routed narrative and, on the pilot's 12 edge and adversarial cases, per distinct unrouted, uncoded narrative (a rehearsal of the pre-registration §6 rule for the 54 difficulty-bearing cases, applied here to the pilot's 12 hard dev cases; owner decision D-J, 2026-11-10); and one `fm_audit` row (`real_error` or `extractor_error`, with a note) per (FM-coded epoch, code); each with reviewer and date (about 30 to 90 seconds per grouped finding plus about 1 to 2 minutes per whole-narrative read [LOAD, estimate]; findings with the same case, route key, sentence, cited items and structured fields take one verdict, and a sentence several keys flag takes one verdict per key).
 
-Expect 9 to 18 hours over at least two sittings [inferred]. Use the idiom checklist for statements the locked vocabulary does not catch (approximate amounts in words, coverage and reserve ratios, "fully backed" or "in the red" against the direction, nil-remainder idioms, a period named in prose). The row stays pending until this is done; record the hours, the transcript count per run and the route count. The false-fail rate per run and route class is `false_fail` rows over all rows.
+Expect about 2 to 5 hours for the review record [LOAD, estimate] plus about 11 hours for the reading above [inferred], plus about 1 to 2 minutes per unrouted, uncoded hard-case narrative read [estimate], over at least two sittings. Record each sitting's start and end: the §5 review-load estimate is re-derived from this rehearsal's timed rate before the tag (§13 pilot row). This is a process rehearsal, not a blind one, since the author has labeled these routes. Use the idiom checklist for statements the locked vocabulary does not catch (approximate amounts in words, coverage and reserve ratios, "fully backed" or "in the red" against the direction, nil-remainder idioms, a period named in prose). The row stays pending until this is done; record the hours, the transcript count per run and the route count. The false-alarm rate per run, route key and route class is `correct` finding rows over all settleable finding rows.
 
 **12. Record (author).** Fill [`pilot-TEMPLATE.md`](pilot-TEMPLATE.md) as `docs/evidence/pilot-<date>.md`, with the review CSV beside it. Copy the logs into `runs/pilot-<date>/sonnet`, `haiku`, `template` and `rehearsal` and record each file's SHA-256. If difficulty check (b) fails, ceiling scores on all three runs included, harden the case generator and repeat the pilot before tagging, and report each pilot round.
 
@@ -184,15 +184,16 @@ The worst case is a one-attempt figure, not a bound: `--retry-on-error 2` can bi
 | 1 | Elicitation on the dev split (D10 sets whether it precedes the pilot) | prompt lock | `solver.py` edits | author, keyed |
 | 2 | Pilot: Sonnet, Haiku, template, deliberate regression (steps 1 to 12 above) | pilot | logs, pilot record | author, keyed |
 | 3 | Scout scan of the Sonnet pilot log (step 10) | cost cap | pilot record | author, OpenAI key |
-| 4 | Transcript reading and review verdicts (step 11) | pilot | review CSV | author |
+| 4 | Review verdicts, whole-narrative read and code audit, frozen; then transcript reading (step 11). On an evaluation or tagged release run, no review-settled or audit-adjusted figure is computed or read, and no transcript is opened, until the second look is also frozen (pre-registration §8, §9) | pilot | review CSV | author |
 | 5 | Protocol fixes from the pilot | pilot | fix commit, listed in the pilot record | keyless |
 | 6 | Prompt lock: version and hash | prompt lock | `solver.py`, Task metadata | keyless, author ratifies |
 | 7 | 0 to 3 anchors for `faithfulness.narrative_grounding` and `completeness.narrative_coverage`, committed with their SHA-256 before any judge-development grading (D13) | rubric | rubric text | author |
 | 8 | Judge-development set (D12): if the locked prompt's `worker_prompt_sha256` equals the pilot logs', use 20 pilot outputs; otherwise regenerate the 20 under the locked prompt at one epoch (about 20 Sonnet calls) before grading. Grades are committed before any grader iteration | judge-development set | `data/dev/judge-dev/` | author grades |
+| 8a | Review tool and settlement code: settlement table with one test per row and the meta-test, record and freeze checks, the three figures and the health figure (owner step 4) | review settlement | code, tests | keyless |
 | 9 | Full suite on 3.14.10 and 3.12.16 | runtime | evidence file | keyless |
 | 10 | Pre-tag spec-against-docs review; the CONTEXT.md SHA-256 re-checked after any edit | counts match | evidence file | keyless |
 | 11 | Live smoke on the commit to be tagged: `python scripts/preflight.py --model anthropic/claude-sonnet-5-5 --pilot-commit <commit to be tagged> --log-dir <PILOT_LOGS>/smoke` with every line PASS, then `python scripts/smoke_live.py --sample-id <dev case id> --log-dir <PILOT_LOGS>/smoke` (D15). Before each model it prints the request-header sources in force, which must read `none`; per model it prints the resolved model string, the checked endpoint, the usage and the log path, and it exits 0 only when every model answered. Smoke logs set `sample_id` and epochs 1, so `roster.check_run_config` refuses them: never pass one to `pilot_report.py` or `compare_runs.py` | roster, smoke | the printed lines in `docs/evidence/smoke-<date>.md` | author, both keys |
-| 12 | §13 fill from `scripts/tag_values.py` and the smoke, row 227's clause included (D14) | all | pre-registration | keyless, author ratifies |
+| 12 | §13 fill from `scripts/tag_values.py` and the smoke, row 227's clause and the review settlement row included (D14) | all | pre-registration | keyless, author ratifies |
 | 13 | Public remote | public remote | remote URL | author |
 | 14 | Tag `prereg-phase1-v1.0` | tag | tag | author |
 | 15 | Tag pushed to the public remote, before any evaluation-split generation | tag | remote tag | author |
