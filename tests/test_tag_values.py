@@ -120,6 +120,34 @@ def test_closure_matches_the_modules_a_fresh_build_loads():
     assert json.loads(out.stdout) == tv.generator_source_files()
 
 
+def test_scorer_set_covers_the_score_of_record_and_a_fresh_import(two_runs):
+    files = tv.scorer_source_files()
+    for name in ("scoring", "narrative", "scorers", "settlement", "trials", "reliability", "review_schema"):
+        assert f"icfr_agent_evals/{name}.py" in files
+    assert "icfr_agent_evals/solver.py" not in files and "icfr_agent_evals/review_facts.py" not in files
+    code = (
+        "import sys, pathlib, json; sys.path.insert(0, sys.argv[1]);"
+        "import icfr_agent_evals.scorers, icfr_agent_evals.trials;"
+        "root = pathlib.Path(sys.argv[1]).resolve();"
+        "print(json.dumps(sorted(pathlib.Path(m.__file__).resolve().relative_to(root).as_posix()"
+        " for n, m in list(sys.modules.items()) if n.split('.')[0] == 'icfr_agent_evals')))"
+    )
+    out = subprocess.run([sys.executable, "-c", code, str(REPO)], capture_output=True, check=True, timeout=600)
+    assert set(json.loads(out.stdout)) <= set(files)
+    s = json.loads(two_runs[0])["scorer"]
+    assert sorted(s["source_files"]) == files and s["source_sha256"] == tv.combine_hashes(s["source_files"])
+    assert s["scorer_only"] == sorted(set(files) - set(tv.generator_source_files()))
+
+
+def test_recorded_narrative_hash_is_a_warning_not_a_mismatch(two_runs):
+    rel = "icfr_agent_evals/narrative.py"
+    hashes = tv.file_hashes([rel])
+    assert tv.recorded_file_warnings(hashes) == []  # narrative.py still holds its section 13 value
+    moved = tv.recorded_file_warnings({rel: "0" * 64})
+    assert len(moved) == 1 and rel in moved[0] and tv.RECORDED_FILE_SHA256[rel] in moved[0]
+    assert not any(rel in w for w in json.loads(two_runs[0])["checks"]["warnings"])
+
+
 def test_combined_hash_changes_when_one_generator_file_changes(tmp_path):
     files = tv.generator_source_files()
     for rel in files:
@@ -152,6 +180,7 @@ def test_markdown_mode_drafts_section13_rows():
     text = out.stdout.decode("utf-8")
     assert text.startswith("| Item | Value at tag (draft) |")
     assert "Generator version G" in text and "22260607" in text
+    assert "Scorer source set" in text and "`icfr_agent_evals/scoring.py` " in text
     assert chr(0x2014) not in text  # no em dash in the drafted rows
 
 
