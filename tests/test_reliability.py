@@ -378,3 +378,58 @@ def test_require_run_config_passes_the_expected_counts(c2_logs):
         require_run_config(c2_logs["clean"], expected_samples=20)
     with pytest.raises(GateError, match="epochs"):
         report_from_log(c2_logs["clean"], k=1)  # k = 1 asks for a one-epoch run
+
+
+# --- FM-008 on the review-settled trial (section 6, section 13 item) --------------------------------
+
+def _settled_fixture():
+    from test_trials import AMOUNT, SWEEP, clean, record_for
+    from test_trials import _score as tscore
+    from test_trials import sample as tsample
+
+    routed = tsample("a", 1, fabrication=tscore(0, reasons=[SWEEP]))
+    b2 = tsample("b", 2, correctness=tscore(3, reasons=[AMOUNT], details={"structured_points": 3}))
+    samples = clean("a", e1=routed) + clean("b", e2=b2)
+    rec = record_for(samples, overrides={("b", 2, route_key(AMOUNT)): "wrong"})
+    return samples, rec
+
+
+def test_fm008_without_a_record_is_the_labeled_code_only_reading():
+    samples, _ = _settled_fixture()
+    rep = reliability_report(samples, k=4)
+    assert rep.fm008_basis == "code_only" and rep.settled is None
+    assert rep.fm008 == rep.fm008_code_only == ("a", "b")
+
+
+def test_fm008_with_a_record_reads_the_review_settled_trial():
+    samples, rec = _settled_fixture()
+    rep = reliability_report(samples, k=4, record=rec)
+    assert rep.fm008_basis == "review_settled"
+    assert rep.fm008 == ("b",) and rep.fm008_code_only == ("a", "b")
+    assert rep.settled.pass_k == {"a": 1, "b": 0}
+    assert rep.pass_k == {"a": 0, "b": 0}  # pass_k stays the code-only figure for the old call sites
+
+
+def test_fm008_with_an_incomplete_record_is_refused():
+    from icfr_agent_evals.trials import RecordError
+
+    samples, rec = _settled_fixture()
+    rec.rows = rec.rows[1:]
+    with pytest.raises(RecordError):
+        reliability_report(samples, k=4, record=rec)
+
+
+def test_report_from_log_finds_the_run_by_eval_id_and_reads_review_settled_fm008():
+    from icfr_agent_evals.reliability import content_pass_figures
+
+    samples, rec = _settled_fixture()
+    rec.runs = {"R1": {"eval_id": "OTHER"}, "R2": {"eval_id": "EVAL-B3"}}
+    for m in rec.members:
+        m["run_id"] = "R2"
+    log = SimpleNamespace(samples=samples, eval=SimpleNamespace(
+        eval_id="EVAL-B3", config=SimpleNamespace(epochs=4), task_args={"epochs": 4}))
+    rep = report_from_log(log, run_config=False, record=rec)
+    assert rep.fm008_basis == "review_settled" and rep.fm008 == ("b",)
+    res = content_pass_figures(log, rec)
+    assert {k: v["passed"] for k, v in res["figures"].items()} == {
+        "review_settled": 1, "audit_adjusted": 1, "route_blind": 2, "code_only": 0}
