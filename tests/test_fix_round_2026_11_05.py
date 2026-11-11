@@ -58,9 +58,9 @@ SCRIPTS = ROOT / "scripts"
 MOCK_ROLES = {"grader": "mockllm/model", "calibrator": "mockllm/model"}
 ANTHROPIC = "https://api.anthropic.com"
 OPENAI = "https://api.openai.com/v1/"
-REVIEW_CSV_COLUMNS = [
-    "run_label", "log_eval_id", "sample_id", "epoch", "scorers", "route_key", "reason",
-    "verdict", "reviewer", "date",
+REVIEW_CSV_COLUMNS = [  # RB-7 (runbook; review_schema.RB7_COLUMNS)
+    "row_kind", "unit_id", "run_label", "log_eval_id", "sample_id", "epoch", "scorers", "route_key",
+    "route_class", "reason", "sentence", "verdict", "note", "reviewer", "date",
 ]
 EVAL_REFUSAL = "refusing split 'eval' before the pre-registration tag"
 STRIPPED_ENV = (

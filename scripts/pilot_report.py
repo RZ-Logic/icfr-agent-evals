@@ -41,9 +41,13 @@ regressed candidate) pair, with the rejecting tests named. Exit 2 is sign-off
 volume, not caught; exit 0 is not caught. Only an exit 1 prints the word "caught";
 exit 0 and exit 2 print "MISSED (no automatic block)".
 
-The review CSV holds one row per distinct (run, sample, epoch, route key), with
-verdict, reviewer and date blank for the owner (verdict: correct_route,
-false_fail or confirmed_failure).
+The review CSV (--review-csv) is a queue listing, not the review record. It holds one
+row per distinct (run, sample, epoch, route key) in the RB-7 header
+(review_schema.RB7_COLUMNS), with row_kind "finding" only for a settleable route key
+(settlement.is_settleable) and blank for every other row, unit_id, sentence, verdict,
+note, reviewer and date blank. Verdicts are given in the grouped review packet
+(scripts/review_packet.py); the member-level review record is the output of
+scripts/review_freeze.py freeze --expanded-csv.
 
 Exit codes:
   0  report printed
@@ -77,7 +81,9 @@ from typing import Any, Sequence
 
 from icfr_agent_evals import consistency as con
 from icfr_agent_evals import reliability as rel
+from icfr_agent_evals import review_schema
 from icfr_agent_evals import roster
+from icfr_agent_evals.settlement import is_settleable
 from icfr_agent_evals.regression import (
     CODE_ROUTE,
     DIMENSIONS,
@@ -114,10 +120,8 @@ SAMPLE_ERROR = rel.QUEUE_SAMPLE_ERROR
 FM_LISTED = rel.QUEUE_FM_LISTED
 QUEUE_CLASSES: tuple[str, ...] = rel.QUEUE_CLASSES
 QUEUE_CLASS_NOTES = {FM_LISTED: "  (rides with FM-005 / FM-015; not a section 10(c) route)"}
-REVIEW_CSV_COLUMNS: tuple[str, ...] = (
-    "run_label", "log_eval_id", "sample_id", "epoch", "scorers", "route_key", "reason", "verdict", "reviewer", "date",
-)
-VERDICTS: tuple[str, ...] = ("correct_route", "false_fail", "confirmed_failure")
+REVIEW_CSV_COLUMNS: tuple[str, ...] = review_schema.RB7_COLUMNS
+VERDICTS: tuple[str, ...] = review_schema.FINDING_VERDICTS
 TEMPLATE_CONSISTENCY_LINE = "template: deterministic, agreement 1 by construction; Sample Consistency not reported"
 COMPARE_SCRIPT = Path(__file__).resolve().parent / "compare_runs.py"
 
@@ -375,22 +379,36 @@ def csv_route_key(item: rel.QueueItem) -> str:
 
 
 def review_rows(report: rel.ReliabilityReport, run_label: str, eval_id: str) -> list[dict[str, str]]:
-    """One CSV row per distinct (run, sample, epoch, route key) from reliability.queue_items;
-    verdict, reviewer and date blank."""
-    grouped: dict[tuple[str, int, str], dict[str, list[str]]] = {}
+    """One RB-7 row per distinct (run, sample, epoch, CSV route key) from reliability.queue_items.
+
+    This is a queue listing, not the review record: verdicts are given in the grouped
+    review packet (scripts/review_packet.py) and the member-level record is
+    scripts/review_freeze.py --expanded-csv. row_kind is "finding" only for a route key
+    settlement.is_settleable accepts; it is blank for an unsettleable route (not a finding;
+    it fails on code) and for a format_break, fm_listed or sample_error row (neither a
+    finding nor a per-(epoch, FM code) audit row, which exists only in the packet).
+    route_class is the queue class; unit_id, sentence, verdict, note, reviewer and date
+    are blank."""
+    grouped: dict[tuple[str, int, str], dict[str, Any]] = {}
     for item in rel.queue_items(report):
-        g = grouped.setdefault((item.sample_id, item.epoch, csv_route_key(item)), {"scorers": [], "reasons": []})
+        g = grouped.setdefault((item.sample_id, item.epoch, csv_route_key(item)),
+                               {"scorers": [], "reasons": [], "class": item.queue_class,
+                                "settleable_key": item.route_key is not None})
         for scorer in item.scorers:
             if scorer not in g["scorers"]:
                 g["scorers"].append(scorer)
         if item.reason not in g["reasons"]:
             g["reasons"].append(item.reason)
-    return [
-        {"run_label": run_label, "log_eval_id": eval_id, "sample_id": sid, "epoch": str(ep),
-         "scorers": ";".join(sorted(g["scorers"])), "route_key": key, "reason": " | ".join(g["reasons"]),
-         "verdict": "", "reviewer": "", "date": ""}
-        for (sid, ep, key), g in sorted(grouped.items())
-    ]
+    rows: list[dict[str, str]] = []
+    for (sid, ep, key), g in sorted(grouped.items()):
+        finding = g["settleable_key"] and is_settleable(key, tuple(g["reasons"]))
+        row = {col: "" for col in REVIEW_CSV_COLUMNS}
+        row.update({"row_kind": "finding" if finding else "", "run_label": run_label, "log_eval_id": eval_id,
+                    "sample_id": sid, "epoch": str(ep), "scorers": ";".join(sorted(g["scorers"])),
+                    "route_key": key, "route_class": g["class"],
+                    "reason": review_schema.RB7_LIST_SEP.join(g["reasons"])})
+        rows.append(row)
+    return rows
 
 
 def queue_payload(volume: rel.QueueVolume) -> dict[str, dict[str, int]]:
@@ -769,7 +787,8 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--regression-baseline", help="deliberate regression: the pilot baseline .eval log")
     p.add_argument("--regression-candidate", help="deliberate regression: the regressed candidate .eval log")
     p.add_argument("--json", dest="json_out", help="write the report as JSON to this path")
-    p.add_argument("--review-csv", help="write the review-verdict CSV (verdicts blank) to this path")
+    p.add_argument("--review-csv", help="write the review queue listing (RB-7 header, verdicts blank; not the "
+                                        "review record) to this path")
     p.add_argument("--max-tokens-pin", type=int, default=None,
                    help="the owner's max_tokens pin, when one is set (default: no --max-tokens flag; the evaluated "
                              "model's events may carry Inspect's documented default 48,000)")

@@ -73,7 +73,7 @@ PREREGISTERED = {
         "AC-1": 4, "AC-2": 4, "AC-3": 4, "AC-4": 4, "AC-5": 4, "AC-6": 4,
     },
     "dev_pilot_cases": 20,
-    "draft_prompt": ("v0.0.3-draft", "a3430f8f84eb6c353b6e7e86d1bc83dcdd0a8d10a637205c4d943781e07607b7"),
+    "draft_prompt": ("v0.0.4-draft", "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d"),
 }
 
 PINS = {  # section 13 pin rows; a difference is a warning, not a mismatch

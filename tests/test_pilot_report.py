@@ -36,8 +36,9 @@ from icfr_agent_evals.task import variance_commentary
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "pilot_report.py"
 ROLES = {"grader": "mockllm/grader", "calibrator": "mockllm/calibrator"}
-CSV_COLUMNS = ["run_label", "log_eval_id", "sample_id", "epoch", "scorers", "route_key", "reason",
-               "verdict", "reviewer", "date"]
+# RB-7 (runbook; review_schema.RB7_COLUMNS), typed out so a change to the shared tuple fails here.
+CSV_COLUMNS = ["row_kind", "unit_id", "run_label", "log_eval_id", "sample_id", "epoch", "scorers", "route_key",
+               "route_class", "reason", "sentence", "verdict", "note", "reviewer", "date"]
 
 
 def _load_script():
@@ -301,8 +302,9 @@ def test_queue_volume_counts_distinct_rows(logs, capsys):
 
 
 def test_review_csv_columns_and_rows(logs, capsys, tmp_path):
-    """F2-06: exactly the C5 columns, one row per distinct (run, sample, epoch, route
-    key), verdict, reviewer and date blank."""
+    """F2-06: exactly the RB-7 columns, one row per distinct (run, sample, epoch, route
+    key), verdict, reviewer and date blank. A format break is a queue row, not a finding
+    and not an audit row: row_kind blank, route_class format_break."""
     path = tmp_path / "review.csv"
     code, _, err = _main(capsys, *_base(logs), "--review-csv", path)
     assert code == 0, err
@@ -318,8 +320,14 @@ def test_review_csv_columns_and_rows(logs, capsys, tmp_path):
     assert {r["run_label"] for r in rows} == {"haiku"}
     assert {r["route_key"] for r in rows} == {pr.FORMAT_BREAK}
     assert all(r["verdict"] == r["reviewer"] == r["date"] == "" for r in rows)
+    assert all(r["unit_id"] == r["sentence"] == r["note"] == "" for r in rows)
+    assert all(r["row_kind"] == "" and r["route_class"] == pr.FORMAT_BREAK for r in rows)
     assert all(len(r["scorers"].split(";")) == 6 for r in rows)
     assert tuple(CSV_COLUMNS) == pr.REVIEW_CSV_COLUMNS
+    from icfr_agent_evals import review_schema
+
+    assert pr.REVIEW_CSV_COLUMNS == review_schema.RB7_COLUMNS
+    assert pr.VERDICTS == review_schema.FINDING_VERDICTS
 
 
 def test_json_output(logs, capsys, tmp_path):
@@ -549,9 +557,32 @@ def test_queue_classes_and_route_keys():
     assert vol["all"] == {"sample_epoch_reason": 3, "sample_epoch": 2}
     rows = pr.review_rows(report, "sonnet", "abc")
     assert len(rows) == 3
+    assert all(tuple(r) == pr.REVIEW_CSV_COLUMNS for r in rows)
     sweep_row = next(r for r in rows if r["route_key"].startswith(pr.SWEEP_ROUTE))
     assert sweep_row["scorers"] == "fabrication_anchor;faithfulness_anchor"
-    assert next(r for r in rows if r["epoch"] == "2")["route_key"] == pr.SAMPLE_ERROR
+    assert (sweep_row["row_kind"], sweep_row["route_class"]) == ("finding", pr.SWEEP_ROUTE)
+    code_row = next(r for r in rows if r["route_key"].startswith(pr.CODE_ROUTE))
+    # This reason lacks the item reference scoring writes, so regression.route_key keeps it
+    # whole and only the settlement catch-all takes it: unsettleable, not a finding.
+    assert (code_row["row_kind"], code_row["route_class"]) == ("", pr.CODE_ROUTE)
+    s14 = rel.reliability_report([_epoch({**_clean(), "reconciling_items_anchor": _score(
+        1, reasons=["reconciling_items[0] 'TX-1' type 'x' differs from 'y'"])})], k=1)
+    (s14_row,) = pr.review_rows(s14, "sonnet", "abc")
+    assert (s14_row["row_kind"], s14_row["route_class"]) == ("finding", pr.CODE_ROUTE)  # S14, settleable
+    error_row = next(r for r in rows if r["epoch"] == "2")
+    assert error_row["route_key"] == pr.SAMPLE_ERROR
+    assert (error_row["row_kind"], error_row["route_class"]) == ("", pr.SAMPLE_ERROR)
+
+
+def test_unsettleable_route_is_not_a_finding_row():
+    """An unsettleable key (S20, non_latin_characters) keeps its queue row with row_kind blank:
+    it is not a finding and fails on code."""
+    scores = _clean()
+    scores["correctness_anchor"] = _score(0, reasons=["non_latin_characters: ж"])
+    report = rel.reliability_report([_epoch(scores)], k=1)
+    (row,) = pr.review_rows(report, "sonnet", "abc")
+    assert row["route_key"] == f"{pr.CODE_ROUTE}: non_latin_characters"
+    assert (row["row_kind"], row["route_class"]) == ("", pr.CODE_ROUTE)
 
 
 def test_fm_listed_reason_gets_its_own_route_key():
@@ -563,6 +594,7 @@ def test_fm_listed_reason_gets_its_own_route_key():
     assert pr.queue_payload(rel.queue_volume(report))[pr.FM_LISTED] == {"sample_epoch_reason": 1, "sample_epoch": 1}
     (row,) = pr.review_rows(report, "haiku", "abc")
     assert row["route_key"] == f"{pr.FM_LISTED}: {FABRICATION_REVIEW}"
+    assert (row["row_kind"], row["route_class"]) == ("", pr.FM_LISTED)  # rides with FM-005; not a finding
 
 
 def test_statistics_helpers():
