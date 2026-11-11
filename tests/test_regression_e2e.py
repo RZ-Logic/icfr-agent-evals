@@ -56,8 +56,11 @@ def rh():
 
 
 @pytest.fixture(scope="module")
-def cli():
-    return _load("compare_runs")
+def cli(tmp_path_factory):
+    mod = _load("compare_runs")
+    # No recorded rung for these tests, whatever the repository holds (section 10(c), D-E5).
+    mod.DEFAULT_LADDER_RECORD = tmp_path_factory.mktemp("no-ladder-record") / "ladder.json"
+    return mod
 
 
 @pytest.fixture(scope="module")

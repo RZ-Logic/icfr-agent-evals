@@ -24,7 +24,11 @@ reduced scores (section 6):
       more. The rung is chosen once from the A/A estimate (select_ladder,
       aa_estimate): R1 when its mean volume is at most REVIEW_VOLUME_CAP cases
       per clean PR, else R2 when its mean is at most the cap, else R3, which
-      stands whatever its volume. Review
+      stands whatever its volume. aa_records_from_log reads the 8-epoch A/A
+      log (CI regression split, caching off); write_ladder_record records the
+      rung once in LADDER_RECORD_RELPATH and refuses to switch it; and
+      resolve_ladder gives the sign-off check the recorded rung (R1 while none
+      is recorded) and refuses an explicit rung that disagrees. Review
       routes are counted per reason (ratified 2026-11-03): each review reason
       (route_key) counts on its own, even on an epoch that also fired an FM code
       or carried another reason. FM-007 is
@@ -89,7 +93,9 @@ FM code, an error or a format break, so none of them is lifted.
 
 from __future__ import annotations
 
+import datetime
 import itertools
+import json
 import math
 import re
 from collections import Counter, defaultdict
@@ -99,7 +105,7 @@ from typing import Any, Iterable, Mapping, Sequence
 
 from .reliability import (
     FM002, FM002_UNRECORDED, FULL_MARKS, PREREGISTERED_K, QUEUE_CODE, QUEUE_SWEEP, QUEUE_UNSTATED_REASON,
-    TRIAL_ANCHORS, GateError, _numeric, evaluate_trial, require_run_config,
+    TRIAL_ANCHORS, GateError, _numeric, evaluate_trial, is_template_baseline_log, require_run_config,
 )
 from .rubric import WIRED_SCORERS
 from .scoring import FABRICATION_REVIEW, SweepHit
@@ -606,10 +612,12 @@ def content_fingerprint(log: Any) -> dict[str, Any]:
 
 
 def records_from_log(log_or_path: Any, *, run_config: bool = True,
-                     max_tokens_pin: int | None = None) -> list[EpochRecord]:
+                     max_tokens_pin: int | None = None, epochs: int = PREREGISTERED_K) -> list[EpochRecord]:
     """Records from an EvalLog (or a path to one) read with its samples. With
     run_config (the default) the log must also pass the contract C2 run
-    configuration check at PREREGISTERED_K epochs (reliability.require_run_config)."""
+    configuration check at `epochs` epochs (reliability.require_run_config).
+    `epochs` stays PREREGISTERED_K for every gate; only the A/A reader
+    (aa_records_from_log) passes AA_EPOCHS."""
     log = load_log(log_or_path)
     refuse_evaluation_split(log)
     if log.samples is None:
@@ -620,7 +628,7 @@ def records_from_log(log_or_path: Any, *, run_config: bool = True,
     if declared is not None and int(declared) != ran:
         raise GateError(f"run epochs {ran} differ from the task argument epochs {declared}")
     if run_config:
-        require_run_config(log, expected_epochs=PREREGISTERED_K, max_tokens_pin=max_tokens_pin)
+        require_run_config(log, expected_epochs=epochs, max_tokens_pin=max_tokens_pin)
     return records_from_samples(log.samples)
 
 
@@ -840,6 +848,183 @@ def format_aa_estimate(est: AAEstimate) -> str:
         lines.append(f"    {rung}: {est.mean_volume[rung]:.3f}  (distinct samples {est.mean_volume_samples[rung]:.3f})")
     lines.append(f"  rung the ladder takes (cap {REVIEW_VOLUME_CAP} per clean PR): {est.ladder}")
     return "\n".join(lines)
+
+
+# --- Section 10: the A/A log and the recorded ladder rung --------------------------------
+
+AA_SPLIT = "ci"   # the A/A run is on the CI regression split (section 10, A/A estimate)
+LADDER_RULING = "D-E5"
+LADDER_RECORD_SCHEMA = 1
+# Where the rung is recorded, relative to the repository root; the file is committed.
+LADDER_RECORD_RELPATH = "docs/evidence/regression/ladder.json"
+_HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
+_AA_LOG_FIELDS: tuple[str, ...] = ("file", "sha256", "eval_id", "run_commit", "split", "epochs", "samples", "model")
+_LADDER_RECORD_FIELDS: tuple[str, ...] = (
+    "schema", "ruling", "rung", "cap", "splits", "mean_volume", "mean_volume_samples",
+    "false_block_rate", "false_block_shortfall", "aa_log", "recorded",
+)
+
+
+def refuse_cached_run(log: Any) -> None:
+    """The A/A run is made with caching off: any model call the log shows as a
+    cache read or write refuses it, since a cached reply makes epochs repeat."""
+    for s in log.samples or ():
+        for ev in getattr(s, "events", None) or ():
+            if getattr(ev, "event", None) == "model" and getattr(ev, "cache", None) is not None:
+                raise GateError(f"sample {s.id} epoch {s.epoch}: a model call shows cache {ev.cache!r}; "
+                                "the A/A run is made with caching off")
+
+
+def aa_records_from_log(log_or_path: Any, *, max_tokens_pin: int | None = None) -> list[EpochRecord]:
+    """Records of the section 10 A/A run: one AA_EPOCHS-epoch run of the baseline
+    configuration on the CI regression split, with caching off. The evaluation
+    split, any other split, a subset, a template baseline log, a cached run and a
+    partial run are refused, and the run configuration check runs at AA_EPOCHS."""
+    log = load_log(log_or_path)
+    refuse_evaluation_split(log)
+    if is_template_baseline_log(log):
+        raise GateError("the template baseline log has no evaluated model; the A/A run is of the baseline configuration")
+    task_split = (log.eval.task_args or {}).get("split")
+    meta = getattr(log.eval, "metadata", None) or {}
+    for where, value in (("task_args", task_split), ("Task metadata", meta.get("split"))):
+        if value is not None and str(value) != AA_SPLIT:
+            raise GateError(f"{where} split is {value!r}; the A/A run is on the CI regression split {AA_SPLIT!r}")
+    if meta.get("subset") is not None:
+        raise GateError(f"run used subset {meta['subset']!r}; the A/A run covers the whole CI regression split")
+    if log.samples is None:
+        raise GateError("EvalLog has no samples; read it with header_only=False and keep sample logging on")
+    stray = sorted({str(s.id) for s in log.samples if not str(s.id).startswith(f"{AA_SPLIT}-")})
+    if stray:
+        raise GateError(f"sample ids outside the CI regression split: {stray[:5]}")
+    ran = int(log.eval.config.epochs or 1)
+    if ran != AA_EPOCHS:
+        raise GateError(f"run has {ran} epochs; the A/A run has {AA_EPOCHS}")
+    refuse_cached_run(log)
+    return records_from_log(log, epochs=AA_EPOCHS, max_tokens_pin=max_tokens_pin)
+
+
+def ladder_record(est: AAEstimate, aa_log: Mapping[str, Any], recorded: str) -> dict[str, Any]:
+    """The rung choice as the committed record (section 10(c), D-E5): the rung,
+    the volumes it was chosen from, and the A/A log it was measured on. aa_log
+    holds file, sha256, eval_id, run_commit, split, epochs, samples and model."""
+    record = {
+        "schema": LADDER_RECORD_SCHEMA,
+        "ruling": LADDER_RULING,
+        "rung": est.ladder,
+        "cap": REVIEW_VOLUME_CAP,
+        "splits": len(est.splits),
+        "mean_volume": {rung: float(est.mean_volume[rung]) for rung in LADDERS},
+        "mean_volume_samples": {rung: float(est.mean_volume_samples[rung]) for rung in LADDERS},
+        "false_block_rate": float(est.false_block_rate),
+        "false_block_shortfall": bool(est.false_block_shortfall),
+        "aa_log": {key: aa_log.get(key) for key in _AA_LOG_FIELDS},
+        "recorded": recorded,
+    }
+    return validate_ladder_record(record, "new ladder record")
+
+
+def validate_ladder_record(record: Any, where: str) -> dict[str, Any]:
+    """A ladder record with every field, the D-E5 ruling, a known rung, and the
+    rung select_ladder takes from its own volumes; anything else is a GateError."""
+    if not isinstance(record, dict):
+        raise GateError(f"{where}: not a JSON object")
+    missing = [k for k in _LADDER_RECORD_FIELDS if k not in record]
+    if missing:
+        raise GateError(f"{where}: missing {missing}")
+    if record["schema"] != LADDER_RECORD_SCHEMA:
+        raise GateError(f"{where}: schema {record['schema']!r}, expected {LADDER_RECORD_SCHEMA}")
+    if record["ruling"] != LADDER_RULING:
+        raise GateError(f"{where}: ruling {record['ruling']!r}, expected {LADDER_RULING!r}")
+    if record["rung"] not in LADDERS:
+        raise GateError(f"{where}: rung {record['rung']!r} is not one of {LADDERS}")
+    if record["cap"] != REVIEW_VOLUME_CAP:
+        raise GateError(f"{where}: cap {record['cap']!r}, expected {REVIEW_VOLUME_CAP}")
+    volume = record["mean_volume"]
+    if not isinstance(volume, dict) or set(volume) != set(LADDERS):
+        raise GateError(f"{where}: mean_volume must hold {LADDERS}")
+    try:
+        chosen = select_ladder(volume)
+    except (TypeError, ValueError) as e:
+        raise GateError(f"{where}: {e}") from e
+    if chosen != record["rung"]:
+        raise GateError(f"{where}: rung {record['rung']} does not follow from its volumes (select_ladder gives {chosen})")
+    aa_log = record["aa_log"]
+    if not isinstance(aa_log, dict) or [k for k in _AA_LOG_FIELDS if k not in aa_log]:
+        raise GateError(f"{where}: aa_log must hold {list(_AA_LOG_FIELDS)}")
+    for key in ("file", "eval_id", "run_commit"):
+        if not isinstance(aa_log[key], str) or not aa_log[key]:
+            raise GateError(f"{where}: aa_log {key} must be a non-empty string")
+    if not isinstance(aa_log["sha256"], str) or not _HEX64_RE.match(aa_log["sha256"]):
+        raise GateError(f"{where}: aa_log sha256 must be 64 lowercase hex characters")
+    if aa_log["split"] != AA_SPLIT or aa_log["epochs"] != AA_EPOCHS:
+        raise GateError(f"{where}: aa_log must name split {AA_SPLIT!r} and epochs {AA_EPOCHS}")
+    try:
+        datetime.date.fromisoformat(str(record["recorded"]))
+    except ValueError as e:
+        raise GateError(f"{where}: recorded {record['recorded']!r} is not a YYYY-MM-DD date") from e
+    return record
+
+
+def read_ladder_record(path: str | Path) -> dict[str, Any] | None:
+    """The recorded rung, or None when no record exists at path. A record that
+    cannot be read or fails validate_ladder_record is a GateError."""
+    p = Path(path)
+    if not p.exists():
+        return None
+    try:
+        record = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError) as e:
+        raise GateError(f"ladder record {p}: cannot read it ({type(e).__name__}: {e})") from e
+    return validate_ladder_record(record, f"ladder record {p}")
+
+
+def write_ladder_record(path: str | Path, record: Mapping[str, Any]) -> str:
+    """Write the rung choice once. With no file at path it is written and
+    "written" is returned. An existing record with the same rung from the same
+    A/A log (by SHA-256) is left as it is ("unchanged"). Any other existing record
+    is refused: the rung is chosen once and never switched (section 10(c))."""
+    new = validate_ladder_record(dict(record), "new ladder record")
+    p = Path(path)
+    old = read_ladder_record(p)
+    if old is not None:
+        if old["rung"] != new["rung"]:
+            raise GateError(f"ladder record {p} already holds rung {old['rung']} (recorded {old['recorded']}); "
+                            f"the rung is chosen once and never switched (section 10(c), {LADDER_RULING}), "
+                            f"so {new['rung']} is not recorded")
+        if old["aa_log"]["sha256"] != new["aa_log"]["sha256"]:
+            raise GateError(f"ladder record {p} already holds rung {old['rung']} from A/A log "
+                            f"{old['aa_log']['file']} ({old['aa_log']['sha256']}); a record from another log "
+                            "does not replace it")
+        return "unchanged"
+    body = json.dumps(new, indent=2, sort_keys=True) + "\n"
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with open(p, "x", encoding="utf-8", newline="\n") as fh:
+            fh.write(body)
+    except OSError as e:
+        raise GateError(f"cannot write ladder record {p}: {type(e).__name__}: {e}") from e
+    return "written"
+
+
+def resolve_ladder(requested: str | None, record_path: str | Path) -> tuple[str, bool, str]:
+    """The rung the sign-off check uses, whether it was read from a record, and a
+    report note naming where it came from. A recorded rung wins; an explicit `requested` rung that disagrees with
+    it is a GateError. With no record, `requested` (default R1) stands and the
+    note says no rung is recorded yet."""
+    if requested is not None and requested not in LADDERS:
+        raise ValueError(f"ladder must be one of {LADDERS}, got {requested!r}")
+    record = read_ladder_record(record_path)
+    if record is None:
+        rung = requested or "R1"
+        how = "the default R1" if requested is None else f"--ladder {rung} as given"
+        return rung, False, (f"no ladder rung is recorded yet (no file at {record_path}); the sign-off check uses {how} "
+                      f"until the A/A estimate records one (section 10(c), {LADDER_RULING})")
+    rung = record["rung"]
+    if requested is not None and requested != rung:
+        raise GateError(f"--ladder {requested} disagrees with rung {rung} recorded in {record_path}; the rung is "
+                        f"chosen once from the A/A estimate and never switched (section 10(c), {LADDER_RULING})")
+    return rung, True, (f"ladder {rung} read from {record_path} (recorded {record['recorded']} from A/A log "
+                  f"{record['aa_log']['file']}, {LADDER_RULING})")
 
 
 def compare(
