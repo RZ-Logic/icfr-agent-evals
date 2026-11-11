@@ -2,13 +2,19 @@
 
 Usage:
   python scripts/compare_runs.py --baseline A.eval --candidate B.eval [--candidate C.eval ...]
-                                 [--ladder R1|R2|R3] [--json out.json] [--max-tokens-pin N]
+                                 [--ladder R1|R2|R3] [--ladder-record PATH] [--json out.json]
+                                 [--max-tokens-pin N]
 
 Every --candidate is a run of the same gated content; they pool (section 10(d)).
-The ladder defaults to R1, the rule with the most triggers, until the A/A estimate
-records the choice (section 10(c)). The choice among R1, R2 and R3 is made once
-from the A/A estimate (regression.aa_estimate and regression.select_ladder),
-recorded before the first gated PR and never switched afterwards. R3 (owner
+The choice among R1, R2 and R3 is made once from the A/A estimate
+(scripts/aa_estimate.py, regression.aa_estimate and regression.select_ladder),
+recorded before the first gated PR and never switched afterwards. The sign-off
+check reads the recorded rung from --ladder-record (default
+docs/evidence/regression/ladder.json under the repository root,
+regression.resolve_ladder). An explicit --ladder that disagrees with a recorded
+rung is refused. While no rung is recorded, the ladder defaults to R1, the rule
+with the most triggers, or takes --ladder as given, and the report says no rung
+is recorded yet. R3 (owner
 decision D-E5, 2026-11-10) keeps FM-005, FM-015 and every narrative-sweep route
 on R1, the other FM codes on R2's rise of two, and triggers each code-check route
 key on a rise of three or more epochs.
@@ -41,7 +47,8 @@ Exit codes (ratified 2026-11-03):
   0  pass: no automatic block and no sign-off case
   1  automatic block: a Holm rejection in 10(a) or a fabrication rejection in 10(b)
   2  no automatic block, sign-off cases pending under 10(c)
-  3  refused: an evaluation-split log, a truncated run (--limit, --sample-id, or
+  3  refused: a --ladder that disagrees with the recorded rung, a ladder record
+     that cannot be read, an evaluation-split log, a truncated run (--limit, --sample-id, or
      scored samples short of the dataset's count), runs whose split, seed, subset,
      Task version or dataset content (version and hashes) differ, a candidate on
      another task or worker prompt, pooled candidates that differ in model, task,
@@ -54,11 +61,13 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from dataclasses import asdict
+from dataclasses import asdict, replace
+from pathlib import Path
 from typing import Any, Sequence
 
 from icfr_agent_evals.regression import (
     FABRICATION_CODES,
+    LADDER_RECORD_RELPATH,
     LADDERS,
     FabricationInstance,
     PASS4,
@@ -69,11 +78,13 @@ from icfr_agent_evals.regression import (
     fabrication_instances,
     load_log,
     records_from_log,
+    resolve_ladder,
 )
 from icfr_agent_evals.reliability import PREREGISTERED_K, GateError, require_run_config
 
 EXIT_PASS, EXIT_BLOCK, EXIT_SIGNOFF, EXIT_REFUSED = 0, 1, 2, 3
 MATCHED_TASK_ARGS = ("split", "seed", "subset")
+DEFAULT_LADDER_RECORD = Path(__file__).resolve().parents[1] / LADDER_RECORD_RELPATH
 
 
 class _Parser(argparse.ArgumentParser):
@@ -214,8 +225,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("-h", "--help", action=_HelpAction, help="show this help and exit 3 (no comparison ran)")
     parser.add_argument("--baseline", required=True, help="baseline .eval log")
     parser.add_argument("--candidate", required=True, action="append", help="candidate .eval log; repeat to pool re-runs")
-    parser.add_argument("--ladder", default="R1", choices=LADDERS,
-                        help="review-volume ladder rung R1, R2 or R3, section 10(c); fixed once from the A/A estimate")
+    parser.add_argument("--ladder", default=None, choices=LADDERS,
+                        help="review-volume ladder rung R1, R2 or R3, section 10(c); fixed once from the A/A estimate. "
+                             "A recorded rung is used and a disagreeing --ladder is refused; with none recorded, "
+                             "the default is R1")
+    parser.add_argument("--ladder-record", default=str(DEFAULT_LADDER_RECORD),
+                        help=f"the recorded rung (default {LADDER_RECORD_RELPATH} under the repository root)")
     parser.add_argument("--json", dest="json_out", help="write the report as JSON to this path")
     parser.add_argument("--max-tokens-pin", type=int, default=None,
                         help="the owner's max_tokens pin, when one is set (default: no --max-tokens flag; the evaluated "
@@ -225,6 +240,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     # Everything runs inside the try, the --json write included, and the report
     # prints only after it: any failure exits 3, never 1 (a block) after a PASS line.
     try:
+        ladder, ladder_recorded, ladder_note = resolve_ladder(args.ladder, args.ladder_record)
         base_log = load_log(args.baseline)
         cand_logs = [load_log(p) for p in args.candidate]
         for path, log in ((args.baseline, base_log), *zip(args.candidate, cand_logs)):
@@ -232,17 +248,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         baseline = records_from_log(base_log, run_config=False)  # checked just above
         candidates = [records_from_log(log, run_config=False) for log in cand_logs]
         check_matching_runs(base_log, cand_logs, args.candidate)
-        report = compare(baseline, candidates, k=PREREGISTERED_K, ladder=args.ladder)
+        report = compare(baseline, candidates, k=PREREGISTERED_K, ladder=ladder)
+        report = replace(report, notes=(*report.notes, ladder_note))
         instances = fabrication_instances(candidates)
         run_headers = [("baseline", args.baseline, run_header(base_log))]
         run_headers += [(f"candidate {i + 1}", p, run_header(log)) for i, (p, log) in enumerate(zip(args.candidate, cand_logs))]
-        text = render(report, args.ladder, instances, [format_header(*h) for h in run_headers])
+        text = render(report, ladder, instances, [format_header(*h) for h in run_headers])
         code = EXIT_BLOCK if report.blocked else EXIT_SIGNOFF if report.signoff else EXIT_PASS
         if args.json_out:
             payload = {
                 "baseline": args.baseline,
                 "candidates": list(args.candidate),
-                "ladder": args.ladder,
+                "ladder": ladder,
+                "ladder_record": args.ladder_record,
+                "ladder_recorded": ladder_recorded,
                 "exit_code": code,
                 "runs": [{"label": label, "path": path, **head} for label, path, head in run_headers],
                 **asdict(report),

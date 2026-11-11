@@ -322,10 +322,12 @@ def _set_task_arg(key, value):
 
 
 @pytest.fixture(scope="module")
-def cli():
+def cli(tmp_path_factory):
     spec = importlib.util.spec_from_file_location("compare_runs", SCRIPT)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
+    # No recorded rung for these tests, whatever the repository holds (section 10(c), D-E5).
+    mod.DEFAULT_LADDER_RECORD = tmp_path_factory.mktemp("no-ladder-record") / "ladder.json"
     return mod
 
 
@@ -714,3 +716,75 @@ def test_cli_max_tokens_pin_is_passed_to_the_check(c2_logs, cli, capsys):
     clean = c2_logs["clean"].location
     assert cli.main(["--baseline", clean, "--candidate", clean, "--max-tokens-pin", "4000"]) == 3
     assert "max_tokens" in capsys.readouterr().err
+
+
+# --- The recorded ladder rung (section 10(c), D-E5; regression.resolve_ladder) ------------
+
+_LADDER_VOLUMES = {
+    "R1": {"R1": 1.0, "R2": 0.5, "R3": 0.25},
+    "R2": {"R1": 11.0, "R2": 3.0, "R3": 1.0},
+    "R3": {"R1": 30.0, "R2": 20.0, "R3": 4.0},
+}
+
+
+def _ladder_file(tmp_path, rung):
+    from icfr_agent_evals.regression import write_ladder_record
+
+    record = {
+        "schema": 1, "ruling": "D-E5", "rung": rung, "cap": 10, "splits": 35,
+        "mean_volume": _LADDER_VOLUMES[rung], "mean_volume_samples": _LADDER_VOLUMES[rung],
+        "false_block_rate": 0.0, "false_block_shortfall": False,
+        "aa_log": {"file": "aa-ci.eval", "sha256": "c" * 64, "eval_id": "E-aa", "run_commit": "2" * 40,
+                   "split": "ci", "epochs": 8, "samples": 200, "model": "mockllm/model"},
+        "recorded": "2026-11-10",
+    }
+    path = tmp_path / "evidence" / "ladder.json"
+    assert write_ladder_record(path, record) == "written"
+    return str(path)
+
+
+def test_cli_without_a_record_keeps_r1_and_says_no_rung_is_recorded(dev_run, cli, capsys, tmp_path):
+    cand = _derive(dev_run, "one-fm016-norecord", _one_fm016_on_a(dev_run))
+    out_json = tmp_path / "report.json"
+    absent = str(tmp_path / "absent" / "ladder.json")
+    assert cli.main(["--baseline", dev_run.path, "--candidate", cand, "--ladder-record", absent,
+                     "--json", str(out_json)]) == 2
+    out = capsys.readouterr().out
+    assert "ladder R1" in out and "no ladder rung is recorded yet" in out and "default R1" in out
+    payload = json.loads(out_json.read_text(encoding="utf-8"))
+    assert payload["ladder"] == "R1" and payload["ladder_recorded"] is False
+    assert any(n.startswith("no ladder rung is recorded yet") for n in payload["notes"])
+
+
+def test_cli_reads_the_recorded_rung(dev_run, cli, capsys, tmp_path):
+    """A single-epoch FM-016 rise triggers under R1 (exit 2) and not under a recorded R2 (exit 0)."""
+    cand = _derive(dev_run, "one-fm016-recorded", _one_fm016_on_a(dev_run))
+    record = _ladder_file(tmp_path, "R2")
+    out_json = tmp_path / "report.json"
+    assert cli.main(["--baseline", dev_run.path, "--candidate", cand, "--ladder-record", record,
+                     "--json", str(out_json)]) == 0
+    out = capsys.readouterr().out
+    assert "regression sign-off check (ladder R2): 0 case(s)" in out
+    assert f"ladder R2 read from {record}" in out and "aa-ci.eval" in out
+    payload = json.loads(out_json.read_text(encoding="utf-8"))
+    assert payload["ladder"] == "R2" and payload["ladder_recorded"] is True and payload["ladder_record"] == record
+    # the matching explicit rung is accepted
+    assert cli.main(["--baseline", dev_run.path, "--candidate", cand, "--ladder-record", record,
+                     "--ladder", "R2"]) == 0
+
+
+@pytest.mark.parametrize("recorded, asked", [("R2", "R1"), ("R2", "R3"), ("R1", "R2"), ("R3", "R1")])
+def test_cli_refuses_a_ladder_that_disagrees_with_the_record(dev_run, cli, capsys, tmp_path, recorded, asked):
+    record = _ladder_file(tmp_path, recorded)
+    assert cli.main(["--baseline", dev_run.path, "--candidate", dev_run.path, "--ladder-record", record,
+                     "--ladder", asked]) == 3
+    captured = capsys.readouterr()
+    assert "RESULT" not in captured.out
+    assert f"--ladder {asked} disagrees with rung {recorded}" in captured.err and "never switched" in captured.err
+
+
+def test_cli_refuses_an_unreadable_ladder_record(dev_run, cli, capsys, tmp_path):
+    bad = tmp_path / "ladder.json"
+    bad.write_text(json.dumps({"rung": "R2"}), encoding="utf-8", newline="\n")
+    assert cli.main(["--baseline", dev_run.path, "--candidate", dev_run.path, "--ladder-record", str(bad)]) == 3
+    assert "ladder record" in capsys.readouterr().err

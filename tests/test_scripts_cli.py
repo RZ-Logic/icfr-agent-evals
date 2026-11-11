@@ -234,7 +234,9 @@ def test_compare_runs_accepts_ladder_r3_and_reaches_the_inputs(tmp_path, capsys)
     """R3 passes the parser: the refusal is about the missing log, not the rung."""
     compare_runs = _load("compare_runs.py")
     missing = str(tmp_path / "missing.eval")
-    assert compare_runs.main(["--baseline", missing, "--candidate", missing, "--ladder", "R3"]) == 3
+    no_record = str(tmp_path / "ladder.json")
+    assert compare_runs.main(["--baseline", missing, "--candidate", missing, "--ladder", "R3",
+                              "--ladder-record", no_record]) == 3
     err = capsys.readouterr().err
     assert "REFUSED" in err and "--ladder" not in err
 
@@ -252,3 +254,16 @@ def test_compare_runs_refuses_an_unknown_ladder_rung_with_exit_3(rung, tmp_path,
 def test_compare_runs_docstring_names_r3_and_the_route_blind_trial():
     doc = _load("compare_runs.py").__doc__
     assert "R1|R2|R3" in doc and "route-blind trial" in doc and "D-E5" in doc
+
+
+def test_compare_runs_help_names_the_ladder_record(capsys):
+    compare_runs = _load("compare_runs.py")
+    with pytest.raises(SystemExit):
+        compare_runs.main(["--help"])
+    assert "--ladder-record" in capsys.readouterr().out
+    assert compare_runs.DEFAULT_LADDER_RECORD == REPO / "docs" / "evidence" / "regression" / "ladder.json"
+
+
+def test_compare_runs_docstring_says_the_recorded_rung_wins():
+    doc = _load("compare_runs.py").__doc__
+    assert "--ladder-record" in doc and "disagrees with a recorded" in doc and "no rung" in doc
