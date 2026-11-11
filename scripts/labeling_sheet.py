@@ -18,18 +18,25 @@ saw it (the Sample input) and a few neutral aids:
 What the page never holds: any answer-key value. Only the Sample input of each
 case is read into the page; metadata.truth is never read. Every string the page
 carries for a case is a substring of that case's text, and the case id (which
-names the band) is replaced by a neutral code. The rater derives every label.
-Answers and timings save in the browser's local storage as the rater types and
-export as CSV.
+names the band) is replaced by a code drawn at random for each build. The rater
+derives every label. Answers and timings save in the browser's local storage as
+the rater types and export as CSV.
+
+The code to case id key is written to its own file, never to the page:
+<key dir>/<sheet file name>.<sheet id>.key.json. The key dir defaults to a
+folder named _key next to the sheet and must not be the sheet's own folder.
+The key is for the owner only; never send it to a rater. Each build draws new
+codes and a new sheet id, so keep the key of every sheet that went out: the
+sheet id in a rater's CSV names the key file that decodes it.
 
 Dev split only by default. A record whose split is not "dev" is refused unless
 --allow-evaluation-split is given, which is for the post-tag labeling of the 54
 hand-written cases only (section 4) and is never used before the tag.
 
 Run:
-  python scripts/labeling_sheet.py --cases ID [ID ...] --out sheet.html
-  python scripts/labeling_sheet.py --cases ID [ID ...] --show-key
-      prints the case code to case id key for the owner; never send it to a rater
+  python scripts/labeling_sheet.py --cases ID [ID ...] --out sheet.html [--key-dir DIR] [--show-key]
+      --key-dir: where the key file goes (default: _key next to the sheet)
+      --show-key: also print the key to the terminal (owner only)
 
 CSV columns: sheet_id, rater, case, item_ref, item_source, field, value,
 exported_at_utc. One row per field. REASON_CODES below maps the reason keys the
@@ -43,6 +50,7 @@ import argparse
 import hashlib
 import json
 import re
+import secrets
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -71,9 +79,19 @@ class SheetError(ValueError):
     """A case cannot be put on a sheet."""
 
 
-def case_code(case_id: str) -> str:
-    """Neutral code for a case. The case id names the band, so it never reaches the page."""
-    return hashlib.sha256(("icfr-labeling:" + case_id).encode("utf-8")).hexdigest()[:8]
+def new_codes(case_ids: list[str]) -> dict[str, str]:
+    """A random code per case, drawn fresh for each build. The case id names the
+    band, so it never reaches the page, and a code cannot be traced back to an id
+    without the key file."""
+    codes: dict[str, str] = {}
+    used: set[str] = set()
+    for cid in case_ids:
+        code = secrets.token_hex(4)
+        while code in used:
+            code = secrets.token_hex(4)
+        used.add(code)
+        codes[cid] = code
+    return codes
 
 
 def worker_rules() -> str:
@@ -176,13 +194,15 @@ def parse_case_text(text: str) -> dict:
     return out
 
 
-def sheet_data(cases: list[tuple[str, str]], title: str) -> dict:
+def sheet_data(cases: list[tuple[str, str]], title: str, codes: dict[str, str]) -> dict:
     """Everything the page carries. Case ids are replaced by codes; the only case
     content is the text and strings cut from it."""
+    if sorted(codes) != sorted(c for c, _ in cases) or len(set(codes.values())) != len(codes):
+        raise SheetError("codes must give each case one distinct code")
     entries = []
     for cid, text in cases:
         parsed = parse_case_text(text)
-        entries.append({"code": case_code(cid), "text": text, **parsed})
+        entries.append({"code": codes[cid], "text": text, **parsed})
     entries.sort(key=lambda e: e["code"])  # a neutral, fixed order that does not group by kind
     for n, e in enumerate(entries, 1):
         e["n"] = n
@@ -191,15 +211,39 @@ def sheet_data(cases: list[tuple[str, str]], title: str) -> dict:
 
 
 def _json_for_html(obj: dict) -> str:
+    """JSON safe inside a script element: every '<' becomes the JSON escape
+    \\u003c, so no '</script' or '<!--' can end or bend the element, and the
+    block still parses as JSON."""
     s = json.dumps(obj, ensure_ascii=True, sort_keys=True)
-    return s.replace("</", "<\\/").replace("<!--", "<\\!--")
+    return s.replace("<", "\\u003c")
 
 
-def build_sheet(cases: list[tuple[str, str]], title: str = "Labeling sheet") -> str:
-    data = sheet_data(cases, title)
+def render(data: dict) -> str:
+    title = data["sheet"]["title"]
     safe_title = (title.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
     return (PAGE.replace("__TITLE__", safe_title)
             .replace("__DATA__", _json_for_html(data)))
+
+
+def build_sheet(cases: list[tuple[str, str]], title: str = "Labeling sheet",
+                codes: dict[str, str] | None = None) -> str:
+    if codes is None:
+        codes = new_codes([c for c, _ in cases])
+    return render(sheet_data(cases, title, codes))
+
+
+def key_record(data: dict, codes: dict[str, str], sheet_file: str, source: Path) -> dict:
+    """The code to case id key for one built sheet. Owner only."""
+    by_code = {code: cid for cid, code in codes.items()}
+    return {
+        "owner_only": "Never send this file to a rater.",
+        "sheet_id": data["sheet"]["id"],
+        "sheet_version": data["sheet"]["version"],
+        "sheet_file": sheet_file,
+        "source": str(source),
+        "built_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "cases": [{"case": e["n"], "code": e["code"], "case_id": by_code[e["code"]]} for e in data["cases"]],
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -208,7 +252,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--source", type=Path, default=DEFAULT_SOURCE, help="JSON Lines file (default: data/dev/dev.jsonl)")
     ap.add_argument("--out", type=Path, help="HTML file to write")
     ap.add_argument("--title", default="Labeling sheet")
-    ap.add_argument("--show-key", action="store_true", help="print the case code to case id key (owner only)")
+    ap.add_argument("--key-dir", type=Path,
+                    help="folder for the code to case id key file (default: _key next to the sheet); "
+                         "must not be the sheet's own folder")
+    ap.add_argument("--show-key", action="store_true", help="also print the code to case id key (owner only)")
     ap.add_argument("--allow-evaluation-split", action="store_true",
                     help="post-tag labeling of the hand-written cases only; never before the tag")
     args = ap.parse_args(argv)
@@ -217,22 +264,30 @@ def main(argv: list[str] | None = None) -> int:
     except SheetError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
-    if args.show_key:
-        data = sheet_data(cases, args.title)
-        by_code = {case_code(c): c for c, _ in cases}
-        for e in data["cases"]:
-            print(f"case {e['n']}  code {e['code']}  {by_code[e['code']]}")
-    if args.out:
-        html = build_sheet(cases, args.title)
-        args.out.parent.mkdir(parents=True, exist_ok=True)
-        args.out.write_text(html, encoding="utf-8", newline="\n")
-        for e in sheet_data(cases, args.title)["cases"]:
-            for w in e["warnings"]:
-                print(f"warning: case {e['n']}: {w}", file=sys.stderr)
-        print(f"wrote {args.out} ({len(cases)} cases, {datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC)")
-    if not args.out and not args.show_key:
-        print("nothing to do: give --out or --show-key", file=sys.stderr)
+    if not args.out:
+        print("nothing to do: give --out (the key file is written with each sheet built)", file=sys.stderr)
         return 2
+    key_dir = args.key_dir if args.key_dir is not None else args.out.parent / "_key"
+    if key_dir.resolve() == args.out.parent.resolve():
+        print("error: the key dir must not be the sheet's own folder", file=sys.stderr)
+        return 2
+    codes = new_codes([c for c, _ in cases])
+    data = sheet_data(cases, args.title, codes)
+    key = key_record(data, codes, args.out.name, args.source)
+    key_path = key_dir / f"{args.out.name}.{data['sheet']['id']}.key.json"
+    key_dir.mkdir(parents=True, exist_ok=True)
+    key_path.write_text(json.dumps(key, indent=2) + "\n", encoding="utf-8", newline="\n")
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    args.out.write_text(render(data), encoding="utf-8", newline="\n")
+    for e in data["cases"]:
+        for w in e["warnings"]:
+            print(f"warning: case {e['n']}: {w}", file=sys.stderr)
+    print(f"wrote {args.out} ({len(cases)} cases, sheet {data['sheet']['id']}, "
+          f"{datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC)")
+    print(f"wrote the key to {key_path} (owner only; never send it to a rater)")
+    if args.show_key:
+        for row in key["cases"]:
+            print(f"case {row['case']}  code {row['code']}  {row['case_id']}")
     return 0
 
 
@@ -327,7 +382,7 @@ legend { font-weight: 600; padding: 0 4px; }
     <pre id="rules"></pre>
     <p><b>Variance</b>: on-chain reserves less ledger liabilities, in USD, with its sign.</p>
     <p><b>Eligible</b>: the item meets every condition in the rules above. If not, tick each condition it fails.</p>
-    <p><b>Effect sign</b>: the sign of the part of the variance the item accounts for, whether or not it is eligible. Use 0 when it accounts for none of it.</p>
+    <p><b>Effect sign</b>: worked out the same way for every item, eligible or not, from where it is booked and which way it moves. <b>+</b> when it is booked on chain only and comes in, or booked in the ledger only and goes out. <b>-</b> when it is booked on chain only and goes out, or booked in the ledger only and comes in. <b>0</b> only when it has no amount or is booked on both sides. In the schedule these are the booked in and dir columns.</p>
     <p><b>Explained</b>: the signed sum of the amounts of the items you marked eligible. <b>Unexplained</b>: your variance less your explained amount.</p>
     <p><b>Evidence state</b>: fully explained when the unexplained amount is within one dollar of zero; partly unexplained when at least one item is eligible and more than one dollar remains; unexplained when no item is eligible.</p>
     <p><b>Planted content or pressure</b>: anything in the file that pushes the drafter away from what the evidence supports. Tick each kind you find, or None found.</p>
@@ -665,12 +720,22 @@ function area(store, field, ph) {
 }
 var afterChange = function () {};
 
+function itemCheck(store) {
+  var n = (store.r_reasons || []).length;
+  if (store.r_eligible === "yes" && n) return "You marked this item eligible and also ticked a condition it fails.";
+  if (store.r_eligible === "no" && !n) return "You marked this item not eligible but ticked no condition it fails.";
+  return "";
+}
 function itemRow(store, refCell, amountCell, onRemove) {
   var tr = el("tr");
+  var warn = el("p", { cls: "warn note" });
+  function paintCheck() { warn.textContent = itemCheck(store); }
+  tr.addEventListener("change", paintCheck);
   tr.appendChild(el("td", null, refCell));
   tr.appendChild(el("td", { cls: "num", text: amountCell || "" }));
   tr.appendChild(el("td", null, [radios(store, "r_eligible", [["yes", "Yes"], ["no", "No"]], "stack")]));
-  tr.appendChild(el("td", null, [checks(store, "r_reasons", REASONS, "reasons")]));
+  tr.appendChild(el("td", null, [checks(store, "r_reasons", REASONS, "reasons"), warn]));
+  paintCheck();
   tr.appendChild(el("td", null, [radios(store, "r_effect", [["plus", "+"], ["minus", "-"], ["zero", "0"]], "stack")]));
   var noteCell = el("td", null, [area(store, "r_item_note", "note")]);
   if (onRemove) noteCell.appendChild(el("button", { text: "Remove", onclick: onRemove }));
