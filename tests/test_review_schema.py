@@ -30,7 +30,8 @@ def test_constants() -> None:
     assert rs.NARRATIVE_VERDICTS == ("none_wrong", "wrong")
     assert rs.AUDIT_VERDICTS == ("real_error", "extractor_error")
     assert rs.ERROR_TYPES[-1] == "other" and "missing_required_element" in rs.ERROR_TYPES
-    assert rs.DEFAULT_WHOLE_NARRATIVE_SCOPE == "routed" and rs.WHOLE_NARRATIVE_SCOPES == ("routed", "hard", "all")
+    assert rs.DEFAULT_WHOLE_NARRATIVE_SCOPE == "hard" and rs.WHOLE_NARRATIVE_SCOPES == ("routed", "hard", "all")
+    assert rs.NARRATIVE_CLASSES == ("routed", "fm_coded", "narrative_only")
     assert rs.DEFAULT_FM_EPOCH_ROUTES == "findings" and rs.FM_EPOCH_ROUTE_MODES == ("findings", "skip")
     assert rs.UNIT_PREFIX == {"finding": "F", "narrative": "N", "fm_audit": "A"}
     assert set(rs.UNIT_PREFIX) == set(rs.ROW_KINDS)
@@ -207,3 +208,16 @@ def test_write_lf_and_sha256(tmp_path: Path) -> None:
     rs.write_lf(path, "a\nb\n")
     assert path.read_bytes() == b"a\nb\n"
     assert rs.sha256_file(path) == hashlib.sha256(b"a\nb\n").hexdigest()
+
+
+def test_narrative_class_helpers() -> None:
+    assert rs.epoch_narrative_class(True, True) == "routed"
+    assert rs.epoch_narrative_class(True, False) == "routed"
+    assert rs.epoch_narrative_class(False, True) == "fm_coded"
+    assert rs.epoch_narrative_class(False, False) == "narrative_only"
+    assert rs.unit_narrative_class(["narrative_only", "fm_coded"]) == "fm_coded"
+    assert rs.unit_narrative_class(["narrative_only", "routed", "fm_coded"]) == "routed"
+    assert rs.unit_narrative_class(["narrative_only"]) == "narrative_only"
+    for bad in ([], [""], ["narrative_only", "code_review"]):
+        with pytest.raises(ValueError):
+            rs.unit_narrative_class(bad)

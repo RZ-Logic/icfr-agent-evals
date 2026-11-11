@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import ast
 import csv
+import dataclasses
 import importlib.util
 import io
 import json
@@ -58,6 +59,8 @@ TEXT_U = "The variance is $7,000. Nothing else is open."
 TEXT_B = "Funds sit in a wallet. The band is M1."
 TEXT_C = "not json {"
 TEXT_D = "The variance is $5,000. The band is M3."
+TEXT_H = "The variance is $5,000. Nothing is open. The band is M2."
+TEXT_H2 = "The variance is $5,000. Nothing is open. The band is M1."
 SITTING = "2026-11-09T09:00:00-05:00/2026-11-09T10:30:00-05:00"
 
 
@@ -95,12 +98,36 @@ def _member(unit, kind, run, case, epoch, reason="", cls="", codes=()):
                      fm_codes=tuple(codes))
 
 
-def build(tmp_path, *, n_runs=2, fm_route="none", name="packet"):
+def classify(units, members):
+    """Set the route_class of every narrative unit and narrative member the way D-J says: an
+    epoch is routed with a finding or unsettleable member, fm_coded with a code and no such
+    route, narrative_only with neither; a unit takes routed, then fm_coded, then narrative_only."""
+    routed = {(m.run_id, m.sample_id, m.epoch) for m in members if m.member_kind in ("finding", "unsettleable")}
+    coded = {(m.run_id, m.sample_id, m.epoch) for m in members if m.fm_codes}
+    members = list(members)
+    by_unit: dict[str, set[str]] = {}
+    for i, m in enumerate(members):
+        if m.member_kind != "narrative":
+            continue
+        ek = (m.run_id, m.sample_id, m.epoch)
+        cls = "routed" if ek in routed else "fm_coded" if ek in coded else "narrative_only"
+        members[i] = dataclasses.replace(m, route_class=cls)
+        by_unit.setdefault(m.unit_id, set()).add(cls)
+    units = [dataclasses.replace(u, route_class=next(c for c in ("routed", "fm_coded", "narrative_only")
+                                                      if c in by_unit[u.unit_id]))
+             if u.row_kind == "narrative" and u.unit_id in by_unit else u for u in units]
+    return units, members
+
+
+def build(tmp_path, *, n_runs=2, fm_route="none", name="packet", narr_only=False):
     """A synthetic packet. Every run: case-a epoch 1 (narrative A with a sweep finding and an
     amount finding, shared by all runs) and its own case-u<i> narrative with one amount
     finding. Run R1 also: case-a epoch 2 (same narrative and findings), case-b epoch 1 (only
     an unsettleable route), case-c epoch 3 (format break, FM-000 audit). fm_route "findings"
-    or "skip" adds case-d epoch 1 on R1: FM-001 with an amount route, as a finding or skipped."""
+    or "skip" adds case-d epoch 1 on R1: FM-001 with an amount route, as a finding or skipped.
+    narr_only adds narrative-only units (no route, no code): case-h on R1 epochs 1 and 2 with
+    one narrative, and the same narrative again on R2 epoch 1 (one unit across both runs), and
+    case-i on R1 epoch 1 with a different narrative (a second unit)."""
     tmp_path = Path(tmp_path)
     tmp_path.mkdir(parents=True, exist_ok=True)
     runs, units, members = [], [], []
@@ -153,8 +180,17 @@ def build(tmp_path, *, n_runs=2, fm_route="none", name="packet"):
         else:
             members.append(_member("", "fm_epoch_route_skipped", r1, "case-d", 1, AMOUNT, "code_review",
                                    ("FM-001",)))
+    if narr_only:
+        n_h, n_i = _narrative("H", "case-h", TEXT_H), _narrative("I", "case-i", TEXT_H2)
+        units += [n_h, n_i]
+        ids.update({"N_H": n_h.unit_id, "N_I": n_i.unit_id})
+        members += [_member(n_h.unit_id, "narrative", r1, "case-h", 1), _member(n_h.unit_id, "narrative", r1, "case-h", 2),
+                    _member(n_i.unit_id, "narrative", r1, "case-i", 1)]
+        if n_runs > 1:
+            members.append(_member(n_h.unit_id, "narrative", runs[1].run_id, "case-h", 1))
+    units, members = classify(units, members)
     cases = tuple(sorted({u.case_id for u in units}))
-    packet = rp.Packet(run_id="dev-test-run", seed=SEED, scope="routed",
+    packet = rp.Packet(run_id="dev-test-run", seed=SEED, scope="hard" if narr_only else "routed",
                        fm_epoch_routes="skip" if fm_route == "skip" else "findings", runs=tuple(runs),
                        case_order=cases, units=tuple(units), members=rp._sort_members(members),
                        case_facts={c: () for c in cases}, case_inputs={c: f"Case file text for {c}." for c in cases})
@@ -1082,3 +1118,91 @@ def test_blinding_check_is_bound_and_chance_follows_the_choices(tmp_path, monkey
     man = json.loads((mdir(env) / "dev-test-run-second-look-manifest.json").read_text(encoding="utf-8"))
     assert man["blinding"]["chance"] == 0.5
     assert any(k.startswith("blind-check/") for k in man["private_files"])
+
+
+# --- Narrative-only units (D-J, option b) -------------------------------------------------------
+
+def _narr_ids(env):
+    return {env.ids["N_H"], env.ids["N_I"]}
+
+
+def test_narrative_only_units_are_not_second_look_units(tmp_path, monkeypatch, capsys):
+    base = build(tmp_path / "base")
+    env = build(tmp_path / "with", narr_only=True)
+    rec_base = rf.load_record(str(base.dir), str(fill(base)))
+    rec = rf.load_record(str(env.dir), str(fill(env)))
+    assert rf.validate_record(rec) == []
+    got, want = rf.second_look_units(rec), rf.second_look_units(rec_base)
+    for run in ("R1", "R2"):
+        ids = {u["first_unit_id"] for u in got[run]}
+        assert not ids & _narr_ids(env), "a narrative-only unit became a second-look unit"
+        # the population is the routed units only, so its size and its draw do not move
+        assert len(got[run]) == len(want[run])
+    assert rf._draw_details(got, 5) == rf._draw_details(want, 5)
+    assert rf.second_look_units(rec)["R1"] and rf.sample_size(len(got["R1"])) == len(got["R1"])
+
+
+def test_second_look_draw_never_draws_a_narrative_only_unit(tmp_path, monkeypatch, capsys):
+    env = _frozen(tmp_path, monkeypatch, capsys, narr_only=True, n_runs=2)
+    _git(monkeypatch, env)
+    out = tmp_path / "second-look"
+    assert rf.main(draw_argv(env)) == 0, capsys.readouterr().err
+    sl_map = rs.read_csv(out / rf.SECOND_LOOK_MAP_FILE, rs.SECOND_LOOK_MAP_COLUMNS)
+    assert sl_map and not {r["first_unit_id"] for r in sl_map} & _narr_ids(env)
+    sl_rows = rs.read_csv(out / rs.PACKET_FILES["packet"], rs.PACKET_COLUMNS)
+    assert not {r["narrative"] for r in sl_rows} & {TEXT_H, TEXT_H2}
+    meta = json.loads((out / rf.SECOND_LOOK_META_FILE).read_text(encoding="utf-8"))
+    rec = rf.load_frozen_record(str(env.dir))
+    for run, d in meta["runs"].items():
+        assert d["N"] == len(rf.second_look_units(rec)[run])
+    # every second-look unit of this tiny population is drawn, and none is narrative-only
+    assert {r["first_unit_id"] for r in sl_map if r["row_kind"] == "narrative"} == {
+        u["first_unit_id"] for units in rf.second_look_units(rec).values() for u in units}
+
+
+def test_blind_check_pool_holds_no_narrative_only_unit(tmp_path, monkeypatch, capsys):
+    env = build(tmp_path, narr_only=True)
+    monkeypatch.setattr(rf, "rederive_check", lambda rec, runs: [])
+    code, _, err = do_freeze(monkeypatch, capsys, env)
+    assert code == 0, err
+    _git(monkeypatch, env)
+    assert rf.main(blind_argv(env, "alpha=Model A,beta=Model B")) == 0, capsys.readouterr().err
+    sheet = rs.read_csv(tmp_path / "blind-check" / rf.BLIND_CHECK_CSV, rf.BLIND_CHECK_COLUMNS)
+    assert sheet and not {r["narrative"] for r in sheet} & {TEXT_H, TEXT_H2}
+
+
+def test_manifest_counts_narrative_units_by_class(tmp_path, monkeypatch, capsys):
+    env = build(tmp_path, fm_route="findings", narr_only=True)
+    code, _, err = do_freeze(monkeypatch, capsys, env)
+    assert code == 0, err
+    man = json.loads((mdir(env) / "dev-test-run-manifest.json").read_text(encoding="utf-8"))
+    c = man["counts"]
+    # routed: N_A, N_U1, N_U2, N_B (unsettleable route), N_D (a finding on an FM-coded epoch);
+    # fm_coded: N_C; narrative_only: N_H (one unit over three epochs of two runs) and N_I
+    assert c["narrative_units_by_class"] == {"fm_coded": 1, "narrative_only": 2, "routed": 5}
+    assert c["narrative_units"] == 8
+    assert c["narrative_members_by_class"]["narrative_only"] == 4
+    assert sum(c["narrative_members_by_class"].values()) == c["narrative_members"]
+    assert man["whole_narrative_scope"] == "hard"
+    assert set(man["verdict_distribution_by_route_class"]) == {"narrative_sweep", "code_review"}
+
+
+def test_a_wrong_narrative_class_is_refused(tmp_path, monkeypatch, capsys):
+    env = build(tmp_path, narr_only=True)
+    rec = rf.load_record(str(env.dir), str(fill(env)))
+    assert rf._validate_narrative_classes(rec) == []
+
+    def swap(unit_id, new):
+        members = tuple({**m, "route_class": new} if m["unit_id"] == unit_id else m for m in rec.members)
+        return dataclasses.replace(rec, members=members)
+
+    gaps = rf._validate_narrative_classes(swap(env.ids["N_H"], "routed"))
+    assert any("expected 'narrative_only'" in g for g in gaps)
+    blank = rf._validate_narrative_classes(swap(env.ids["N_A"], ""))
+    assert any("expected 'routed'" in g for g in blank)
+    units = {**rec.units, env.ids["N_I"]: {**rec.units[env.ids["N_I"]], "route_class": "routed"}}
+    assert any("narrative unit" in g for g in rf._validate_narrative_classes(dataclasses.replace(rec, units=units)))
+    # a unit classed narrative_only can never hold a routed epoch
+    units = {**rec.units, env.ids["N_A"]: {**rec.units[env.ids["N_A"]], "route_class": "narrative_only"}}
+    with pytest.raises(rf.Refused, match="not 'routed'"):
+        rf.second_look_units(dataclasses.replace(rec, units=units))

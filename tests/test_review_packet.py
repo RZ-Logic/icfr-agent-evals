@@ -282,6 +282,108 @@ def test_scope_routed_hard_all(base_log, truths, tmp_path):
     assert counts == {"routed": (2, 2), "hard": (4, 4), "all": (6, 6)}
 
 
+def _narrative_only_eps(truths):
+    """EDGE is difficulty-bearing, STD is not. EDGE: epoch 1 routed; epochs 2 and 3 the same
+    unrouted narrative; epoch 4 a second unrouted narrative; epoch 5 an FM-coded epoch with no
+    route; epoch 6 unrouted with the very text of the routed epoch 1. STD: one routed epoch,
+    five unrouted epochs."""
+    te, ts = truths[EDGE], truths[STD]
+    return [
+        E(EDGE, 1, answer(te, f"{S1} {S2}"), route(AMOUNT)),
+        E(EDGE, 2, answer(te, "Unrouted narrative two.")),
+        E(EDGE, 3, answer(te, "Unrouted narrative two.")),
+        E(EDGE, 4, answer(te, "Unrouted narrative four.")),
+        E(EDGE, 5, answer(te, "Coded narrative five."), route(fms=("FM-003",))),
+        E(EDGE, 6, answer(te, f"{S1} {S2}")),
+        E(STD, 1, answer(ts, f"{S1} {S2}"), route(AMOUNT)),
+        E(STD, 2, answer(ts, "Std unrouted narrative two.")),
+        E(STD, 3, answer(ts, "Std unrouted narrative three.")),
+        E(STD, 4, answer(ts, "Std unrouted narrative three.")),
+        E(STD, 5, answer(ts, "Std unrouted narrative five.")),
+        E(STD, 6, answer(ts, "Std unrouted narrative six.")),
+    ]
+
+
+def test_default_scope_is_hard(base_log, truths, tmp_path):
+    assert rs.DEFAULT_WHOLE_NARRATIVE_SCOPE == "hard"
+    assert rs.WHOLE_NARRATIVE_SCOPES == ("routed", "hard", "all")  # routed and all stay as explicit options
+    assert rp.parser().get_default("whole_narrative_scope") == "hard"
+    assert "default hard" in SCRIPT.read_text(encoding="utf-8").split('"""')[1]
+    eps = _narrative_only_eps(truths)
+    default = build(base_log, tmp_path / "d", {"alpha": (MODEL_A, copy.deepcopy(eps))})
+    hard = build(base_log, tmp_path / "h", {"alpha": (MODEL_A, copy.deepcopy(eps))}, scope="hard")
+    routed = build(base_log, tmp_path / "r", {"alpha": (MODEL_A, copy.deepcopy(eps))}, scope="routed")
+    assert default.scope == "hard"
+    assert default.units == hard.units and default.members == hard.members
+    assert len(units(routed, "narrative")) < len(units(default, "narrative"))
+
+
+def test_narrative_only_units_on_hard_cases_only(base_log, truths, tmp_path):
+    eps = _narrative_only_eps(truths)
+    p = build(base_log, tmp_path / "n", {"alpha": (MODEL_A, eps)})
+    by_text = {u.narrative: u for u in units(p, "narrative")}
+    only_ids = {u.unit_id for u in units(p, "narrative") if u.route_class == rs.NARRATIVE_CLASS_ONLY}
+    only = {u.narrative for u in units(p, "narrative") if u.unit_id in only_ids}
+    # one unit per distinct unrouted, uncoded narrative of the hard case; none on the non-hard case
+    assert only == {"Unrouted narrative two.", "Unrouted narrative four."}
+    assert not any(t.startswith("Std unrouted") for t in by_text)
+    assert by_text["Unrouted narrative two."].case_id == EDGE
+    two = by_text["Unrouted narrative two."].unit_id
+    assert len([m for m in members(p, "narrative") if m.unit_id == two]) == 2
+    # no finding, audit unit or route member touches a narrative-only unit
+    assert not any(only_ids & set(u.narrative_unit_ids) for u in p.units if u.row_kind != "narrative")
+    only_epochs = {(m.run_id, m.sample_id, m.epoch) for m in members(p, "narrative") if m.unit_id in only_ids}
+    assert not any((m.run_id, m.sample_id, m.epoch) in only_epochs for m in p.members if m.member_kind != "narrative")
+    # the FM-coded epoch is its own class; the routed narrative is routed
+    assert by_text["Coded narrative five."].route_class == rs.NARRATIVE_CLASS_FM_CODED
+    assert by_text[f"{S1} {S2}"].route_class == rs.NARRATIVE_CLASS_ROUTED
+    # an unrouted epoch that repeats a routed narrative joins that unit; its member says what the epoch is
+    routed_unit = by_text[f"{S1} {S2}"].unit_id
+    classes = sorted(m.route_class for m in members(p, "narrative") if m.unit_id == routed_unit)
+    assert classes == [rs.NARRATIVE_CLASS_ONLY, rs.NARRATIVE_CLASS_ROUTED]
+    # explicit scopes keep their meaning: routed drops narrative-only units, all adds the non-hard ones
+    r = build(base_log, tmp_path / "r", {"alpha": (MODEL_A, copy.deepcopy(eps))}, scope="routed")
+    assert not [u for u in units(r, "narrative") if u.route_class == rs.NARRATIVE_CLASS_ONLY]
+    a = build(base_log, tmp_path / "a", {"alpha": (MODEL_A, copy.deepcopy(eps))}, scope="all")
+    assert {u.narrative for u in units(a, "narrative") if u.route_class == rs.NARRATIVE_CLASS_ONLY} == {
+        "Unrouted narrative two.", "Unrouted narrative four.", "Std unrouted narrative two.",
+        "Std unrouted narrative three.", "Std unrouted narrative five.", "Std unrouted narrative six."}
+
+
+def test_narrative_only_one_unit_across_runs(base_log, truths, tmp_path):
+    te = truths[EDGE]
+    eps = [E(EDGE, 1, answer(te, "Same unrouted narrative.")), E(EDGE, 2, answer(te, "Same unrouted narrative."))]
+    p = build(base_log, tmp_path / "x", {"alpha": (MODEL_A, eps), "beta": (MODEL_B, copy.deepcopy(eps))})
+    (u,) = units(p, "narrative")
+    assert u.route_class == rs.NARRATIVE_CLASS_ONLY
+    assert len(members(p, "narrative")) == 4 and units(p, "finding") == [] and units(p, "fm_audit") == []
+
+
+def test_narrative_only_marked_in_every_file_and_count(base_log, truths, tmp_path):
+    eps = _narrative_only_eps(truths)
+    p = build(base_log, tmp_path / "b", {"alpha": (MODEL_A, eps)})
+    out = tmp_path / "files"
+    rp.write_packet(p, str(out))
+    rows = rs.read_csv(out / rs.PACKET_FILES["packet"], rs.PACKET_COLUMNS)
+    narr = [r for r in rows if r["row_kind"] == "narrative"]
+    assert {r["route_class"] for r in narr} == set(rs.NARRATIVE_CLASSES)
+    assert all(r["route_class"] in ("narrative_sweep", "code_review") for r in rows if r["row_kind"] == "finding")
+    assert all(r["route_class"] == "" for r in rows if r["row_kind"] == "fm_audit")
+    mem = rs.read_csv(out / rs.PACKET_FILES["members"], rs.MEMBER_COLUMNS)
+    assert {m["route_class"] for m in mem if m["member_kind"] == "narrative"} == set(rs.NARRATIVE_CLASSES)
+    assert sum(1 for m in mem if m["member_kind"] == "narrative" and m["route_class"] == "narrative_only") == 4
+    t = json.loads((out / rs.PACKET_FILES["summary"]).read_text(encoding="utf-8"))["totals"]
+    assert t["narrative_units_by_class"] == {"routed": 2, "fm_coded": 1, "narrative_only": 2}
+    assert sum(t["narrative_units_by_class"].values()) == t["narrative_units"] == 5
+    assert sum(t["narrative_members_by_class"].values()) == t["narrative_members"]
+    assert t["narrative_members_by_class"]["narrative_only"] == 4  # epochs 2, 3, 4, 6 of the hard case
+    # a narrative row of the blank verdict file carries no class: the reviewer records none
+    blank = [r for r in rs.read_rb7_csv(out / rs.PACKET_FILES["blank"]) if r["row_kind"] == "narrative"]
+    assert len(blank) == 5 and all(r["route_class"] == "" and r["route_key"] == "" for r in blank)
+    q = rp.load_packet(str(out))
+    assert q.units == p.units and q.members == p.members
+
+
 def test_fm_epoch_routes_switch(base_log, truths, tmp_path):
     t = truths[STD]
     eps = [E(STD, 1, answer(t, f"{S1} {S2}"), route(AMOUNT, fms=("FM-003",)))]
@@ -560,7 +662,7 @@ def test_csv_lf_only(base_log, truths, tmp_path):
     for rel, sha in meta["files"].items():
         assert rs.sha256_file(out / rel) == sha
     assert set(meta["files"]) == set(rs.PACKET_FILES.values()) - {rs.PACKET_FILES["meta"]}
-    assert meta["scope"] == "routed" and meta["fm_epoch_routes"] == "findings" and meta["seed"] == SEED
+    assert meta["scope"] == "hard" and meta["fm_epoch_routes"] == "findings" and meta["seed"] == SEED
 
 
 def test_load_packet_round_trip(base_log, truths, tmp_path):

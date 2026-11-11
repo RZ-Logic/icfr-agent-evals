@@ -489,9 +489,38 @@ def _validate_members(rec: Record) -> list[str]:
             gaps.append(f"item 7: member map: an epoch carrying a {kind} member is in no narrative unit")
     for pair in sorted(fm_pairs - audited):
         gaps.append(f"item 7: member map: an FM-coded epoch has no audit unit for {pair[1]}")
+    gaps.extend(_validate_narrative_classes(rec))
     for uid in rec.units:
         if not used[uid]:
             gaps.append(f"item 7: unit {uid} has no member in the member map")
+    return gaps
+
+
+def _validate_narrative_classes(rec: Record) -> list[str]:
+    """Item 7: every narrative member and narrative unit says what it is (D-J, option b).
+    An epoch is routed when it carries a finding or unsettleable member, fm_coded when it
+    carries an FM code and no such route, narrative_only otherwise; a unit takes the first
+    of routed, fm_coded, narrative_only that any of its member epochs has. A narrative-only
+    unit therefore has no finding and no audit unit on any of its epochs."""
+    gaps: list[str] = []
+    routed_epochs = {_epoch_key(m) for m in rec.members if m["member_kind"] in ("finding", "unsettleable")}
+    coded_epochs = {_epoch_key(m) for m in rec.members if _member_list(m, "fm_codes")}
+    member_classes: dict[str, set[str]] = {}
+    for m in rec.members:
+        if m["member_kind"] != "narrative" or m["unit_id"] not in rec.units:
+            continue
+        ek = _epoch_key(m)
+        want = rs.epoch_narrative_class(ek in routed_epochs, ek in coded_epochs)
+        if m["route_class"] != want:
+            gaps.append(f"item 7: member map: a narrative member of unit {m['unit_id']} has class "
+                        f"{m['route_class']!r}, expected {want!r}")
+        member_classes.setdefault(m["unit_id"], set()).add(want)
+    for uid, unit in rec.units.items():
+        if unit["row_kind"] != "narrative" or uid not in member_classes:
+            continue
+        want = rs.unit_narrative_class(member_classes[uid])
+        if unit["route_class"] != want:
+            gaps.append(f"item 7: narrative unit {uid} has class {unit['route_class']!r}, expected {want!r}")
     return gaps
 
 
@@ -736,6 +765,12 @@ def build_manifest(rec: Record, *, run_id: str, run_commit: str, reviewer: str,
                                                      ROUTE_CLASSES),
             "narrative_units": sum(1 for u in rec.units.values() if u["row_kind"] == "narrative"),
             "narrative_members": sum(1 for m in rec.members if m["member_kind"] == "narrative"),
+            "narrative_units_by_class": _counter_dict(
+                Counter(u["route_class"] for u in rec.units.values() if u["row_kind"] == "narrative"),
+                rs.NARRATIVE_CLASSES),
+            "narrative_members_by_class": _counter_dict(
+                Counter(m["route_class"] for m in rec.members if m["member_kind"] == "narrative"),
+                rs.NARRATIVE_CLASSES),
             "fm_audit_rows": sum(1 for u in rec.units.values() if u["row_kind"] == "fm_audit"),
             "unsettleable_by_row": _counter_dict(Counter(
                 _unsettleable_row_id(m) for m in rec.members if m["member_kind"] == "unsettleable")),
@@ -964,7 +999,13 @@ def worker_run_ids(rec: Record) -> list[str]:
 def second_look_units(rec: Record) -> dict[str, list[dict]]:
     """Per worker run: one unit per narrative unit with at least one routed member epoch in
     that run (an epoch carrying a finding or unsettleable member), with every finding unit
-    holding a member on those epochs, its first class and its route stratum."""
+    holding a member on those epochs, its first class and its route stratum.
+
+    This is the D-D second-look population (pre-registration section 8, "a second-look unit is
+    one distinct routed narrative"). A narrative-only unit (an unrouted, uncoded narrative of
+    a difficulty-bearing case, D-J) is never a unit here: it has no routed member epoch, so it
+    is neither counted in N nor sampled. An FM-coded narrative with no route is not a unit
+    either; with the D-H default its routes are findings, so an FM-coded epoch that routes is."""
     verdicts = _verdict_of(rec)
     out: dict[str, list[dict]] = {}
     for run in worker_run_ids(rec):
@@ -976,6 +1017,9 @@ def second_look_units(rec: Record) -> dict[str, list[dict]]:
             nu = narrative_of.get(_epoch_key(m))
             if nu is None:
                 raise Refused(f"a routed epoch of run {run} is in no narrative unit")
+            if rec.units[nu].get("route_class") != rs.NARRATIVE_CLASS_ROUTED:
+                raise Refused(f"narrative unit {nu} holds a routed epoch of run {run} but is classed "
+                              f"{rec.units[nu].get('route_class')!r}, not {rs.NARRATIVE_CLASS_ROUTED!r}")
             slot = by_unit.setdefault(nu, {"findings": set(), "classes": set(), "epochs": set()})
             slot["epochs"].add(_epoch_key(m))
             slot["classes"].add(m["route_class"])
