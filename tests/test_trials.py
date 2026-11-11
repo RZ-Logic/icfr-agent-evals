@@ -249,6 +249,77 @@ def test_format_break_is_never_removed_by_the_audit():
     assert any("parse failure" in r for r in e.reasons)
 
 
+# --- D-R5: the code audit never removes FM-000 ---------------------------------------------------
+
+def _format_break_epoch(sid, epoch, *, extra_correctness=(), injection=None):
+    """FM-000 on every trial anchor; extra_correctness adds codes on the correctness score."""
+    fb = _score(0, ["FM-000"], ["format break: not one JSON object"])
+    corr = _score(0, ["FM-000", *extra_correctness], ["format break: not one JSON object"],
+                  details={"structured_points": 3})
+    over = {"correctness": corr, "fabrication": fb, "reconciling": fb, "completeness": fb}
+    if injection is not None:
+        over["injection"] = injection
+    return sample(sid, epoch, **over)
+
+
+def test_d_r5_rule_is_named_and_applied_before_any_audit_removal():
+    assert trials.AUDIT_NEVER_REMOVED == frozenset({"FM-000"})
+    every_extractor = lambda code: "extractor_error"  # noqa: E731
+    assert trials.audit_removed_codes(("FM-000",), every_extractor) == frozenset()
+    assert trials.audit_removed_codes(("FM-000", "FM-001"), every_extractor) == frozenset({"FM-001"})
+    assert trials.audit_removed_codes(("FM-001",), lambda code: "real_error") == frozenset()
+    assert trials.audit_removed_codes(("FM-001",), lambda code: None) == frozenset()
+
+
+def test_d_r5_fm000_ruled_extractor_error_keeps_the_epoch_failing_in_audit_adjusted():
+    samples = clean("a", e1=_format_break_epoch("a", 1))
+    rec = record_for(samples, overrides={("a", 1, "FM-000"): "extractor_error"})
+    assert any(r["verdict"] == "extractor_error" for r in rec.rows), "the audit row must say extractor_error"
+    settled, audit, blind = all_three(samples, rec)
+    for rep in (settled, audit, blind):
+        assert rep.pass_k == {"a": 0}
+    e, s = epoch_of(audit, "a", 1), epoch_of(settled, "a", 1)
+    assert not e.success and e.removed_codes == () and e.failure_modes == ("FM-000",)
+    assert any("parse failure" in r for r in e.reasons)
+    assert e.anchors == s.anchors and all(e.anchors[a] == 0 for a in ANCHORS)
+
+
+def test_d_r5_co_occurring_code_is_removed_but_the_epoch_still_fails_on_fm000():
+    s1 = _format_break_epoch("a", 1, extra_correctness=["FM-001"], injection=_score(0, ["FM-006"]))
+    samples = clean("a", e1=s1)
+    rec = record_for(samples, audit="extractor_error")  # every audit row, FM-000 included
+    settled, audit = trials.review_settled_trial(samples, rec, k=4), trials.audit_adjusted_trial(samples, rec, k=4)
+    e, s = epoch_of(audit, "a", 1), epoch_of(settled, "a", 1)
+    assert set(e.removed_codes) == {"FM-001", "FM-006"}
+    assert e.failure_modes == ("FM-000",) and not e.success
+    assert [r for r in e.reasons if r.startswith("FM codes")] == ["FM codes ['FM-000'] (codes final)"]
+    assert any("parse failure" in r for r in e.reasons)
+    # nothing is restored on an FM-000 epoch: FM-001 is gone but correctness stays as logged
+    assert e.anchors == s.anchors and e.anchors[C] == 0
+    assert audit.pass_k == {"a": 0} and settled.pass_k == {"a": 0}
+
+
+def test_d_r5_anchor_means_treat_a_format_break_the_same_in_both_figures():
+    s1 = _format_break_epoch("a", 1, extra_correctness=["FM-001"])
+    s2 = sample("b", 2, correctness=_score(0, ["FM-001"], details={"structured_points": 3}))
+    samples = clean("a", e1=s1) + clean("b", e2=s2)
+    rec = record_for(samples, audit="extractor_error")
+    res = trials.figures(samples, rec, k=4)
+    got = {k: (v["passed"], v["n"]) for k, v in res["figures"].items()}
+    # sample b's FM-001 is removed and b passes audit-adjusted; sample a fails both on FM-000
+    assert got["review_settled"] == (0, 2) and got["audit_adjusted"] == (1, 2)
+    assert res["figures"]["audit_adjusted"]["per_sample"] == {"a": 0, "b": 1}
+    means = res["anchor_means"]
+    # every anchor: a's epoch 1 is 0 in both figures; only b's restored correctness differs
+    for a in (F, R, K):
+        assert means[a]["review_settled"]["mean"] == means[a]["audit_adjusted"]["mean"] == pytest.approx(7 / 8 * 3)
+    assert means[C]["review_settled"]["mean"] == pytest.approx(6 / 8 * 3)
+    assert means[C]["audit_adjusted"]["mean"] == pytest.approx(7 / 8 * 3)
+    a_settled = res["reports"]["review_settled"].samples["a"].epochs
+    a_audit = res["reports"]["audit_adjusted"].samples["a"].epochs
+    assert [e.anchors for e in a_settled] == [e.anchors for e in a_audit]
+
+
 def _fm015_sample(epoch, *, drop_item=False):
     truth = make_truth("ETH", case_id="dev-trials-fm015")
     meta = to_sample(CaseFile(truth, {}, "case dev-trials-fm015")).metadata
@@ -505,6 +576,18 @@ def test_record_off_the_ruled_packet_modes_is_refused(meta, message):
     rec.meta.update(meta)
     with pytest.raises(trials.RecordError, match=message):
         trials.review_settled_trial(samples, rec, k=4)
+
+
+def test_d_j_routed_scope_record_is_refused_by_every_record_figure():
+    samples = clean("a", e2=sample("a", 2, correctness=_score(3, [], [AMOUNT], details={"structured_points": 3})))
+    for scope in ("hard", "all"):
+        assert trials.review_settled_trial(samples, record_for(samples, scope=scope), k=4).pass_k == {"a": 1}
+    rec = record_for(samples, scope="routed")
+    for fn in (trials.review_settled_trial, trials.audit_adjusted_trial, trials.figures):
+        with pytest.raises(trials.RecordError, match="D-J") as err:
+            fn(samples, rec, k=4)
+        assert any("'routed'" in g for g in err.value.gaps)
+    assert trials.D_J_SCOPES == frozenset({"hard", "all"})
 
 
 def test_record_that_does_not_match_the_log_is_refused():

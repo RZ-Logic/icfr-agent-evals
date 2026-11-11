@@ -31,6 +31,8 @@ and prints the commit trailer. It never runs git and never commits: the owner co
 and pushes the manifest. At least 48 hours later `second-look-draw` checks the freeze
 commit (through git_commit_info, which runs only `git show`) and writes a second-look
 packet with fresh unit ids; `second-look-score` reports intra-rater agreement only.
+`validate` and `freeze` refuse a packet whose recorded whole-narrative scope is not hard
+or all (D-J, option b): a routed-scope packet is never frozen.
 
 This script never sets, suggests or edits a verdict, never computes a review-settled,
 audit-adjusted, route-blind or code-only figure, and reports no score. Its own source
@@ -98,6 +100,10 @@ BOOTSTRAP_RESAMPLES = 10_000
 GATE_MIN_PER_CLASS, GATE_KAPPA_LOWER = 10, 0.60
 BLIND_CHECK_UNITS, BLIND_CHECK_CHANCE = 40, 0.25
 FULL_RUN_WORKER_RUNS = 4
+# D-J (option b, ruled 2026-11-10): a record is frozen only from a packet whose whole-narrative
+# scope reads every narrative of a difficulty-bearing case. Scope routed stays a packet option
+# for exploration, but its record is never frozen (trials.py refuses it for settlement too).
+FREEZE_SCOPES: tuple[str, ...] = ("hard", "all")
 AGREEMENT_LABEL = "intra-rater"
 SECOND_LOOK_STATEMENT = ("The second look was made without access to the first verdicts and with the "
                          "worker model hidden. It reports agreement only.")
@@ -524,6 +530,18 @@ def _validate_narrative_classes(rec: Record) -> list[str]:
     return gaps
 
 
+def check_packet_scope(rec: Record) -> list[str]:
+    """D-J (option b): the packet's recorded whole-narrative scope is hard or all. A packet built
+    with --whole-narrative-scope routed leaves the narrative-only units of the difficulty-bearing
+    cases unread, so its record is never frozen and never settled."""
+    meta = rec.meta if isinstance(rec.meta, dict) else {}
+    scope = meta.get("scope")
+    if scope in FREEZE_SCOPES:
+        return []
+    return [f"D-J: the packet's whole-narrative scope is {scope!r}; a record is frozen only from a packet "
+            f"built with scope {' or '.join(FREEZE_SCOPES)} (rebuild it with --whole-narrative-scope hard)"]
+
+
 def check_packet_hashes(rec: Record) -> list[str]:
     """Item 8: every file packet-meta.json lists exists and hashes to it, and the list
     covers every packet file but the meta file itself."""
@@ -546,7 +564,8 @@ def check_packet_hashes(rec: Record) -> list[str]:
 def validate_record(rec: Record, *, reviewer: str | None = None, freeze_date: str | None = None,
                     packet_checks: bool = True, not_before: date | None = None) -> list[str]:
     """Every gap of the record against section 8.2 items 1 to 8; [] when complete.
-    packet_checks=False skips items 7 and 8 (the second-look packet has no audit units).
+    packet_checks=False skips items 7 and 8 and the D-J scope check (the second-look packet
+    has no audit units, and it is drawn from a first packet whose scope was checked at freeze).
     not_before refuses a row dated before that date (the second look's draw)."""
     gaps: list[str] = []
     freeze = None
@@ -586,6 +605,7 @@ def validate_record(rec: Record, *, reviewer: str | None = None, freeze_date: st
         if not seen[uid]:
             gaps.append(f"item 2: {unit['row_kind']} unit {uid} has no row")
     if packet_checks:
+        gaps.extend(check_packet_scope(rec))
         gaps.extend(_validate_members(rec))
         gaps.extend(check_packet_hashes(rec))
     return gaps

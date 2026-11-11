@@ -13,8 +13,9 @@ from every (sample, epoch) score in log.samples, never from Inspect's reduced sc
   difficulty-bearing cases carry a whole-narrative verdict only (D-J).
 - audit_adjusted_trial: the review-settled trial with every FM code the mandatory
   code audit (fm_audit.csv) rules `extractor_error` removed, the anchor that code
-  lowered taking the score it would have had without it. A sensitivity figure,
-  never the score of record.
+  lowered taking the score it would have had without it. FM-000 is never removed
+  (D-R5): a parse failure fails this figure too. A sensitivity figure, never the
+  score of record.
 - route_blind_trial: no FM code, no unsettleable route, and every anchor 3 once
   settleable routes count as passed; every other rule stands. The most review can
   give, the trial section 10(a) reads (D-E5). It reads the log alone.
@@ -63,9 +64,15 @@ CORRECTNESS, FABRICATION, RECONCILING, COMPLETENESS = rel.TRIAL_ANCHORS
 FULL_MARKS = rel.FULL_MARKS
 FORMAT_BREAK_CODE = "FM-000"
 CORRECTNESS_CODES: frozenset[str] = frozenset({"FM-001", "FM-002", "FM-003", "FM-016"})
+# D-R5 (owner ruling 2026-11-10): the mandatory code audit never removes FM-000. A
+# parse failure fails whatever review or the audit finds, so an audit row on FM-000
+# ruled extractor_error leaves the epoch failing on FM-000 in the audit-adjusted figure,
+# and its anchors stay as logged (with no parsed output there is no score to restore).
+# audit_removed_codes applies this rule before any audit removal.
+AUDIT_NEVER_REMOVED: frozenset[str] = frozenset({FORMAT_BREAK_CODE})
 # The trial anchor each per-epoch code lowers. FM-006 has its own scorer outside the
 # trial anchors and enters the trial through its code only. FM-000 zeroes every anchor
-# and is never removed (a parse failure fails whatever review finds).
+# and is never removed (D-R5, AUDIT_NEVER_REMOVED).
 CODE_ANCHOR: dict[str, str] = {
     "FM-001": CORRECTNESS, "FM-002": CORRECTNESS, "FM-003": CORRECTNESS, "FM-016": CORRECTNESS,
     "FM-005": FABRICATION, "FM-015": RECONCILING, "FM-004": COMPLETENESS,
@@ -550,6 +557,13 @@ def _reconciling_without_fm015(sample: Any) -> float | None:
     return 0.0
 
 
+def audit_removed_codes(codes: Iterable[str], audit_verdict: Callable[[str], str | None]) -> frozenset[str]:
+    """The codes of one epoch the audit-adjusted figure removes: those the audit rules
+    extractor_error, less every code in AUDIT_NEVER_REMOVED. D-R5: FM-000 is never
+    removed, whatever its audit row says, so the epoch keeps failing on it."""
+    return frozenset(c for c in codes if c not in AUDIT_NEVER_REMOVED and audit_verdict(c) == EXTRACTOR_ERROR)
+
+
 def _settle(f: _Facts, *, finding_verdict: Callable[[str], str], narrative: tuple[str, tuple[str, ...]] | None,
             narrative_required: bool, removed: frozenset[str] = frozenset()) -> EpochResult:
     """Apply verdicts to one epoch through the settlement table (section 6, Settlement by code)."""
@@ -557,7 +571,8 @@ def _settle(f: _Facts, *, finding_verdict: Callable[[str], str], narrative: tupl
 
     reasons: list[str] = []
     anchors: dict[str, float | None] = dict(f.anchors)
-    removed_codes = tuple(c for c in f.codes if c in removed and c != FORMAT_BREAK_CODE)
+    # D-R5 again, so no caller can pass FM-000 in `removed`.
+    removed_codes = tuple(c for c in f.codes if c in removed and c not in AUDIT_NEVER_REMOVED)
     remaining = tuple(c for c in f.codes if c not in removed_codes)
     review_found: list[str] = []
     omissions_found = 0
@@ -584,6 +599,8 @@ def _settle(f: _Facts, *, finding_verdict: Callable[[str], str], narrative: tupl
                      for r in settlement.rows_for(key, rs_))
 
     # Audit-adjusted: the anchor a removed code lowered takes the score it would have had.
+    # On an FM-000 epoch nothing is restored (D-R5): a co-occurring code ruled
+    # extractor_error is removed, but the anchors stay as logged and the epoch fails.
     if removed_codes and FORMAT_BREAK_CODE not in f.codes:
         removed_set = set(removed_codes)
         if removed_set & CORRECTNESS_CODES and not remaining_corr and anchors[CORRECTNESS] is not None:
@@ -734,7 +751,7 @@ def _reviewed(kind: str, log_or_samples: Any, record: Any, *, k: int | None, run
         required = f.routed or bool(f.codes) or _is_hard(f.case_kind)
         removed: frozenset[str] = frozenset()
         if kind == AUDIT_ADJUSTED:
-            removed = frozenset(c for c in f.codes if view.audits.get((sid, ep, c)) == EXTRACTOR_ERROR)
+            removed = audit_removed_codes(f.codes, lambda c, sid=sid, ep=ep: view.audits.get((sid, ep, c)))
         results.append(_settle(f, finding_verdict=verdict_of, narrative=narrative, narrative_required=required,
                                removed=removed))
     return _report(kind, k, results)
@@ -754,7 +771,8 @@ def audit_adjusted_trial(log_or_samples: Any, record: Any, *, k: int | None = No
                          require_complete: bool = True) -> TrialReport:
     """The review-settled trial with every FM code fm_audit.csv rules `extractor_error`
     removed; the anchor the code lowered takes the score it would have had without it.
-    FM-000 is never removed. A sensitivity figure, never the score of record."""
+    FM-000 is never removed (D-R5, audit_removed_codes): an epoch with a parse failure
+    fails here whatever the audit rules. A sensitivity figure, never the score of record."""
     return _reviewed(AUDIT_ADJUSTED, log_or_samples, record, k=k, run_id=run_id, require_complete=require_complete)
 
 
