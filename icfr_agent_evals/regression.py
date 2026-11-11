@@ -7,13 +7,24 @@ reduced scores (section 6):
       on per-sample content-pass^4, Holm-corrected as one family of six at
       FAMILY_ALPHA. A dimension no record scores (Calibration, reported and not
       scored in Phase 1, and Robustness) enters at p = 1 and still counts in the family.
+      The content-pass^4 test reads the route-blind trial (section 6, owner
+      decision D-E5, 2026-11-10; route_blind_epoch): no FM code, no unsettleable
+      route, and every trial anchor 3 once each settleable route counts as passed.
+      It never reads the code-only trial, in which every routed epoch fails.
   (b) fabrication rule: FM-005 and FM-015 each get a one-sided exact McNemar test
       on per-case indicators (the code fires on any epoch) at FABRICATION_ALPHA,
       outside the Holm family.
   (c) regression sign-off check: a case triggers when a listed FM code, or a
-      code-check review route, fires on more epochs in the
-      candidate than in the baseline (R1), or on two or more extra epochs (R2,
-      with FM-005, FM-015 and every narrative-sweep route kept on R1). Review
+      code-check review route, fires on more epochs in the candidate than in the
+      baseline, under the review-volume ladder: R1 triggers on any rise; R2 on a
+      rise of two or more epochs, with FM-005, FM-015 and every narrative-sweep
+      route kept on R1; R3 (owner decision D-E5, 2026-11-10) keeps FM-005, FM-015
+      and every narrative-sweep route on R1, keeps the other FM codes on R2's
+      rise of two, and triggers each code-check route key on a rise of three or
+      more. The rung is chosen once from the A/A estimate (select_ladder,
+      aa_estimate): R1 when its mean volume is at most REVIEW_VOLUME_CAP cases
+      per clean PR, else R2 when its mean is at most the cap, else R3, which
+      stands whatever its volume. Review
       routes are counted per reason (ratified 2026-11-03): each review reason
       (route_key) counts on its own, even on an epoch that also fired an FM code
       or carried another reason. FM-007 is
@@ -21,16 +32,18 @@ reduced scores (section 6):
       never block; they wait for a recorded human sign-off.
   (d) re-runs pool: every candidate run's epochs count together. The candidate's
       epoch means use all pooled epochs, it passes content-pass^4 only if every
-      pooled epoch succeeds, its fabrication indicator is any pooled epoch, and its
-      sign-off counts are raw pooled counts against the baseline's count of k.
-      Each asymmetry runs against the candidate.
+      pooled epoch passes the route-blind trial, its fabrication indicator is any
+      pooled epoch, and its sign-off counts are raw pooled counts against the
+      baseline's count of k. Each asymmetry runs against the candidate.
   Every candidate run must hold the baseline's full sample id set and the same
   dataset content (dataset_version and both dataset SHA-256s, plus the other
   MATCHED_CONTENT_FIELDS), and a truncated (--limit or --sample-id) run is
   refused, so the comparison never runs on an overlap (ratified 2026-11-03).
 
 Mapping from an Inspect (sample, epoch) record (records_from_samples):
-  - success and failure_modes come from reliability.evaluate_trial, unchanged;
+  - success (the code-only trial, an extractor health figure only) and
+    failure_modes come from reliability.evaluate_trial, unchanged;
+  - route_blind is route_blind_epoch(sample), the trial section 10(a) reads;
   - dimensions come from rubric.WIRED_SCORERS: correctness <- correctness_anchor,
     faithfulness <- faithfulness_anchor (min of fabrication and reconciling items,
     rubric.RATIFIED), completeness <- completeness_anchor. Calibration (reported,
@@ -54,20 +67,39 @@ Mapping from an Inspect (sample, epoch) record (records_from_samples):
     blank citation) by its full text. A review flag with no reason and no FM code
     keys as "code_review: review flagged with no stated reason". A sample error
     is a failed trial, not a review route.
+
+The route-blind trial on one epoch (route_blind_epoch; section 6, D-E5): every
+settleable route counts as passed and every other rule stands. The epoch fails
+on a sample error, any FM code, a format break, a missing or non-numeric trial
+anchor, or any route key settlement.is_settleable marks unsettleable (given the
+epoch's reasons, so each off-contract field takes its own row). Otherwise each
+trial anchor takes the value a `correct` verdict on its settleable routes gives,
+read from the settlement table's effects:
+  - correctness_anchor: each withheld off-contract point (variance_amount_usd,
+    materiality_band) is restored, and an off-contract period lifts the 0 to
+    the structured score (details["structured_points"]); a narrative code route
+    keeps the score it already has;
+  - fabrication_anchor: a routed anchor goes back to 3 when its details record
+    no citation omission (a citation omission routes nothing and stands);
+  - reconciling_items_anchor: score kept, so an omission partial stands;
+  - completeness_anchor: an off-contract period restores its point.
+The epoch passes when every trial anchor then scores 3. Review never settles an
+FM code, an error or a format break, so none of them is lifted.
 """
 
 from __future__ import annotations
 
+import itertools
 import math
 import re
 from collections import Counter, defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 from .reliability import (
-    FM002, FM002_UNRECORDED, PREREGISTERED_K, QUEUE_CODE, QUEUE_SWEEP, QUEUE_UNSTATED_REASON, GateError,
-    _numeric, evaluate_trial, require_run_config,
+    FM002, FM002_UNRECORDED, FULL_MARKS, PREREGISTERED_K, QUEUE_CODE, QUEUE_SWEEP, QUEUE_UNSTATED_REASON,
+    TRIAL_ANCHORS, GateError, _numeric, evaluate_trial, require_run_config,
 )
 from .rubric import WIRED_SCORERS
 from .scoring import FABRICATION_REVIEW, SweepHit
@@ -89,7 +121,13 @@ assert (SWEEP_ROUTE, CODE_ROUTE) == (QUEUE_SWEEP, QUEUE_CODE), "reliability queu
 # one route key ("<class>: <reason key>"), each counted on its own (route_key).
 SIGNOFF_TRIGGERS: tuple[str, ...] = (*SIGNOFF_CODES, *ROUTE_CLASSES)
 R1_ONLY: frozenset[str] = frozenset({"FM-005", "FM-015", SWEEP_ROUTE})
-LADDERS: tuple[str, ...] = ("R1", "R2")
+LADDERS: tuple[str, ...] = ("R1", "R2", "R3")
+# The rise in a case's failing-epoch count each rule needs to trigger (section 10(c)).
+RISE: dict[str, int] = {"R1": 1, "R2": 2, "R3": 3}
+assert tuple(RISE) == LADDERS
+REVIEW_VOLUME_CAP = 10        # mean A/A sign-off cases per clean PR a rung may hold and still stand
+AA_EPOCHS = 8                 # the A/A run: one 8-epoch run of the tagged baseline configuration
+AA_FALSE_BLOCK_CEILING = 0.09  # the top of the simulated 4 to 9 percent range; above it is a shortfall
 HOLM_M = len(DIMENSIONS) + 1   # the section 10(a) family: five dimensions and content-pass^4
 assert HOLM_M == 6
 SCORE_RANGE = (0.0, 3.0)
@@ -121,10 +159,20 @@ class EpochRecord:
     sample_id: str
     epoch: int
     dims: Mapping[str, float]          # dimension -> 0..3 on this epoch; an unwired dimension is absent
-    success: bool                      # content trial success, as reliability.evaluate_trial decides
+    success: bool                      # code-only trial, as reliability.evaluate_trial decides (extractor health)
     failure_modes: tuple[str, ...]     # FM codes fired on this epoch, deduplicated
     review_routes: tuple[str, ...]     # route keys (route_key), deduplicated, sweep keys first
     fm002_direction: str | None = None  # reliability.Trial.fm002_direction, set when FM-002 fired
+    # The route-blind trial (route_blind_epoch), the one section 10(a) reads. A record
+    # built by hand without it takes `success`, which is exact when it has no
+    # settleable route. A code-only pass is always a route-blind pass.
+    route_blind: bool | None = None
+
+    def __post_init__(self) -> None:
+        if self.route_blind is None:
+            object.__setattr__(self, "route_blind", bool(self.success))
+        if self.success and not self.route_blind:
+            raise ValueError(f"{self.sample_id} epoch {self.epoch}: a code-only pass must pass the route-blind trial")
 
 
 @dataclass(frozen=True)
@@ -144,7 +192,7 @@ class SignoffCase:
     trigger: str                 # an FM code from SIGNOFF_CODES, or one route key (route_key)
     baseline_count: int          # baseline epochs on which it fired (of k)
     candidate_count: int         # pooled candidate epochs on which it fired
-    rule: str                    # "R1" or "R2"
+    rule: str                    # the rise rule this trigger took: "R1" (1), "R2" (2) or "R3" (3)
     # FM-002 only: epochs by direction beside the counts (ratified 2026-11-04); reported, not gated
     baseline_by_direction: Mapping[str, int] = field(default_factory=dict, compare=False)
     candidate_by_direction: Mapping[str, int] = field(default_factory=dict, compare=False)
@@ -368,6 +416,92 @@ def _routes_of(scores: Mapping[str, Any]) -> tuple[str, ...]:
     return tuple(sorted(routes, key=_route_order))
 
 
+# --- The route-blind trial (section 6, owner decision D-E5) ------------------------------
+
+OFF_CONTRACT_WITHHELD_FIELDS: tuple[str, ...] = ("variance_amount_usd", "materiality_band")
+OFF_CONTRACT_PERIOD_FIELD = "period"
+
+
+def _reasons(meta: Mapping[str, Any]) -> list[str]:
+    return [str(r) for r in meta.get("review_reasons") or []]
+
+
+def _off_contract_fields(reasons: Sequence[str]) -> set[str]:
+    """The off-contract fields a scorer's reasons name, through the settlement table
+    rows of the one key `code_review: off_contract_value`."""
+    from . import settlement  # settlement imports this module, so import it late
+
+    if not any(route_key(r) == settlement.OFF_CONTRACT_ROUTE_KEY for r in reasons):
+        return set()
+    rows = settlement.rows_for(settlement.OFF_CONTRACT_ROUTE_KEY, list(reasons))
+    return {r.key for r in rows if r.match == "off_contract_field"}
+
+
+def _route_blind_anchor(name: str, value: float, meta: Mapping[str, Any]) -> float:
+    """The anchor's value once every settleable route on it counts as passed (the
+    settlement table's on_correct effects). Called only on an epoch with no FM code
+    and no unsettleable route."""
+    if value >= FULL_MARKS or not meta.get("requires_human_review"):
+        return value  # nothing routed on this anchor, so review cannot move it
+    reasons = _reasons(meta)
+    details = meta.get("details") or {}
+    if name == "correctness_anchor":
+        fields = _off_contract_fields(reasons)
+        restored = sum(f in fields for f in OFF_CONTRACT_WITHHELD_FIELDS)
+        if OFF_CONTRACT_PERIOD_FIELD in fields:
+            structured = _numeric(details.get("structured_points"))
+            return value if structured is None else structured + restored
+        return value + restored
+    if name == "fabrication_anchor":
+        return value if details.get("citation_omissions") else float(FULL_MARKS)
+    if name == "completeness_anchor":
+        return value + (OFF_CONTRACT_PERIOD_FIELD in _off_contract_fields(reasons))
+    return value  # reconciling_items_anchor: score kept
+
+
+def route_blind_epoch(sample: Any) -> bool:
+    """The route-blind trial on one (sample, epoch) record: an Inspect EvalSample or
+    anything with id, epoch, scores (name -> Score) and error. See the module
+    docstring for the rule."""
+    from . import settlement  # settlement imports this module, so import it late
+
+    if getattr(sample, "error", None) is not None:
+        return False
+    scores = getattr(sample, "scores", None) or {}
+    epoch_reasons: list[str] = []
+    for score in scores.values():
+        meta = getattr(score, "metadata", None) or {}
+        if meta.get("failure_modes") or meta.get("format_break"):
+            return False
+        if meta.get("requires_human_review"):
+            epoch_reasons.extend(_reasons(meta))
+    for key in _routes_of(scores):
+        if not settlement.is_settleable(key, epoch_reasons):
+            return False
+    for name in TRIAL_ANCHORS:
+        score = scores.get(name)
+        value = _numeric(getattr(score, "value", None)) if score is not None else None
+        if value is None:
+            return False
+        if _route_blind_anchor(name, value, getattr(score, "metadata", None) or {}) != FULL_MARKS:
+            return False
+    return True
+
+
+def route_blind_trial(source: Any, *, k: int = PREREGISTERED_K) -> dict[str, bool]:
+    """Section 6 route-blind content-pass^k per sample: sample id -> True when every
+    epoch 1..k passes route_blind_epoch. `source` is an EvalLog or a path to one
+    (read through records_from_log without the run configuration check, so the
+    evaluation split and partial runs are refused), or an iterable of Inspect
+    samples or EpochRecords. A sample without exactly epochs 1..k is a GateError."""
+    if isinstance(source, (str, Path)) or hasattr(source, "eval"):
+        records = records_from_log(source, run_config=False)
+    else:
+        records = [s if isinstance(s, EpochRecord) else record_from_sample(s) for s in source]
+    grouped = _by_sample(records, k, "route-blind trial")
+    return {sid: all(r.route_blind for r in grouped[sid]) for sid in sorted(grouped)}
+
+
 def record_from_sample(sample: Any) -> EpochRecord:
     """One (sample, epoch) record: an Inspect EvalSample or anything with id,
     epoch, scores (name -> Score) and error."""
@@ -387,6 +521,7 @@ def record_from_sample(sample: Any) -> EpochRecord:
         failure_modes=trial.failure_modes,
         review_routes=_routes_of(scores),
         fm002_direction=trial.fm002_direction,
+        route_blind=route_blind_epoch(sample),
     )
 
 
@@ -551,6 +686,162 @@ def _mean(values: Iterable[float]) -> float:
     return math.fsum(vals) / len(vals)
 
 
+# --- Section 10(c): the review-volume ladder ---------------------------------------------
+
+ROUTE_BLIND_NOTE = ("content_pass4 reads the route-blind trial (section 6, D-E5): no FM code, no unsettleable "
+                    "route, every anchor 3 once settleable routes count as passed")
+LADDER_NOTES: dict[str, str] = {
+    "R2": "ladder R2: a single-epoch rise triggers only on FM-005, FM-015 and the narrative-sweep routes",
+    "R3": ("ladder R3: FM-005, FM-015 and the narrative-sweep routes trigger on any rise, the other FM codes "
+           "on a rise of two epochs, each code-check route key on a rise of three"),
+}
+
+
+def trigger_rule(trigger: str, ladder: str) -> str:
+    """The rise rule ("R1", "R2" or "R3") one sign-off trigger takes under a ladder
+    rung. FM-005, FM-015 and every narrative-sweep route key stay on R1 under every
+    rung; the other FM codes take R2 under R2 and R3; a code-check route key takes
+    the rung itself."""
+    if ladder not in LADDERS:
+        raise ValueError(f"ladder must be one of {LADDERS}, got {ladder!r}")
+    if ladder == "R1" or trigger in R1_ONLY:
+        return "R1"
+    if trigger in SIGNOFF_CODES:
+        return "R2"
+    return "R1" if route_class(trigger) == SWEEP_ROUTE else ladder
+
+
+def signoff_check(
+    base: Mapping[str, Sequence[EpochRecord]],
+    pooled: Mapping[str, Sequence[EpochRecord]],
+    ladder: str = "R1",
+) -> tuple[SignoffCase, ...]:
+    """Section 10(c) on records grouped by sample id (the same ids on both sides):
+    every SIGNOFF_CODES code and every route key either side carries, each counted
+    on its own, triggers when its candidate count rises over the baseline count by
+    at least RISE[trigger_rule(trigger, ladder)] epochs."""
+    if ladder not in LADDERS:
+        raise ValueError(f"ladder must be one of {LADDERS}, got {ladder!r}")
+    if set(base) != set(pooled):
+        raise GateError("sign-off check: baseline and candidate sample ids differ")
+
+    def fired(r: EpochRecord, trigger: str) -> bool:
+        return trigger in r.failure_modes or trigger in r.review_routes
+
+    def by_direction(records: Iterable[EpochRecord]) -> dict[str, int]:
+        found = Counter(r.fm002_direction or FM002_UNRECORDED for r in records if FM002 in r.failure_modes)
+        return dict(sorted(found.items()))
+
+    signoff: list[SignoffCase] = []
+    for sid in sorted(base):
+        keys = {key for r in (*base[sid], *pooled[sid]) for key in r.review_routes}
+        for trigger in (*SIGNOFF_CODES, *sorted(keys, key=_route_order)):
+            bc = sum(fired(r, trigger) for r in base[sid])
+            cc = sum(fired(r, trigger) for r in pooled[sid])
+            rule = trigger_rule(trigger, ladder)
+            if cc - bc >= RISE[rule]:
+                if trigger == FM002:
+                    signoff.append(SignoffCase(sid, trigger, bc, cc, rule,
+                                               by_direction(base[sid]), by_direction(pooled[sid])))
+                else:
+                    signoff.append(SignoffCase(sid, trigger, bc, cc, rule))
+    return tuple(signoff)
+
+
+def select_ladder(mean_volume: Mapping[str, float], cap: float = REVIEW_VOLUME_CAP) -> str:
+    """The rung section 10(c) fixes once from the A/A estimate: R1 when its mean
+    review volume per clean PR is at most `cap`, else R2 when its mean is at most
+    `cap`, else R3, which stands whatever its volume. mean_volume holds the A/A
+    means by rung, counted by route key (AAEstimate.mean_volume)."""
+    for rung in ("R1", "R2"):
+        value = mean_volume.get(rung)
+        if value is None or isinstance(value, bool) or not math.isfinite(float(value)) or value < 0:
+            raise ValueError(f"mean_volume[{rung!r}] must be a finite non-negative number, got {value!r}")
+    if mean_volume["R1"] <= cap:
+        return "R1"
+    if mean_volume["R2"] <= cap:
+        return "R2"
+    return "R3"
+
+
+# --- Section 10: the A/A estimate --------------------------------------------------------
+
+def aa_splits(epochs: int = AA_EPOCHS, k: int = PREREGISTERED_K) -> tuple[tuple[tuple[int, ...], tuple[int, ...]], ...]:
+    """Every distinct k-and-k split of epochs 1..2k as (baseline half, candidate half),
+    the half holding epoch 1 as the baseline: 35 splits for 8 epochs."""
+    if epochs != 2 * k or k < 1:
+        raise ValueError(f"the A/A estimate splits 2k epochs into two halves of k, got epochs={epochs}, k={k}")
+    out = []
+    for rest in itertools.combinations(range(2, epochs + 1), k - 1):
+        half = (1, *rest)
+        out.append((half, tuple(e for e in range(1, epochs + 1) if e not in half)))
+    return tuple(out)
+
+
+@dataclass(frozen=True)
+class AASplit:
+    baseline_epochs: tuple[int, ...]
+    candidate_epochs: tuple[int, ...]
+    blocked: bool                        # any automatic block under (a) or (b)
+    rejected: tuple[str, ...]            # the (a) and (b) tests that rejected
+    volume: Mapping[str, int]            # rung -> sign-off cases, counted by route key (trigger)
+    volume_samples: Mapping[str, int]    # rung -> distinct samples with a sign-off case
+
+
+@dataclass(frozen=True)
+class AAEstimate:
+    splits: tuple[AASplit, ...]
+    false_block_rate: float              # fraction of splits blocked by (a) or (b)
+    false_block_shortfall: bool          # the rate exceeds AA_FALSE_BLOCK_CEILING
+    mean_volume: Mapping[str, float]     # rung -> mean sign-off cases per split, counted by route key
+    mean_volume_samples: Mapping[str, float]  # rung -> mean distinct samples per split, beside it
+    ladder: str                          # select_ladder(mean_volume)
+
+
+def aa_estimate(records: Sequence[EpochRecord], *, epochs: int = AA_EPOCHS, k: int = PREREGISTERED_K) -> AAEstimate:
+    """Section 10 A/A estimate on the records of one 8-epoch run: every split of
+    aa_splits, each applied to every sample, is compared as a clean PR (epochs
+    renumbered 1..k in order on each side). It reports the null false-block rate of
+    (a) and (b) and the review volume of (c) under R1, R2 and R3, counted by route
+    key, and the rung select_ladder takes from it."""
+    grouped = _by_sample(records, epochs, "A/A run")
+    splits: list[AASplit] = []
+    for base_half, cand_half in aa_splits(epochs, k):
+        def half(epoch_set: tuple[int, ...]) -> list[EpochRecord]:
+            new = {e: i + 1 for i, e in enumerate(epoch_set)}
+            return [replace(r, epoch=new[r.epoch]) for rs in grouped.values() for r in rs if r.epoch in new]
+
+        base_recs, cand_recs = half(base_half), half(cand_half)
+        report = compare(base_recs, [cand_recs], k=k, ladder="R1")
+        base_g, cand_g = _by_sample(base_recs, k, "A/A baseline half"), _by_sample(cand_recs, k, "A/A candidate half")
+        volume: dict[str, int] = {}
+        volume_samples: dict[str, int] = {}
+        for rung in LADDERS:
+            cases = report.signoff if rung == "R1" else signoff_check(base_g, cand_g, rung)
+            volume[rung] = len(cases)
+            volume_samples[rung] = len({c.sample_id for c in cases})
+        rejected = tuple(name for name, t in (*report.paired.items(), *report.fabrication.items()) if t.rejected)
+        splits.append(AASplit(base_half, cand_half, report.blocked, rejected, volume, volume_samples))
+    n = len(splits)
+    rate = sum(s.blocked for s in splits) / n
+    mean_volume = {rung: math.fsum(s.volume[rung] for s in splits) / n for rung in LADDERS}
+    mean_samples = {rung: math.fsum(s.volume_samples[rung] for s in splits) / n for rung in LADDERS}
+    return AAEstimate(tuple(splits), rate, rate > AA_FALSE_BLOCK_CEILING, mean_volume, mean_samples,
+                      select_ladder(mean_volume))
+
+
+def format_aa_estimate(est: AAEstimate) -> str:
+    """The A/A estimate as report lines: false-block rate and review volume by rung."""
+    lines = [f"A/A estimate: {len(est.splits)} splits",
+             f"  false-block rate {est.false_block_rate:.4f}"
+             + ("  SHORTFALL (above 0.09)" if est.false_block_shortfall else ""),
+             "  review volume per clean PR (mean sign-off cases per split, counted by route key):"]
+    for rung in LADDERS:
+        lines.append(f"    {rung}: {est.mean_volume[rung]:.3f}  (distinct samples {est.mean_volume_samples[rung]:.3f})")
+    lines.append(f"  rung the ladder takes (cap {REVIEW_VOLUME_CAP} per clean PR): {est.ladder}")
+    return "\n".join(lines)
+
+
 def compare(
     baseline: Sequence[EpochRecord],
     candidates: Sequence[Sequence[EpochRecord]],
@@ -593,8 +884,9 @@ def compare(
         p, detail = paired_t_one_sided(b, c)
         raw[dim] = (p, len(ids), detail)
 
-    base_pass = {sid: all(r.success for r in base[sid]) for sid in ids}
-    cand_pass = {sid: all(r.success for r in pooled[sid]) for sid in ids}
+    # content-pass^4 reads the route-blind trial (section 6, D-E5), never the code-only one
+    base_pass = {sid: all(r.route_blind for r in base[sid]) for sid in ids}
+    cand_pass = {sid: all(r.route_blind for r in pooled[sid]) for sid in ids}
     worse = sum(base_pass[s] and not cand_pass[s] for s in ids)
     better = sum(cand_pass[s] and not base_pass[s] for s in ids)
     raw[PASS4] = (
@@ -621,29 +913,10 @@ def compare(
                                        {"worse": float(w), "better": float(bt)})
 
     # (c) regression sign-off check: each FM code, and each route key, counts on its own
-    def fired(r: EpochRecord, trigger: str) -> bool:
-        return trigger in r.failure_modes or trigger in r.review_routes
-
-    def by_direction(records: Iterable[EpochRecord]) -> dict[str, int]:
-        found = Counter(r.fm002_direction or FM002_UNRECORDED for r in records if FM002 in r.failure_modes)
-        return dict(sorted(found.items()))
-
-    signoff: list[SignoffCase] = []
-    for sid in ids:
-        keys = {key for r in (*base[sid], *pooled[sid]) for key in r.review_routes}
-        for trigger in (*SIGNOFF_CODES, *sorted(keys, key=_route_order)):
-            bc = sum(fired(r, trigger) for r in base[sid])
-            cc = sum(fired(r, trigger) for r in pooled[sid])
-            sweep = trigger in keys and route_class(trigger) == SWEEP_ROUTE
-            rule = "R1" if ladder == "R1" or trigger in R1_ONLY or sweep else "R2"
-            if (cc > bc) if rule == "R1" else (cc - bc >= 2):
-                if trigger == FM002:
-                    signoff.append(SignoffCase(sid, trigger, bc, cc, rule,
-                                               by_direction(base[sid]), by_direction(pooled[sid])))
-                else:
-                    signoff.append(SignoffCase(sid, trigger, bc, cc, rule))
-    if ladder == "R2":
-        notes.append("ladder R2: a single-epoch rise triggers only on FM-005, FM-015 and the narrative-sweep routes")
+    signoff = signoff_check(base, pooled, ladder)
+    if ladder in LADDER_NOTES:
+        notes.append(LADDER_NOTES[ladder])
+    notes.append(ROUTE_BLIND_NOTE)
 
     blocked = any(t.rejected for t in paired.values()) or any(t.rejected for t in fabrication.values())
     return GateReport(paired=paired, fabrication=fabrication, signoff=tuple(signoff), blocked=blocked, notes=tuple(notes))

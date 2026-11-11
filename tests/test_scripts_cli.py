@@ -217,3 +217,38 @@ def test_evaluated_model_path_passes_split_dev_explicitly(tmp_path, monkeypatch)
     answered, line = smoke_live.smoke_one(roster.WORKER, "stand-in-id", str(tmp_path))
     assert seen == {"split": "dev", "subset": "pilot", "epochs": 1}
     assert answered is False and line.startswith("FAIL")
+
+
+# --- compare_runs.py: the review-volume ladder rung (section 10(c), D-E5) ----------------
+
+def test_compare_runs_ladder_offers_r1_r2_and_r3(capsys):
+    compare_runs = _load("compare_runs.py")
+    with pytest.raises(SystemExit) as stop:
+        compare_runs.main(["--help"])
+    assert stop.value.code == 3
+    out = capsys.readouterr().out
+    assert "R1" in out and "R2" in out and "R3" in out
+
+
+def test_compare_runs_accepts_ladder_r3_and_reaches_the_inputs(tmp_path, capsys):
+    """R3 passes the parser: the refusal is about the missing log, not the rung."""
+    compare_runs = _load("compare_runs.py")
+    missing = str(tmp_path / "missing.eval")
+    assert compare_runs.main(["--baseline", missing, "--candidate", missing, "--ladder", "R3"]) == 3
+    err = capsys.readouterr().err
+    assert "REFUSED" in err and "--ladder" not in err
+
+
+@pytest.mark.parametrize("rung", ["R4", "r3", "R0"])
+def test_compare_runs_refuses_an_unknown_ladder_rung_with_exit_3(rung, tmp_path, capsys):
+    compare_runs = _load("compare_runs.py")
+    missing = str(tmp_path / "missing.eval")
+    with pytest.raises(SystemExit) as stop:
+        compare_runs.main(["--baseline", missing, "--candidate", missing, "--ladder", rung])
+    assert stop.value.code == 3
+    assert "--ladder" in capsys.readouterr().err
+
+
+def test_compare_runs_docstring_names_r3_and_the_route_blind_trial():
+    doc = _load("compare_runs.py").__doc__
+    assert "R1|R2|R3" in doc and "route-blind trial" in doc and "D-E5" in doc

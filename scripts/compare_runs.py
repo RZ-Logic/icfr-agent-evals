@@ -2,11 +2,21 @@
 
 Usage:
   python scripts/compare_runs.py --baseline A.eval --candidate B.eval [--candidate C.eval ...]
-                                 [--ladder R1|R2] [--json out.json] [--max-tokens-pin N]
+                                 [--ladder R1|R2|R3] [--json out.json] [--max-tokens-pin N]
 
 Every --candidate is a run of the same gated content; they pool (section 10(d)).
 The ladder defaults to R1, the rule with the most triggers, until the A/A estimate
-records the choice (section 10(c)).
+records the choice (section 10(c)). The choice among R1, R2 and R3 is made once
+from the A/A estimate (regression.aa_estimate and regression.select_ladder),
+recorded before the first gated PR and never switched afterwards. R3 (owner
+decision D-E5, 2026-11-10) keeps FM-005, FM-015 and every narrative-sweep route
+on R1, the other FM codes on R2's rise of two, and triggers each code-check route
+key on a rise of three or more epochs.
+
+The section 10(a) content-pass^4 McNemar test reads the route-blind trial
+(section 6, owner decision D-E5, 2026-11-10; regression.route_blind_epoch): no FM
+code, no unsettleable route, and every anchor 3 once settleable routes count as
+passed. Review settlement never applies to PR CI.
 
 Every candidate run must hold the baseline's full sample id set and the same
 dataset content, so the comparison never runs on an overlap (ratified 2026-11-03).
@@ -204,7 +214,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("-h", "--help", action=_HelpAction, help="show this help and exit 3 (no comparison ran)")
     parser.add_argument("--baseline", required=True, help="baseline .eval log")
     parser.add_argument("--candidate", required=True, action="append", help="candidate .eval log; repeat to pool re-runs")
-    parser.add_argument("--ladder", default="R1", choices=LADDERS, help="review-volume ladder, section 10(c)")
+    parser.add_argument("--ladder", default="R1", choices=LADDERS,
+                        help="review-volume ladder rung R1, R2 or R3, section 10(c); fixed once from the A/A estimate")
     parser.add_argument("--json", dest="json_out", help="write the report as JSON to this path")
     parser.add_argument("--max-tokens-pin", type=int, default=None,
                         help="the owner's max_tokens pin, when one is set (default: no --max-tokens flag; the evaluated "
