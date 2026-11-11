@@ -4,10 +4,11 @@ Usage:
   python scripts/pilot_report.py --sonnet S.eval --haiku H.eval --template T.eval
          [--reading-b i|ii|iii|all] [--regression-baseline B.eval --regression-candidate C.eval]
          [--json out.json] [--review-csv out.csv] [--max-tokens-pin N]
+         [--review-record PACKET_DIR]
 
 Reads the three pilot legs (pre-registration section 13, pilot row; 20 dev-split
-cases, epochs = 4) and prints, per run: sample count and epochs; content-pass^4
-per sample and overall; FM counts by code with FM-002 by direction; review-queue
+cases, epochs = 4) and prints, per run: sample count and epochs; the content-pass^4
+figures (below); FM counts by code with FM-002 by direction; review-queue
 volume as distinct (sample, epoch, reason) and distinct (sample, epoch), split by
 class (never the raw scorer-row count, six rows per format break); the Sample
 Consistency summary with the H4 line labeled as a rehearsal (never on the template
@@ -16,6 +17,25 @@ would read as FM-007). Then the template margin per anchor, difficulty check (a)
 from the template log, difficulty check (b) from the Haiku log under all three
 readings, the McNemar block floor and the paired-t minimal detectable drop
 (inferred), and, given both regression logs, compare_runs.py's verdict on the pair.
+
+Content-pass^4 figures (section 6, Content-pass^4; section 8, Primary outcomes and
+Extractor health), each with its Clopper-Pearson 95% interval, from
+icfr_agent_evals/trials.py figures():
+  review-settled  the score of record (owner decision D-A);
+  audit-adjusted  sensitivity only, never the score of record;
+  route-blind     an upper bound on the review-settled figure, not a capability result;
+  code-only       extractor health: every routed epoch fails; not a capability result
+                  and never a score.
+With --review-record (a frozen packet directory: the packet plus its frozen
+verdicts.csv and fm_audit.csv, read through scripts/review_freeze.py
+load_frozen_record), every run whose eval id the record's runs.json names gets all
+four, FM-008 on the review-settled trial, and the per-anchor means review-settled and
+audit-adjusted side by side. A run the record does not name, and every run when no
+record is given, gets the route-blind and code-only figures (they read the log alone),
+and the report says that the review-settled and audit-adjusted figures need a frozen
+review record. The code-only FM-008 is printed as extractor health only. The McNemar
+floor line and the regression line count the route-blind content-pass^4, the trial
+section 10(a) reads (owner decision D-E5).
 
 Every worker log (Sonnet, Haiku and both regression logs) must pass the run
 configuration check (contract C2): roster.check_run_config with 20 samples, epochs 4
@@ -58,7 +78,9 @@ Exit codes:
      another task or worker prompt, a template
      log that is not the template baseline (or a worker log that is), a regression
      pair compare_runs.py refuses, a help request, an output path that cannot be
-     written, or any other input the report cannot read
+     written, a review record that cannot be read, that names none of the three
+     pilot logs or that does not cover a run it names (trials.RecordError, every gap
+     listed), or any other input the report cannot read
 """
 
 from __future__ import annotations
@@ -77,12 +99,13 @@ import sys
 import tempfile
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 from icfr_agent_evals import consistency as con
 from icfr_agent_evals import reliability as rel
 from icfr_agent_evals import review_schema
 from icfr_agent_evals import roster
+from icfr_agent_evals import trials
 from icfr_agent_evals.settlement import is_settleable
 from icfr_agent_evals.regression import (
     CODE_ROUTE,
@@ -124,6 +147,25 @@ REVIEW_CSV_COLUMNS: tuple[str, ...] = review_schema.RB7_COLUMNS
 VERDICTS: tuple[str, ...] = review_schema.FINDING_VERDICTS
 TEMPLATE_CONSISTENCY_LINE = "template: deterministic, agreement 1 by construction; Sample Consistency not reported"
 COMPARE_SCRIPT = Path(__file__).resolve().parent / "compare_runs.py"
+REVIEW_FREEZE_SCRIPT = Path(__file__).resolve().parent / "review_freeze.py"
+
+# The four content-pass^4 figures (section 6 and section 8), in print order, each with
+# its short name and the role it plays. Only the review-settled figure is the score of
+# record; the code-only figure is extractor health and never a score.
+FIGURE_ORDER: tuple[str, ...] = (trials.REVIEW_SETTLED, trials.AUDIT_ADJUSTED, trials.ROUTE_BLIND, trials.CODE_ONLY)
+RECORD_FIGURES: tuple[str, ...] = (trials.REVIEW_SETTLED, trials.AUDIT_ADJUSTED)
+FIGURE_NAMES: dict[str, str] = {
+    trials.REVIEW_SETTLED: "review-settled", trials.AUDIT_ADJUSTED: "audit-adjusted",
+    trials.ROUTE_BLIND: "route-blind", trials.CODE_ONLY: "code-only",
+}
+FIGURE_ROLES: dict[str, str] = {
+    trials.REVIEW_SETTLED: "SCORE OF RECORD (owner decision D-A)",
+    trials.AUDIT_ADJUSTED: "SENSITIVITY only, never the score of record",
+    trials.ROUTE_BLIND: "UPPER BOUND on the review-settled figure, not a capability result",
+    trials.CODE_ONLY: "EXTRACTOR HEALTH only: not a capability result, never a score",
+}
+NEEDS_RECORD = "needs a frozen review record (pass --review-record PACKET_DIR)"
+MAX_GAPS_SHOWN = 10
 
 
 class Refused(Exception):
@@ -203,6 +245,47 @@ def check_same_content(logs: dict[str, Any]) -> dict[str, Any]:
         if diff:
             raise Refused(f"{role} log differs from the {first_role} log in Task version or dataset content: {diff}")
     return first
+
+
+# --- The frozen review record --------------------------------------------------------------
+
+@lru_cache(maxsize=1)
+def load_review_freeze() -> Any:
+    """scripts/review_freeze.py, for load_frozen_record only (under a private module name,
+    so the module other callers load by path stays untouched)."""
+    name = "review_freeze_for_pilot_report"
+    spec = importlib.util.spec_from_file_location(name, REVIEW_FREEZE_SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod  # its dataclasses resolve their module by name
+    try:
+        spec.loader.exec_module(mod)
+    except BaseException:
+        sys.modules.pop(name, None)
+        raise
+    return mod
+
+
+def load_review_record(packet_dir: str) -> Any:
+    """The frozen review record: the packet and its frozen verdicts.csv and fm_audit.csv,
+    read through review_freeze.load_frozen_record. A record that cannot be read is refused."""
+    if not Path(packet_dir).is_dir():
+        raise Refused(f"review record not found: {packet_dir} is not a packet directory")
+    rf = load_review_freeze()
+    try:
+        return rf.load_frozen_record(str(packet_dir))
+    except rf.Refused as e:
+        raise Refused(f"review record {packet_dir} unreadable: {e}") from e
+
+
+def record_run_id(record: Any, log: Any) -> str | None:
+    """The record's run id (R1, ...) whose eval id is this log's, or None when the record
+    names no run of this log."""
+    eval_id = str(log.eval.eval_id)
+    hits = sorted(rid for rid, info in dict(getattr(record, "runs", None) or {}).items()
+                  if str((info or {}).get("eval_id")) == eval_id)
+    if len(hits) > 1:
+        raise Refused(f"the review record names {len(hits)} runs with eval id {eval_id}: {hits}")
+    return hits[0] if hits else None
 
 
 # --- Small statistics --------------------------------------------------------------------
@@ -519,8 +602,93 @@ def format_generation_stops(stops: dict[str, Any], n: int) -> list[str]:
     ]
 
 
-def run_block(role: str, log: Any, path: str = "") -> tuple[list[str], dict[str, Any], list[dict[str, str]]]:
-    """Printed lines, JSON payload and review rows for one run."""
+def content_figures(log: Any, record: Any = None, run_id: str | None = None) -> dict[str, Any]:
+    """trials.figures() on one run: all four figures with a record that names the run,
+    route-blind and code-only without one. A record that does not cover the run is
+    refused, every gap counted and the first ones listed."""
+    try:
+        if record is None:
+            return trials.figures(log)
+        return trials.figures(log, record, run_id=run_id)
+    except trials.RecordError as e:
+        shown = "; ".join(e.gaps[:MAX_GAPS_SHOWN])
+        more = f"; and {len(e.gaps) - MAX_GAPS_SHOWN} more" if len(e.gaps) > MAX_GAPS_SHOWN else ""
+        raise Refused(f"the frozen review record does not cover run {run_id} ({len(e.gaps)} gap(s)): "
+                      f"{shown}{more}") from e
+
+
+def _figure_line(kind: str, row: Mapping[str, Any] | None) -> str:
+    name = f"{FIGURE_NAMES[kind]} content-pass^4"
+    if row is None:
+        return f"  {name:<30} not computed: {NEEDS_RECORD}"
+    lo, hi = row["ci95"]
+    return (f"  {name:<30} {row['passed']}/{row['n']} = {row['rate']:.3f} "
+            f"(Clopper-Pearson 95% [{lo:.3f}, {hi:.3f}])  {FIGURE_ROLES[kind]}")
+
+
+def _mean_text(m: Mapping[str, Any]) -> str:
+    if m.get("mean") is None:
+        return "none"
+    if m.get("ci95_low") is None:
+        return f"{m['mean']:.3f}"
+    return f"{m['mean']:.3f} [{m['ci95_low']:.3f}, {m['ci95_high']:.3f}]"
+
+
+def figures_block(res: Mapping[str, Any], *, record_dir: str | None = None, run_id: str | None = None,
+                  why_no_record: str = "") -> tuple[list[str], dict[str, Any]]:
+    """Printed lines and JSON payload of one run's content-pass^4 figures (section 6 and 8).
+
+    The review-settled figure is the only one labeled the score of record; the code-only
+    figure is labeled extractor health and never a score. Without a record that names the
+    run the two record figures print as not computed, never as a number."""
+    rows = res["figures"]
+    has_record = trials.REVIEW_SETTLED in rows
+    source = (f"frozen review record {record_dir}, run {run_id}" if has_record
+              else f"no frozen review record{why_no_record}")
+    lines = [f"Content-pass^4 figures (section 6, section 8; {source}):"]
+    lines.extend(_figure_line(kind, rows.get(kind)) for kind in FIGURE_ORDER)
+    if not has_record:
+        lines.append("  review-settled and audit-adjusted content-pass^4, FM-008 on the review-settled trial and the "
+                     f"per-anchor means review-settled and audit-adjusted: not computed; each {NEEDS_RECORD}")
+    shown = [k for k in FIGURE_ORDER if k in rows]
+    per = rows[shown[0]]["per_sample"]
+    lines.append("  per sample (" + " / ".join(FIGURE_NAMES[k] for k in shown) + "): "
+                 + " ".join(f"{sid}:{'/'.join(str(rows[k]['per_sample'][sid]) for k in shown)}" for sid in per))
+    code_fm008 = rows[trials.CODE_ONLY]["fm008"]
+    if has_record:
+        fm008 = list(res["fm008"])
+        lines.append(f"  FM-008 on the review-settled trial: {len(fm008)}"
+                     + (f" ({', '.join(fm008)})" if fm008 else ""))
+        lines.append("  per-anchor means (section 8), review-settled beside audit-adjusted "
+                     "(mean [normal 95% CI on the SE of per-sample epoch means]):")
+        for anchor, both in res["anchor_means"].items():
+            lines.append(f"    {anchor:<26} review-settled {_mean_text(both[trials.REVIEW_SETTLED])}, "
+                         f"audit-adjusted {_mean_text(both[trials.AUDIT_ADJUSTED])}")
+        found = res["review_found"]
+        codes = ", ".join(f"{c} {n}" for c, n in found["codes"].items()) or "none"
+        lines.append(f"  review-found (counted apart from code-found): codes {codes}; citation omissions "
+                     f"{found['citation_omissions']}; whole-narrative wrong {found['whole_narrative_wrong']}")
+    lines.append(f"  FM-008 on the code-only trial (extractor health only, not the FM-008 count): {len(code_fm008)}")
+    payload: dict[str, Any] = {
+        "record": {"packet_dir": record_dir, "run_id": run_id} if has_record else None,
+        "score_of_record": trials.REVIEW_SETTLED if has_record else None,
+        "figures": {kind: ({**rows[kind], "name": FIGURE_NAMES[kind], "role": FIGURE_ROLES[kind]} if kind in rows
+                           else {"computed": False, "name": FIGURE_NAMES[kind], "role": FIGURE_ROLES[kind],
+                                 "note": NEEDS_RECORD})
+                    for kind in FIGURE_ORDER},
+        "fm008": ({"trial": trials.REVIEW_SETTLED, "samples": list(res["fm008"])} if has_record
+                  else {"trial": None, "samples": None, "note": NEEDS_RECORD}),
+        "fm008_code_only_extractor_health": list(code_fm008),
+        "anchor_means": res.get("anchor_means"),
+        "review_found": res.get("review_found"),
+    }
+    return lines, payload
+
+
+def run_block(role: str, log: Any, path: str = "", record: Any = None, run_id: str | None = None,
+              record_dir: str | None = None) -> tuple[list[str], dict[str, Any], list[dict[str, str]]]:
+    """Printed lines, JSON payload and review rows for one run. With a record that names
+    this run (run_id), all four content-pass^4 figures; otherwise route-blind and code-only."""
     e = log.eval
     cr = load_compare_runs()
     expected = ROLE_MODELS[role]
@@ -534,11 +702,12 @@ def run_block(role: str, log: Any, path: str = "") -> tuple[list[str], dict[str,
     except GateError as err:
         gate = f"assert_gate FAILED: {err}"
     lines.append(f"samples {r.scored_samples}, epochs {int(e.config.epochs)}; {gate}")
-    passed = sum(r.pass_k.values())
-    lo, hi = clopper_pearson(passed, r.scored_samples)
-    lines.append(f"content-pass^4 {passed}/{r.scored_samples} = {r.content_pass_k_rate:.3f} "
-                 f"(Clopper-Pearson 95% [{lo:.3f}, {hi:.3f}]); FM-008 {len(r.fm008)}")
-    lines.append("  per sample: " + " ".join(f"{sid}:{v}" for sid, v in r.pass_k.items()))
+    named = record is not None and run_id is not None
+    why = "" if record is None or named else f" for this run: the record names no run with eval id {e.eval_id}"
+    fig_lines, figs = figures_block(content_figures(log, record if named else None, run_id if named else None),
+                                    record_dir=record_dir if named else None, run_id=run_id if named else None,
+                                    why_no_record=why)
+    lines.extend(fig_lines)
     lines.append(rel.format_fm_counts(r))
     errored = sum(1 for s in log.samples if getattr(s, "error", None) is not None)
     fb = sum(1 for s in log.samples if getattr(s, "error", None) is None
@@ -566,9 +735,8 @@ def run_block(role: str, log: Any, path: str = "") -> tuple[list[str], dict[str,
     payload = {
         "path": None, "model": e.model, "stand_in": e.model != expected, "task": e.task, "eval_id": e.eval_id,
         "samples": r.scored_samples, "epochs": int(e.config.epochs), "gate": gate,
-        "content_pass4": {"passed": passed, "n": r.scored_samples, "rate": r.content_pass_k_rate,
-                          "ci95": [lo, hi], "per_sample": r.pass_k},
-        "fm_counts": r.fm_counts, "fm002_by_direction": r.fm002_by_direction, "fm008": list(r.fm008),
+        "content_pass4_figures": figs,
+        "fm_counts": r.fm_counts, "fm002_by_direction": r.fm002_by_direction,
         "format_break_epochs": fb, "errored_epochs": errored, "generation_stops": stops,
         "queue_volume": vol, "sample_consistency": cons,
     }
@@ -578,12 +746,14 @@ def run_block(role: str, log: Any, path: str = "") -> tuple[list[str], dict[str,
 def floors_block(sonnet: Any) -> tuple[list[str], dict[str, Any]]:
     """McNemar block floor under Holm (m = 6) and the inferred paired-t drop at n = 20."""
     p0, p1 = mcnemar_block_floor(), mcnemar_block_floor(reversals=1)
-    passed = sum(rel.report_from_log(sonnet, run_config=False).pass_k.values())  # checked in load_pilot_log
+    # Section 10(a) reads the route-blind trial (owner decision D-E5), never the code-only one.
+    passed = trials.route_blind_trial(sonnet).passed
     lines = ["== Regression power floors (section 10(a), Holm m = 6, rank 1 threshold "
              f"{FAMILY_ALPHA / HOLM_M:.5f})",
              f"McNemar block floor on content-pass^4: {p0} one-way discordant cases with no reversal, "
              f"{p1} with one reversal",
-             f"Sonnet log passes content-pass^4 on {passed} of {PILOT_SAMPLES}; worse cannot exceed it: "
+             f"Sonnet log passes the route-blind content-pass^4 (the trial section 10(a) reads, D-E5) on {passed} "
+             f"of {PILOT_SAMPLES}; worse cannot exceed it: "
              + (f"content-pass^4 can block (at least {p0})" if passed >= p0
                 else f"below {p0}, only the paired t-tests can catch a regression")]
     sds = noise_sd(sonnet)
@@ -602,6 +772,7 @@ def floors_block(sonnet: Any) -> tuple[list[str], dict[str, Any]]:
     ref = {sd: paired_t_mdd(sd) for sd in MDD_REFERENCE_SDS}
     lines.append("  reference (inferred, real sd unknown): " + ", ".join(f"sd {sd}: {d:.3f}" for sd, d in ref.items()))
     return lines, {"mcnemar_floor": {"no_reversal": p0, "one_reversal": p1}, "sonnet_pass4": passed,
+                   "sonnet_pass4_trial": trials.ROUTE_BLIND,
                    "paired_t_mdd": mdd, "paired_t_mdd_reference": {str(k): v for k, v in ref.items()},
                    "label": "inferred"}
 
@@ -642,7 +813,8 @@ def regression_block(baseline: str, candidate: str,
         verdict = "MISSED (no automatic block): compare_runs.py exit 0, no block and no sign-off case"
     lines = ["== Deliberate regression (compare_runs.py on the pair)"]
     lines.extend("  " + x for x in out.getvalue().rstrip().splitlines())
-    lines.append(f"baseline passes content-pass^4 on {base_pass} of {PILOT_SAMPLES} against the McNemar floor "
+    lines.append(f"baseline passes the route-blind content-pass^4 (the trial section 10(a) reads, D-E5) on "
+                 f"{base_pass} of {PILOT_SAMPLES} against the McNemar floor "
                  f"of {mcnemar_block_floor()}")
     lines.append("Regression verdict: " + verdict)
     return lines, {"exit_code": code, "rejecting_tests": rejecting, "caught": code == cli.EXIT_BLOCK,
@@ -698,8 +870,16 @@ def build_report(args: argparse.Namespace) -> tuple[str, dict[str, Any], list[di
              f"{PILOT_SAMPLES} cases, epochs {PILOT_K}; dataset_sha256 {fingerprint['dataset_sha256']}"]
     payload: dict[str, Any] = {"fingerprint": fingerprint, "runs": {}, "reading_of_record": args.reading_b}
     rows: list[dict[str, str]] = []
+    record_dir = args.review_record
+    record = load_review_record(record_dir) if record_dir is not None else None
+    run_ids = {role: record_run_id(record, log) if record is not None else None for role, log in logs.items()}
+    if record is not None and not any(run_ids.values()):
+        raise Refused(f"the review record {record_dir} names none of the sonnet, haiku or template logs "
+                      f"(its runs.json eval ids: {sorted(str((i or {}).get('eval_id')) for i in record.runs.values())})")
+    payload["review_record"] = ({"packet_dir": record_dir, "run_ids": run_ids} if record is not None else None)
     for role, log in logs.items():
-        block, data, run_rows = run_block(role, log, paths[role])
+        block, data, run_rows = run_block(role, log, paths[role], record=record, run_id=run_ids[role],
+                                          record_dir=record_dir)
         data["path"] = paths[role]
         lines.extend(block)
         payload["runs"][role] = data
@@ -792,6 +972,11 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--max-tokens-pin", type=int, default=None,
                    help="the owner's max_tokens pin, when one is set (default: no --max-tokens flag; the evaluated "
                              "model's events may carry Inspect's documented default 48,000)")
+    p.add_argument("--review-record", default=None, metavar="PACKET_DIR",
+                   help="the frozen review record: a packet directory holding its frozen verdicts.csv and "
+                        "fm_audit.csv (scripts/review_freeze.py load_frozen_record). With it, every run the record "
+                        "names gets the review-settled figure (the score of record) and the audit-adjusted figure; "
+                        "without it only the route-blind and code-only figures print")
     return p
 
 

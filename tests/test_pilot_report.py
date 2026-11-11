@@ -4,9 +4,17 @@ Findings F2-05 (no report), F2-01 (difficulty check (b) readings), F2-02 (McNema
 floor and paired-t drop), F2-06 (review-verdict CSV), F2-07 (queue volume as
 distinct rows) and F2-09 (no Sample Consistency on the template log).
 
+Content-pass^4 figures (pre-registration section 6 and section 8): with a frozen
+review record (--review-record) the review-settled (score of record), audit-adjusted
+(sensitivity), route-blind (upper bound) and code-only (extractor health) figures, each
+with its interval, and FM-008 on the review-settled trial; without one the route-blind
+and code-only figures and a plain note that the other two need a record. The code-only
+figure is never labeled the score.
+
 Mock logs only: the pilot task on mockllm with scripted outputs keyed per case, and
 the template baseline on none/none. Dev split pilot only; nothing reads the
-evaluation split. Logs go to pytest's temp dir unless ICFR_TEST_LOG_DIR is set.
+evaluation split. Logs go to pytest's temp dir unless ICFR_TEST_LOG_DIR is set. The
+review records are synthetic: every verdict row says it is not a review.
 """
 
 from __future__ import annotations
@@ -15,6 +23,8 @@ import csv
 import importlib.util
 import json
 import os
+import re
+import sys
 import uuid
 from pathlib import Path
 from types import SimpleNamespace as NS
@@ -268,7 +278,8 @@ def test_template_margin_and_floors(logs, capsys):
     assert ("overall            reconciling_items_anchor   n=20  worker 3.000 template 2.650 "
             "margin +0.350 [+0.036, +0.664]") in out
     assert "McNemar block floor on content-pass^4: 7 one-way discordant cases with no reversal, 10 with one reversal" in out
-    assert "Sonnet log passes content-pass^4 on 20 of 20" in out
+    assert ("Sonnet log passes the route-blind content-pass^4 (the trial section 10(a) reads, D-E5) "
+            "on 20 of 20") in out
     assert "inferred" in out and "sd 0.5: 0.390" in out
 
 
@@ -335,7 +346,11 @@ def test_json_output(logs, capsys, tmp_path):
     code, _, _ = _main(capsys, *_base(logs), "--json", path)
     assert code == 0
     data = json.loads(path.read_text(encoding="utf-8"))
-    assert data["runs"]["template"]["content_pass4"]["passed"] == 15
+    figs = data["runs"]["template"]["content_pass4_figures"]
+    assert figs["figures"]["code_only"]["passed"] == 15
+    assert figs["score_of_record"] is None and figs["figures"]["review_settled"]["computed"] is False
+    assert "content_pass4" not in data["runs"]["template"]  # the old code-only field is gone, never read as a score
+    assert data["floors"]["sonnet_pass4_trial"] == "route_blind"
     assert data["runs"]["template"]["sample_consistency"] == pr.TEMPLATE_CONSISTENCY_LINE
     assert data["difficulty_a"]["verdict"] == "PASS"
     assert {r: v["verdict"] for r, v in data["difficulty_b"]["readings"].items()} == {"i": "PASS", "ii": "FAIL", "iii": "FAIL"}
@@ -355,6 +370,233 @@ def test_regression_caught_only_on_an_automatic_block(logs, capsys):
     assert code == 0
     assert "Regression verdict: MISSED (no automatic block): compare_runs.py exit 0" in out
     assert "caught" not in out.lower()  # the word appears only on an exit 1 (contract C5)
+
+
+# --- Content-pass^4 figures (section 6, section 8) and the frozen review record ------------
+
+REVIEW_NOTE = "synthetic test row, not a review"
+REVIEW_SEED = 20261110
+FIGURE_RE = re.compile(r"content-pass\^4\s+\d+/\d+")
+NEEDS = "not computed: needs a frozen review record (pass --review-record PACKET_DIR)"
+
+
+def _block(out: str, role: str) -> str:
+    nxt = {"sonnet": "== Run haiku", "haiku": "== Run template", "template": "== Template margin"}[role]
+    return out.split(f"== Run {role}")[1].split(nxt)[0]
+
+
+def _figure_lines(text: str) -> dict[str, str]:
+    """figure name -> its printed line (the four lines under 'Content-pass^4 figures')."""
+    got = {}
+    for line in text.splitlines():
+        for name in pr.FIGURE_NAMES.values():
+            if line.strip().startswith(f"{name} content-pass^4"):
+                got[name] = line
+    return got
+
+
+def _freeze(packet_dir: Path, rows: list[dict]) -> None:
+    """Write verdicts.csv and fm_audit.csv the way review_freeze.freeze does (no manifest)."""
+    from icfr_agent_evals import review_schema as rs
+
+    rf = pr.load_review_freeze()
+    filled = packet_dir.parent / f"{packet_dir.name}-filled.csv"
+    rs.write_rb7_csv(filled, rows)
+    rec = rf.load_record(str(packet_dir), str(filled))
+    rs.write_rb7_csv(packet_dir / rs.RECORD_FILES["verdicts"], rf.record_rows(rec, ("finding", "narrative")))
+    rs.write_rb7_csv(packet_dir / rs.RECORD_FILES["fm_audit"], rf.record_rows(rec, ("fm_audit",)))
+
+
+@pytest.fixture(scope="module")
+def records(logs, tmp_path_factory):
+    """Frozen review records on the correct Sonnet stand-in log, built with
+    scripts/review_packet.py (scope hard, D-J): `correct` holds every narrative
+    none_wrong; `wrong` rules one hard case's narrative unit wrong (error type other,
+    D-I); `unfrozen` is the packet with no frozen files; `incomplete` leaves one verdict
+    blank; `elsewhere` names another eval id in runs.json. Every row is synthetic."""
+    from icfr_agent_evals import review_schema as rs
+
+    spec = importlib.util.spec_from_file_location("review_packet_for_pilot_report_tests",
+                                                  ROOT / "scripts" / "review_packet.py")
+    rp = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = rp  # its dataclasses resolve their module by name
+    spec.loader.exec_module(rp)
+    root = tmp_path_factory.mktemp("records")
+    runs = rp.load_runs([("sonnet", logs["sonnet"])], REVIEW_SEED)
+    packet = rp.build_packet(runs, run_id="pilot-report-test", seed=REVIEW_SEED, scope="hard",
+                             fm_epoch_routes="findings")
+    out = {}
+    for name in ("correct", "wrong", "unfrozen", "incomplete", "elsewhere"):
+        rp.write_packet(packet, str(root / name))
+        out[name] = root / name
+    blank = rs.read_rb7_csv(out["correct"] / rs.PACKET_FILES["blank"])
+    members = rs.read_csv(out["correct"] / rs.PACKET_FILES["members"], rs.MEMBER_COLUMNS)
+    case_of = {m["unit_id"]: m["sample_id"] for m in members}
+
+    def filled(verdict_of):
+        rows = []
+        for r in blank:
+            r = dict(r)
+            r.update(verdict_of(r))
+            r.update(note=REVIEW_NOTE, reviewer="SYNTHETIC-TEST", date="2026-11-10")
+            rows.append(r)
+        return rows
+
+    def all_correct(r):
+        return {"verdict": {"finding": "correct", "narrative": "none_wrong", "fm_audit": "real_error"}[r["row_kind"]]}
+
+    narratives = [r for r in blank if r["row_kind"] == "narrative"]
+    assert narratives, "scope hard gives every hard case a narrative-only unit"
+    wrong_unit = narratives[0]["unit_id"]
+
+    def one_wrong(r):
+        if r["unit_id"] == wrong_unit:
+            return {"verdict": "wrong", "reason": "other", "sentence": "1"}
+        return all_correct(r)
+
+    _freeze(out["correct"], filled(all_correct))
+    _freeze(out["wrong"], filled(one_wrong))
+    _freeze(out["incomplete"], filled(lambda r: {"verdict": ""} if r["unit_id"] == wrong_unit else all_correct(r)))
+    _freeze(out["elsewhere"], filled(all_correct))
+    runs_path = out["elsewhere"] / rs.PACKET_FILES["runs"]
+    data = json.loads(runs_path.read_text(encoding="utf-8"))
+    for info in data.values():
+        info["eval_id"] = "not-a-log-given-to-the-report"
+    runs_path.write_text(json.dumps(data), encoding="utf-8", newline="\n")
+    return NS(**{k: str(v) for k, v in out.items()}, wrong_case=case_of[wrong_unit])
+
+
+def test_without_a_record_prints_route_blind_and_code_only_and_says_the_record_is_needed(logs, capsys):
+    code, out, err = _main(capsys, *_base(logs))
+    assert code == pr.EXIT_OK, err
+    sonnet = _block(out, "sonnet")
+    assert "Content-pass^4 figures (section 6, section 8; no frozen review record):" in sonnet
+    lines = _figure_lines(sonnet)
+    assert set(lines) == set(pr.FIGURE_NAMES.values())
+    for name in ("review-settled", "audit-adjusted"):
+        assert lines[name].endswith(NEEDS) and not FIGURE_RE.search(lines[name]), lines[name]
+    assert "20/20 = 1.000 (Clopper-Pearson 95% [0.832, 1.000])" in lines["route-blind"]
+    assert lines["route-blind"].endswith("UPPER BOUND on the review-settled figure, not a capability result")
+    assert lines["code-only"].endswith("EXTRACTOR HEALTH only: not a capability result, never a score")
+    assert ("review-settled and audit-adjusted content-pass^4, FM-008 on the review-settled trial and the per-anchor "
+            "means review-settled and audit-adjusted: not computed; each needs a frozen review record") in sonnet
+    assert "SCORE OF RECORD" not in out and "FM-008 on the review-settled trial:" not in out
+    assert "per sample (route-blind / code-only): " in sonnet
+    assert "FM-008 on the code-only trial (extractor health only, not the FM-008 count): 0" in sonnet
+
+
+def test_with_a_record_prints_all_four_figures_labeled_and_fm008_on_the_review_settled_trial(logs, records, capsys,
+                                                                                               tmp_path):
+    path = tmp_path / "report.json"
+    code, out, err = _main(capsys, *_base(logs), "--review-record", records.correct, "--json", path)
+    assert code == pr.EXIT_OK, err
+    sonnet = _block(out, "sonnet")
+    assert f"frozen review record {records.correct}, run R1):" in sonnet
+    lines = _figure_lines(sonnet)
+    for name in pr.FIGURE_NAMES.values():
+        assert "20/20 = 1.000 (Clopper-Pearson 95% [0.832, 1.000])" in lines[name], lines[name]
+    assert lines["review-settled"].endswith("SCORE OF RECORD (owner decision D-A)")
+    assert lines["audit-adjusted"].endswith("SENSITIVITY only, never the score of record")
+    assert lines["route-blind"].endswith("UPPER BOUND on the review-settled figure, not a capability result")
+    assert lines["code-only"].endswith("EXTRACTOR HEALTH only: not a capability result, never a score")
+    assert "FM-008 on the review-settled trial: 0" in sonnet
+    assert "per sample (review-settled / audit-adjusted / route-blind / code-only): " in sonnet
+    for anchor in pr.rel.TRIAL_ANCHORS:
+        assert re.search(rf"{anchor}\s+review-settled 3\.000 \[3\.000, 3\.000\], "
+                         r"audit-adjusted 3\.000 \[3\.000, 3\.000\]", sonnet), anchor
+    assert ("review-found (counted apart from code-found): codes none; citation omissions 0; "
+            "whole-narrative wrong 0") in sonnet
+    # The record names only the Sonnet run: the other runs say so and print no record figure.
+    for role in ("haiku", "template"):
+        block = _block(out, role)
+        assert "no frozen review record for this run: the record names no run with eval id" in block
+        assert _figure_lines(block)["review-settled"].endswith(NEEDS)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    figs = data["runs"]["sonnet"]["content_pass4_figures"]
+    assert figs["score_of_record"] == "review_settled"
+    assert figs["record"] == {"packet_dir": records.correct, "run_id": "R1"}
+    assert {k: v["passed"] for k, v in figs["figures"].items()} == {
+        "review_settled": 20, "audit_adjusted": 20, "route_blind": 20, "code_only": 20}
+    assert figs["fm008"] == {"trial": "review_settled", "samples": []}
+    assert data["review_record"] == {"packet_dir": records.correct,
+                                     "run_ids": {"sonnet": "R1", "haiku": None, "template": None}}
+    assert data["runs"]["haiku"]["content_pass4_figures"]["score_of_record"] is None
+
+
+def test_review_settled_reads_the_verdicts_and_the_code_only_figure_is_not_the_score(logs, records, capsys, tmp_path):
+    """A whole-narrative `wrong` (D-I) fails one hard case on the score of record; the
+    route-blind and code-only figures, which read the log alone, do not move."""
+    path = tmp_path / "report.json"
+    code, out, err = _main(capsys, *_base(logs), "--review-record", records.wrong, "--json", path)
+    assert code == pr.EXIT_OK, err
+    lines = _figure_lines(_block(out, "sonnet"))
+    assert "19/20 = 0.950" in lines["review-settled"] and "19/20 = 0.950" in lines["audit-adjusted"]
+    assert "20/20 = 1.000" in lines["route-blind"] and "20/20 = 1.000" in lines["code-only"]
+    figs = json.loads(path.read_text(encoding="utf-8"))["runs"]["sonnet"]["content_pass4_figures"]
+    settled = figs["figures"]["review_settled"]["per_sample"]
+    assert [sid for sid, v in settled.items() if not v] == [records.wrong_case]
+    assert figs["review_found"]["whole_narrative_wrong"] >= 1
+    # The printed figures are trials.figures() on the same log and frozen record.
+    from icfr_agent_evals import trials
+
+    ref = trials.figures(read_eval_log(logs["sonnet"]), pr.load_review_record(records.wrong))
+    for kind, row in ref["figures"].items():
+        assert (figs["figures"][kind]["passed"], figs["figures"][kind]["ci95"]) == (row["passed"], row["ci95"])
+
+
+@pytest.mark.parametrize("with_record", [False, True])
+def test_code_only_figure_is_never_printed_as_the_score(logs, records, capsys, with_record):
+    extra = ["--review-record", records.wrong] if with_record else []
+    code, out, err = _main(capsys, *_base(logs), *extra)
+    assert code == pr.EXIT_OK, err
+    names = tuple(f"{n} content-pass^4" for n in pr.FIGURE_NAMES.values())
+    for line in out.splitlines():
+        if FIGURE_RE.search(line):  # every printed content-pass^4 count names its figure
+            assert line.strip().startswith(names), line
+        if line.strip().startswith("code-only"):
+            assert "SCORE OF RECORD" not in line and "SENSITIVITY" not in line and "UPPER BOUND" not in line, line
+        if "SCORE OF RECORD" in line:
+            assert line.strip().startswith("review-settled content-pass^4"), line
+    assert not any(line.startswith("content-pass^4 ") for line in out.splitlines())  # the old unlabeled line
+    code_lines = [line for line in out.splitlines() if line.strip().startswith("code-only content-pass^4")]
+    assert len(code_lines) == 3 and all(line.endswith("never a score") for line in code_lines)
+    assert out.count("SCORE OF RECORD") == (1 if with_record else 0)
+
+
+def test_refuses_a_missing_or_unfrozen_record(logs, capsys, records, tmp_path):
+    code, out, err = _main(capsys, *_base(logs), "--review-record", tmp_path / "absent")
+    assert code == pr.EXIT_REFUSED and out == "" and "not a packet directory" in err
+    code, out, err = _main(capsys, *_base(logs), "--review-record", records.unfrozen)
+    assert code == pr.EXIT_REFUSED and out == "" and "unreadable" in err and "verdicts.csv" in err
+
+
+def test_refuses_a_record_that_names_none_of_the_logs(logs, capsys, records):
+    code, out, err = _main(capsys, *_base(logs), "--review-record", records.elsewhere)
+    assert code == pr.EXIT_REFUSED and out == ""
+    assert "names none of the sonnet, haiku or template logs" in err and "not-a-log-given-to-the-report" in err
+
+
+def test_refuses_a_record_that_does_not_cover_its_run(logs, capsys, records):
+    code, out, err = _main(capsys, *_base(logs), "--review-record", records.incomplete)
+    assert code == pr.EXIT_REFUSED and out == ""
+    assert "the frozen review record does not cover run R1 (" in err
+
+
+def test_figure_labels_follow_the_preregistration():
+    assert pr.FIGURE_ORDER == ("review_settled", "audit_adjusted", "route_blind", "code_only")
+    assert "SCORE OF RECORD" in pr.FIGURE_ROLES["review_settled"]
+    assert "never the score of record" in pr.FIGURE_ROLES["audit_adjusted"]
+    assert "UPPER BOUND" in pr.FIGURE_ROLES["route_blind"]
+    assert "never a score" in pr.FIGURE_ROLES["code_only"] and "EXTRACTOR HEALTH" in pr.FIGURE_ROLES["code_only"]
+    assert sum("score of record" in r.lower() and "never" not in r.lower() for r in pr.FIGURE_ROLES.values()) == 1
+
+
+def test_no_dash_or_cr_characters_in_the_script_and_tests():
+    for path in (SCRIPT, Path(__file__)):
+        raw = path.read_bytes()
+        assert b"\r" not in raw
+        text = raw.decode("utf-8")
+        assert chr(0x2014) not in text and chr(0x2013) not in text
 
 
 # --- Refusals (exit 3) --------------------------------------------------------------------
