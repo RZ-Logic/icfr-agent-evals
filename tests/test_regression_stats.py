@@ -11,7 +11,7 @@ one-sided McNemar test of (a) and (b) with the (b) floor (fewer than 6
 discordant cases cannot reject at 0.025), Holm step-down at family-wise alpha
 0.05 with m = 6, and compare(): pairing by sample id, epoch-count checks,
 unscored dimensions, re-run pooling under (d) and the regression sign-off
-check of (c) with the R1/R2 review-volume ladder.
+check of (c) with the R1, R2 and R3 review-volume ladder.
 """
 
 from __future__ import annotations
@@ -713,7 +713,7 @@ def test_ladder_r2_skips_single_epoch_rises_except_fabrication_and_sweep():
     }
 
 
-@pytest.mark.parametrize("ladder", ["R3", "r1", "", "R12"])
+@pytest.mark.parametrize("ladder", ["R4", "r1", "r3", "", "R12"])
 def test_unknown_ladder_is_value_error(ladder):
     with pytest.raises(ValueError):
         compare(make_run(n=4), [make_run(n=4)], ladder=ladder)

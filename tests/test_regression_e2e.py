@@ -191,7 +191,7 @@ def test_no_change_passes_with_no_signoff_exit_0(runs, cli, tmp_path):
     assert all(not t.rejected and t.p == 1.0 for t in rep.fabrication.values())
 
 
-@pytest.mark.parametrize("ladder", ["R1", "R2"])
+@pytest.mark.parametrize("ladder", ["R1", "R2", "R3"])
 def test_pooling_a_clean_rerun_does_not_clear_the_regression(runs, cli, ladder):
     # Section 10(d): re-runs pool and never replace; a clean redraw cannot buy a pass.
     code, report = _cli(cli, ["--baseline", runs.baseline.path, "--candidate", runs.regression.path,

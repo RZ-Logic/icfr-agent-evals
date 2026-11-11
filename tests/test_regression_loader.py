@@ -34,6 +34,7 @@ from icfr_agent_evals.regression import (
     record_from_sample,
     records_from_log,
     records_from_samples,
+    route_blind_trial,
     route_class,
 )
 from icfr_agent_evals.reliability import GateError, evaluate_trial
@@ -269,6 +270,18 @@ def test_dev_run_records_map_every_epoch(dev_run):
     assert sum(r.success for r in c) == 2
 
 
+def test_dev_run_route_blind_trial_per_sample(dev_run):
+    """Section 6 route-blind trial (D-E5): C's sweep routes are settleable, so C
+    passes; B's FM-005 epoch fails. The code-only trial fails both."""
+    picked = dev_run.picked
+    expected = {picked["A"]: True, picked["B"]: False, picked["C"]: True}
+    assert route_blind_trial(dev_run.path) == expected
+    assert route_blind_trial(dev_run.log) == expected
+    assert route_blind_trial(dev_run.log.samples) == expected
+    recs = records_from_log(dev_run.log)
+    assert {r.sample_id for r in recs if not r.success} == {picked["B"], picked["C"]}
+
+
 def test_dev_run_records_match_between_path_and_log_object(dev_run):
     assert records_from_log(dev_run.path) == records_from_log(dev_run.log)
 
@@ -358,7 +371,7 @@ def test_cli_signoff_pending_without_a_block(dev_run, cli, capsys, tmp_path):
     ]
 
 
-@pytest.mark.parametrize("ladder", ["R1", "R2"])
+@pytest.mark.parametrize("ladder", ["R1", "R2", "R3"])
 def test_cli_pooled_rerun_counts_run_against_the_candidate(dev_run, cli, tmp_path, ladder):
     """Two identical candidate runs pool to eight epochs, so the raw counts double:
     B's FM-005 (1 -> 2) and C's sweep route (2 -> 4) trigger, and both stay on R1."""
