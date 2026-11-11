@@ -5,15 +5,23 @@ Pre-registration section 6: reliability is computed after the run from every
 mean reducer keeps only the first epoch's metadata, so a review flag raised on a
 later epoch would vanish). Inspect's pass_k and pass_at reducers are not used.
 
-A content trial succeeds when the correctness, fabrication, reconciling-items and
-completeness anchors each score 3 on that epoch, no scorer fires an FM code, and
-no scorer routes the epoch to requires_human_review. A sample error, a missing
-score or a non-numeric value is a failed trial (the strict form of AS 2315 .40).
-A sample's content-pass^k is 1 only when exactly k epochs are present and all
-k trials succeed.
+The trial evaluate_trial computes is the code-only trial: it succeeds when the
+correctness, fabrication, reconciling-items and completeness anchors each score 3
+on that epoch, no scorer fires an FM code, and no scorer routes the epoch to
+requires_human_review. A sample error, a missing score or a non-numeric value is a
+failed trial (the strict form of AS 2315 .40). A sample's content-pass^k is 1 only
+when exactly k epochs are present and all k trials succeed. The code-only figure is
+the extractor health figure (section 8), never a score. The review-settled,
+audit-adjusted and route-blind trials live in trials.py, which reads this module.
 
 FM-008 (inconsistency under repetition): at least one of a sample's trials
-succeeded and its content-pass^k failed.
+succeeded and its content-pass^k failed. Section 6 computes it on the
+review-settled trial, so it moves with the review verdicts: given the run's frozen
+review record (record=...), reliability_report and report_from_log read FM-008 from
+trials.review_settled_trial and set fm008_basis to "review_settled". Without a
+record, fm008 is the code-only reading, labeled fm008_basis "code_only"; that
+reading is never the pre-registered FM-008. fm008_code_only always holds the
+code-only reading.
 
 FM-007 (over-confident incorrect) is sample-level too, but it is computed by
 consistency.py from the canonical answers (all k epochs agree and the modal answer
@@ -60,6 +68,8 @@ SAMPLE_ERROR_SCORER = "sample_error"
 FM002 = "FM-002"
 FM002_DIRECTION_KEY = "fm002_direction"  # scoring.FM002_DIRECTION_KEY, kept free of the scorer imports
 FM002_UNRECORDED = "unrecorded"
+FM008_REVIEW_SETTLED = "review_settled"  # trials.REVIEW_SETTLED
+FM008_CODE_ONLY = "code_only"            # trials.CODE_ONLY
 
 
 class GateError(AssertionError):
@@ -95,6 +105,9 @@ class ReliabilityReport:
     fm008: tuple[str, ...]            # sample ids
     epoch_anomalies: dict[str, tuple[int, ...]]  # sample id -> epochs seen, when not exactly 1..k
     fm002_by_direction: dict[str, int] = field(default_factory=dict)  # direction -> (sample, epoch) pairs
+    fm008_basis: str = FM008_CODE_ONLY      # which trial fm008 reads: "review_settled" or "code_only"
+    fm008_code_only: tuple[str, ...] = ()   # FM-008 on the code-only trial, always computed
+    settled: Any = None                     # trials.TrialReport of the review-settled trial, with a record
 
     @property
     def scored_samples(self) -> int:
@@ -154,8 +167,12 @@ def evaluate_trial(sample: Any) -> Trial:
     return Trial(sid, epoch, not failed, tuple(dict.fromkeys(fms)), tuple(review), tuple(failed), direction)
 
 
-def reliability_report(samples: Iterable[Any], k: int) -> ReliabilityReport:
-    """Every (sample, epoch) record, never reduced scores."""
+def reliability_report(samples: Iterable[Any], k: int, *, record: Any = None, run_id: str | None = None,
+                       require_complete: bool = True) -> ReliabilityReport:
+    """Every (sample, epoch) record, never reduced scores. With the run's frozen
+    review record, FM-008 reads the review-settled trial (trials.py); run_id names
+    the worker run in a record that holds several (trials.resolve_run_id)."""
+    samples = list(samples)
     trials = [evaluate_trial(s) for s in samples]
     by_sample: dict[str, list[Trial]] = defaultdict(list)
     for t in trials:
@@ -178,15 +195,25 @@ def reliability_report(samples: Iterable[Any], k: int) -> ReliabilityReport:
     by_direction = Counter(t.fm002_direction for t in trials if t.fm002_direction is not None)
     assert sum(by_direction.values()) == fm_counts.get(FM002, 0), "FM-002 by direction must sum to its total"
     queue = tuple(row for t in sorted(trials, key=lambda t: (t.sample_id, t.epoch)) for row in t.review)
+    settled = None
+    fm008_of_record, basis = tuple(fm008), FM008_CODE_ONLY
+    if record is not None:
+        from .trials import review_settled_trial  # trials imports this module
+
+        settled = review_settled_trial(samples, record, k=k, run_id=run_id, require_complete=require_complete)
+        fm008_of_record, basis = settled.fm008, FM008_REVIEW_SETTLED
     return ReliabilityReport(
         k=k,
         trials=tuple(trials),
         pass_k=pass_k,
         review_queue=queue,
         fm_counts=dict(sorted(fm_counts.items())),
-        fm008=tuple(fm008),
+        fm008=fm008_of_record,
         epoch_anomalies=anomalies,
         fm002_by_direction=dict(sorted(by_direction.items())),
+        fm008_basis=basis,
+        fm008_code_only=tuple(fm008),
+        settled=settled,
     )
 
 
@@ -318,11 +345,14 @@ def require_run_config(log: Any, *, expected_samples: int | None = None,
 
 
 def report_from_log(log: Any, k: int | None = None, *, run_config: bool = True,
-                    max_tokens_pin: int | None = None) -> ReliabilityReport:
+                    max_tokens_pin: int | None = None, record: Any = None, run_id: str | None = None,
+                    require_complete: bool = True) -> ReliabilityReport:
     """Report from an EvalLog read with its samples (header_only=False). k
     defaults to the run's configured epochs. With run_config (the default) the log
     must pass require_run_config at k epochs (PREREGISTERED_K when k is None);
-    run_config=False is for hand-built logs that make no model call."""
+    run_config=False is for hand-built logs that make no model call. With the run's
+    frozen review record, FM-008 reads the review-settled trial; the log's eval id
+    finds its worker run in the record unless run_id is given."""
     if log.samples is None:
         raise GateError("EvalLog has no samples; read it with header_only=False and keep sample logging on")
     ran = int(log.eval.config.epochs or 1)
@@ -335,7 +365,21 @@ def report_from_log(log: Any, k: int | None = None, *, run_config: bool = True,
         require_run_config(log, expected_epochs=PREREGISTERED_K if k is None else k, max_tokens_pin=max_tokens_pin)
     if k is None:
         k = ran
-    return reliability_report(log.samples, k)
+    if record is not None:
+        from .trials import resolve_run_id  # trials imports this module
+
+        run_id = resolve_run_id(record, log, run_id)
+    return reliability_report(log.samples, k, record=record, run_id=run_id, require_complete=require_complete)
+
+
+def content_pass_figures(log: Any, record: Any = None, *, k: int | None = None, run_id: str | None = None,
+                         require_complete: bool = True) -> dict:
+    """trials.figures: the review-settled, audit-adjusted and route-blind content-pass^4
+    and the code-only extractor health figure, each with its Clopper-Pearson interval,
+    and the anchor means review-settled and audit-adjusted side by side."""
+    from .trials import figures  # trials imports this module
+
+    return figures(log, record, k=k, run_id=run_id, require_complete=require_complete)
 
 
 def assert_gate(report: ReliabilityReport, expected_samples: int, expected_k: int = PREREGISTERED_K) -> None:
