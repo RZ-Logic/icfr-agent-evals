@@ -809,7 +809,8 @@ def test_blind_check_rules(tmp_path, monkeypatch, capsys):
     for bad in ("<link", "@import", "url(", "src=", "href=", "\u2014", "\u2013"):
         assert bad not in page
     sheet = rs.read_csv(d3 / rf.BLIND_CHECK_CSV, rf.BLIND_CHECK_COLUMNS)
-    assert {r["narrative"] for r in sheet} == {TEXT_U + " Run 1.", TEXT_U + " Run 2.", TEXT_B}
+    # D-R6: every narrative read in one worker run, the FM-coded case-c narrative included
+    assert {r["narrative"] for r in sheet} == {TEXT_U + " Run 1.", TEXT_U + " Run 2.", TEXT_B, TEXT_C}
     assert all(r["guess"] == "" for r in sheet)
     for p in (d3 / "reviewer").rglob("*"):
         text = p.read_text(encoding="utf-8")
@@ -1161,7 +1162,27 @@ def test_second_look_draw_never_draws_a_narrative_only_unit(tmp_path, monkeypatc
         u["first_unit_id"] for units in rf.second_look_units(rec).values() for u in units}
 
 
-def test_blind_check_pool_holds_no_narrative_only_unit(tmp_path, monkeypatch, capsys):
+def test_d_r6_blind_check_pool_is_every_narrative_read(tmp_path, monkeypatch, capsys):
+    """D-R6: the blinding check draws from every narrative the reviewer read, routed,
+    FM-coded and narrative-only alike, when it occurs in exactly one worker run."""
+    env = build(tmp_path, fm_route="findings", narr_only=True)
+    rec = rf.load_record(str(env.dir), str(fill(env)))
+    assert rf.validate_record(rec) == []
+    ids = env.ids
+    pool = rf.blind_check_pool(rec)
+    want = {(ids["N_U1"], "R1"), (ids["N_U2"], "R2"), (ids["N_B"], "R1"), (ids["N_D"], "R1"),
+            (ids["N_C"], "R1"), (ids["N_I"], "R1")}
+    assert set(pool) == want and len(pool) == len(want) and pool == sorted(pool)
+    classes = {rec.units[uid]["route_class"] for uid, _ in pool}
+    assert classes == {"routed", "fm_coded", "narrative_only"}
+    # shared narratives (case-a in both runs, case-h in both runs) name no one model
+    assert not {uid for uid, _ in pool} & {ids["N_A"], ids["N_H"]}
+    # the second look stays routed only, so the two pools now differ
+    routed = {(u["first_unit_id"], run) for run, us in rf.second_look_units(rec).items() for u in us}
+    assert (ids["N_I"], "R1") not in routed and (ids["N_C"], "R1") not in routed
+
+
+def test_d_r6_blind_check_draw_offers_fm_coded_and_narrative_only_units(tmp_path, monkeypatch, capsys):
     env = build(tmp_path, narr_only=True)
     monkeypatch.setattr(rf, "rederive_check", lambda rec, runs: [])
     code, _, err = do_freeze(monkeypatch, capsys, env)
@@ -1169,7 +1190,9 @@ def test_blind_check_pool_holds_no_narrative_only_unit(tmp_path, monkeypatch, ca
     _git(monkeypatch, env)
     assert rf.main(blind_argv(env, "alpha=Model A,beta=Model B")) == 0, capsys.readouterr().err
     sheet = rs.read_csv(tmp_path / "blind-check" / rf.BLIND_CHECK_CSV, rf.BLIND_CHECK_COLUMNS)
-    assert sheet and not {r["narrative"] for r in sheet} & {TEXT_H, TEXT_H2}
+    texts = {r["narrative"] for r in sheet}
+    assert TEXT_H2 in texts and TEXT_C in texts  # narrative-only and FM-coded, one run each
+    assert TEXT_H not in texts  # one narrative across two runs: no one model to name
 
 
 def test_manifest_counts_narrative_units_by_class(tmp_path, monkeypatch, capsys):

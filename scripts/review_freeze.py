@@ -1060,6 +1060,24 @@ def second_look_units(rec: Record) -> dict[str, list[dict]]:
     return out
 
 
+def blind_check_pool(rec: Record) -> list[tuple[str, str]]:
+    """The blinding check population: (narrative unit id, worker run) for every narrative the
+    reviewer read, routed, FM-coded and narrative-only (D-J hard-case reads) alike (owner
+    decision D-R6, 2026-11-10). A unit counts only when it occurs in exactly one worker run,
+    since a narrative several workers wrote has no one model to name. Unlike the second look,
+    the pool is not limited to routed narratives."""
+    worker_set = set(worker_run_ids(rec))
+    runs_of_unit: dict[str, set[str]] = {}
+    for m in rec.members:
+        if m["member_kind"] == "narrative" and m["run_id"] in worker_set:
+            runs_of_unit.setdefault(m["unit_id"], set()).add(m["run_id"])
+    narrative_units = {uid for uid, u in rec.units.items() if u.get("row_kind") == "narrative"}
+    missing = sorted(set(runs_of_unit) - narrative_units)
+    if missing:
+        raise Refused(f"member map names narrative unit(s) not in the packet: {missing[:5]}")
+    return sorted((uid, next(iter(runs))) for uid, runs in runs_of_unit.items() if len(runs) == 1)
+
+
 def sample_size(n_units: int) -> int:
     """n = min(N, max(100, ceil(0.10 * N)))."""
     return min(n_units, max(SECOND_LOOK_FLOOR, math.ceil(SECOND_LOOK_SHARE * n_units)))
@@ -1631,14 +1649,7 @@ def _blind_check_draw(args: argparse.Namespace) -> int:
         gaps.append("--models gives two runs the same display name")
     if gaps:
         raise Refused(gaps)
-    units_by_run = second_look_units(rec)
-    worker_set = set(workers)
-    runs_of_unit: dict[str, set[str]] = {}
-    for m in rec.members:
-        if m["member_kind"] == "narrative" and m["run_id"] in worker_set:
-            runs_of_unit.setdefault(m["unit_id"], set()).add(m["run_id"])
-    pool = sorted((u["first_unit_id"], run) for run, units in units_by_run.items() for u in units
-                  if runs_of_unit.get(u["first_unit_id"]) == {run})
+    pool = blind_check_pool(rec)
     first_sha = rs.sha256_file(mpath)
     seed = derived_seed(first_sha, str(rec.meta.get("run_id", "")), "blind_check")
     salt = secrets.token_hex(16)  # kept under sealed/ only: a check id cannot be traced to its run
