@@ -5,15 +5,16 @@ variance commentary as a single JSON object. This is the *content* task, with no
 action/disposition yet (that is Phase 2).
 
 WORKER_PROMPT_VERSION is pinned because a prompt change is a code change. The
-draft below is PRE-elicitation: tune it only during the dev-set elicitation pass,
-then lock it (pre-registration section 3). Do not tune it against the evaluation set.
+prompt below was tuned only during the dev-set elicitation pass and was locked on
+2026-11-11 as v0.0.4, with the text and SHA-256 of v0.0.4-draft unchanged
+(pre-registration section 3). Any change now is a deviation.
 """
 
 from __future__ import annotations
 
 import hashlib
 
-WORKER_PROMPT_VERSION = "v0.0.4-draft"  # lock after dev-set elicitation
+WORKER_PROMPT_VERSION = "v0.0.4"  # locked 2026-11-11; text unchanged from v0.0.4-draft
 
 # NOTE: this prompt is delivered via Inspect's system_message(), which runs the
 # text through str.format()-style templating against sample metadata. It is

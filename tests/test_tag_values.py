@@ -155,12 +155,17 @@ def test_markdown_mode_drafts_section13_rows():
     assert chr(0x2014) not in text  # no em dash in the drafted rows
 
 
-def test_draft_prompt_pin_matches_the_worker_prompt_at_this_commit(two_runs):
-    """Section 3 pins the draft worker prompt (v0.0.4-draft at a783322); the pin and the
-    solver's prompt hash agree, so matches_section3_draft is True."""
+def test_locked_prompt_is_the_section3_draft_text(two_runs):
+    """Section 3 pins the draft worker prompt (v0.0.4-draft at a783322). It was locked on
+    2026-11-11 as v0.0.4 with the text unchanged, so the SHA-256 still equals the draft pin,
+    the version is no longer a draft, and locked_from_section3_draft is True."""
     from icfr_agent_evals import solver
 
     assert tv.PREREGISTERED["draft_prompt"] == (
         "v0.0.4-draft", "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d")
-    assert (solver.WORKER_PROMPT_VERSION, solver.WORKER_PROMPT_SHA256) == tv.PREREGISTERED["draft_prompt"]
-    assert json.loads(two_runs[0])["worker_prompt"]["matches_section3_draft"] is True
+    assert solver.WORKER_PROMPT_VERSION == "v0.0.4"
+    assert solver.WORKER_PROMPT_SHA256 == tv.PREREGISTERED["draft_prompt"][1]
+    out = json.loads(two_runs[0])["worker_prompt"]
+    assert out["locked"] is True
+    assert out["matches_section3_draft"] is False
+    assert out["locked_from_section3_draft"] is True

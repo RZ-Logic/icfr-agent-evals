@@ -293,7 +293,11 @@ def collect(root: pathlib.Path = ROOT) -> dict:
         "recomputed_sha256": recomputed,
         "locked": not solver.WORKER_PROMPT_VERSION.endswith("-draft"),
         "matches_section3_draft": (solver.WORKER_PROMPT_VERSION, recomputed) == PREREGISTERED["draft_prompt"],
+        "locked_from_section3_draft": recomputed == PREREGISTERED["draft_prompt"][1]
+        and not solver.WORKER_PROMPT_VERSION.endswith("-draft"),
     }
+    if prompt["locked"] and recomputed != PREREGISTERED["draft_prompt"][1]:
+        mismatches.append("locked worker prompt text differs from the section 3 draft (v0.0.4-draft)")
     if recomputed != solver.WORKER_PROMPT_SHA256:
         mismatches.append("WORKER_PROMPT_SHA256 does not match the SHA-256 of SYSTEM_PROMPT")
     if not prompt["locked"]:
