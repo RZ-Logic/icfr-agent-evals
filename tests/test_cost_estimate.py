@@ -220,10 +220,20 @@ def test_full_estimate_components_and_caps(tmp_path):
     assert cal["input_per_call"] == pytest.approx(1000 + visible)
     assert cal["cost"] == pytest.approx(240 * ce.PRICES[OPUS55].cost(1000 + visible, out))
     assert cal["worst"] == pytest.approx(240 * ce.PRICES[OPUS55].cost(1000 + visible, 48000))
-    # Grader: 3,200 generations plus 3 x 40 x 4 x 4 test-retest calls, 800 out each.
-    assert est["grader_calls"] == {"generations": 3200, "test_retest": 1920, "total": 5120}
+    # Grader: 3,200 generations plus the calibration-time work at the upper reading: ~800 outputs
+    # first scored, 3 test-retest replicates and 4 bias-audit passes on them, 800 out each.
+    gc = est["grader_calls"]
+    assert gc["generations"] == 3200
+    assert gc["calibration"] == {"outputs_per_pass": 800, "first_scoring": 800, "test_retest": 2400,
+                                 "bias_audit": 3200, "total": 6400}
+    assert gc["calibration_lower"] == {"outputs_per_pass": 640, "first_scoring": 640, "test_retest": 1280,
+                                       "bias_audit": 1920, "total": 3840}
+    assert gc["total"] == 9600
     g1 = est["graders"]["step 1"]
-    assert g1["cost"] == pytest.approx(5120 * ce.PRICES["openai/gpt-6-luna"].cost(1000 + visible, 800))
+    per_call = ce.PRICES["openai/gpt-6-luna"].cost(1000 + visible, 800)
+    assert g1["cost"] == pytest.approx(9600 * per_call)
+    assert (g1["generations_cost"], g1["calibration_cost"], g1["calibration_lower_cost"]) == pytest.approx(
+        (3200 * per_call, 6400 * per_call, 3840 * per_call))
     # Ladder steps replace the grader: step 2 is five times step 1 on these prices, step 3 twice step 2.
     assert est["graders"]["step 2"]["cost"] == pytest.approx(5 * g1["cost"])
     assert est["graders"]["step 3"]["cost"] == pytest.approx(2 * est["graders"]["step 2"]["cost"])
@@ -234,6 +244,12 @@ def test_full_estimate_components_and_caps(tmp_path):
     assert t1["without_route_judge"] == pytest.approx(est["worker_cost"] + cal["cost"] + g1["cost"]
                                                       + est["scout"]["cost"])
     assert t1["with_route_judge"] == pytest.approx(t1["without_route_judge"] + 19.0)
+    # The lower reading and no calibration-time work are shown beside the counted total.
+    assert t1["calibration_lower_reading"] == pytest.approx(t1["without_route_judge"] - 2560 * per_call)
+    assert t1["without_calibration"] == pytest.approx(t1["without_route_judge"] - 6400 * per_call)
+    # Not counted: "both ways" read as grader and calibrator adds 800 Opus 5.5 calls.
+    assert cal["both_ways_calls"] == 800
+    assert cal["both_ways_cost"] == pytest.approx(800 * ce.PRICES[OPUS55].cost(1000 + visible, out))
 
 
 def test_scout_scan_replaces_the_placeholder_and_scales_to_the_full_run(tmp_path):
@@ -243,6 +259,45 @@ def test_scout_scan_replaces_the_placeholder_and_scales_to_the_full_run(tmp_path
     assert s["basis"] == "measured"
     assert s["calls"] == pytest.approx(160 * 40)
     assert s["cost"] == pytest.approx(ce.PRICES["openai/gpt-6-luna"].cost(1_000_000, 100_000) * 40)
+
+
+def test_scout_scan_input_is_scaled_by_each_workers_transcript_length(tmp_path):
+    # Sonnet 5.5 transcripts: 1,000 in + 2,000 or 4,000 out. Haiku 5.5 here: twice as long in both strata.
+    usages = [ce.read_log_usage(simple_log(tmp_path, SONNET55)),
+              ce.read_log_usage(simple_log(tmp_path, HAIKU55, std=(2000, 4000, 500), hard=(2000, 8000, 3000))),
+              ce.read_log_usage(simple_log(tmp_path, SONNET5)), ce.read_log_usage(simple_log(tmp_path, OPUS55))]
+    tin, tout = 1_000_000, 100_000
+    est = ce.estimate(usages, scan=(160, tin, tout), transcripts=80)
+    s = est["scout"]
+    luna = ce.PRICES["openai/gpt-6-luna"]
+    # Per worker 800 transcripts: Sonnet 5.5, Sonnet 5, Opus 5.5 at ratio 1, Haiku 5.5 at ratio 2.
+    expected_in = tin / 80 * 800 * (1 + 2 + 1 + 1)
+    assert s["cost"] == pytest.approx(luna.cost(expected_in, tout * 40))
+    assert s["count_scaled_cost"] == pytest.approx(luna.cost(tin, tout) * 40)
+    assert s["cost"] > s["count_scaled_cost"]
+    assert "count-scaled figure" in s["note"]
+
+
+def test_cache_writes_are_shown_at_a_stated_premium(tmp_path):
+    usages = []
+    for m in (SONNET55, HAIKU55, SONNET5, OPUS55):
+        usages.append(ce.read_log_usage(write_log(tmp_path / f"{m.split('/')[-1]}.eval", m, [
+            ("dev-std-001-ETH-M1", 1, [_event(m, 0, 1000, 0, cache_write=1000, cache_read=3000)]),
+            ("dev-hc-001-ETH-M2", 1, [_event(m, 0, 1000, 0, cache_write=1000, cache_read=3000)]),
+        ])))
+    est = ce.estimate(usages)
+    w = est["workers"][SONNET55]
+    assert w["cache_write_share"] == pytest.approx(0.25)
+    assert w["cache_write_cost"] == pytest.approx(800 * 1000 * 2.0 / 1_000_000)
+    cal = est["calibrator"]
+    assert cal["cache_write_cost"] == pytest.approx(240 * ce.PRICES[OPUS55].cost(cal["input_per_call"] * 0.25, 0))
+    cw = est["cache_write"]
+    base = sum(x["cache_write_cost"] for x in est["workers"].values()) + cal["cache_write_cost"]
+    assert cw["cost_at_base"] == pytest.approx(base)
+    assert cw["premiums"]["1.25"]["extra"] == pytest.approx(0.25 * base)
+    assert cw["premiums"]["2"]["step 1 total"] == pytest.approx(est["totals"]["step 1"]["without_route_judge"] + base)
+    text = ce.format_report(est)
+    assert "may not be an upper bound" in text and "assumed, not pinned" in text
 
 
 def test_missing_workers_mark_the_estimate_incomplete(tmp_path):

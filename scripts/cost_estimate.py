@@ -27,15 +27,22 @@ What it derives, and on what basis (each line of the output says which):
             calls) at Opus 5.5 prices, each call's input taken as Opus 5.5's mean dev
             input plus the mean visible answer of the non-Opus workers, its output as
             Opus 5.5's mean dev output (section 5: no calibrator call runs before the tag).
-  assumed   the grader on GPT-6 Luna, one call per generation plus the test-retest
-            replicates, each call's input taken as the mean dev worker input plus the
-            mean visible answer, its output 800 tokens (CONTEXT.md pass-5 judge call,
-            reasoning included). No grader call has run, so nothing here is measured.
+  assumed   the grader on GPT-6 Luna, one call per generation plus the calibration-time
+            work at one acceptance look: the calibration subset's first scoring (~800
+            outputs) and its test-retest replicates (both on CONTEXT.md's full-run list),
+            and the bias-audit passes run at the same look (not on that list). The upper
+            reading is counted in the totals; the lower reading and the totals with no
+            calibration-time work are printed beside them. Each call's input is taken as
+            the mean dev worker input plus the mean visible answer, its output 800 tokens
+            (CONTEXT.md pass-5 judge call, reasoning included). No grader call has run, so
+            nothing here is measured.
   ladder    the same grader calls at the D-T1 steps: GPT-6.1 Terra and GPT-6.1 Sol on
             the OpenAI Batch API (half the standard price), and Sol at standard price for
             reference.
   placeholder  the Scout scanners until the owner's scan of the Sonnet 5.5 pilot log
-            (runbook step 10). With --scout-scan the scan's own totals replace it.
+            (runbook step 10). With --scout-scan the scan's own totals replace it: the
+            scan's input is scaled to each worker's transcripts by that worker's measured
+            mean input plus output against Sonnet 5.5's, its output by transcript count.
   stated    the exploratory route judge, $9 to $19 per full run and $103 at the worst
             case, carried from section 5 as stated, not re-derived.
   worst     each worker at max_tokens 48,000 (no pin is set), at the cost row's 3,482
@@ -45,9 +52,10 @@ What it derives, and on what basis (each line of the output says which):
 Prices come only from the repository's pinned documents (PRICES below names the source
 of each). Every input token is billed at the model's base input price: the logs show
 prompt-cache writes and reads, and no cache price is pinned in those documents. Most input
-tokens are cache reads, so if cache reads are billed below the base price this overstates
-the input cost; the report prints the input cost and the cache-read share so the owner
-can see how much rides on it.
+tokens are cache reads and about a fifth are cache writes. Reads are usually billed below
+base and writes above it, so the input cost is an upper estimate only if the read discount
+outweighs the write premium. The report prints the input cost, both shares, and the effect
+of cache writes at stated premiums (1.25 and 2 times base, assumptions, not pinned prices).
 
 Exit codes: 0 printed; 3 refused (a log off the dev split, a model off the roster, two
 logs of one model, an unreadable log, a help request or an argument error).
@@ -77,6 +85,22 @@ ROW_INPUT_TOKENS = 3_482             # the section 13 cost row and PILOT-RUNBOOK
 CALIBRATOR_SHARE = 0.10              # section 5 roster table: about 10 percent of non-Opus generations
 JUDGE_OUTPUT_TOKENS = 800            # CONTEXT.md pass-5 assumption: about 800 out per judge call
 TEST_RETEST_REPLICATES, CALIBRATION_CASES = 3, 40   # section 7 and CONTEXT.md cost ceiling
+# Calibration-time grader work at one acceptance look on the 40-case calibration subset.
+# CONTEXT.md's full-run list: "The calibration subset adds ~800 graded both ways" (by hand and
+# by the autograder, per the Autograder calibration bullet), "at least 3 test-retest
+# replicates". The bias audit runs at the same look (CONTEXT.md judge replication bullet:
+# (a) option order reversed and one random permutation, (b) score labels relabeled, (c)
+# dimension order permuted where dimensions share a prompt); it is not on the full-run list.
+# Two readings; the upper one is counted in the totals.
+CALIBRATION_READINGS: dict[str, dict[str, int]] = {
+    # outputs per pass, test-retest replicates beyond the first scoring, bias-audit passes
+    "upper": {"outputs": 800, "retest_extra": TEST_RETEST_REPLICATES, "bias_passes": 4},
+    "lower": {"outputs": CALIBRATION_CASES * EPOCHS * 4, "retest_extra": TEST_RETEST_REPLICATES - 1,
+              "bias_passes": 3},
+}
+# Cache-write premiums for the sensitivity line: stated assumptions, not prices pinned in the
+# repository and not fetched.
+CACHE_WRITE_PREMIUMS: tuple[float, ...] = (1.25, 2.0)
 SCOUT_MODEL_SCANNERS = 2             # eval_awareness and refusal_classifier; command_not_found is a regex
 PILOT_TRANSCRIPTS = 80               # 20 dev cases x 4 epochs
 ROUTE_JUDGE_LOW, ROUTE_JUDGE_HIGH, ROUTE_JUDGE_WORST = 9.0, 19.0, 103.0  # section 5, stated
@@ -142,6 +166,7 @@ class Call:
     cache_read_tokens: int   # part of input_tokens
     stop_reason: str | None
     max_tokens: int | None
+    cache_write_tokens: int = 0  # part of input_tokens
 
     @property
     def visible_tokens(self) -> int:
@@ -239,6 +264,7 @@ def read_log_usage(path: str | Path) -> LogUsage:
                     cache_read_tokens=_usage_int(usage, "input_tokens_cache_read"),
                     stop_reason=output.get("stop_reason") or choices[0].get("stop_reason"),
                     max_tokens=request.get("max_tokens"),
+                    cache_write_tokens=_usage_int(usage, "input_tokens_cache_write"),
                 ))
     if not calls:
         raise Refused(f"{path}: no model call of {model} carries usage")
@@ -311,6 +337,10 @@ def worker_estimate(usage: LogUsage) -> dict[str, Any]:
         "input_cost": total_gens * price.cost(mean_in, 0),
         "cache_read_share": (sum(c.cache_read_tokens for c in usage.calls)
                              / max(sum(c.input_tokens for c in usage.calls), 1)),
+        "cache_write_share": (sum(c.cache_write_tokens for c in usage.calls)
+                              / max(sum(c.input_tokens for c in usage.calls), 1)),
+        # Cache-write tokens per full run billed at the base input price (as in "cost").
+        "cache_write_cost": total_gens * price.cost(weighted_mean(usage.calls, "cache_write_tokens"), 0),
         "worst_row_input": total_gens * price.cost(ROW_INPUT_TOKENS, MAX_TOKENS_DEFAULT),
         "worst_measured_input": total_gens * price.cost(mean_in, MAX_TOKENS_DEFAULT),
     }
@@ -323,22 +353,39 @@ def judge_call_shape(workers: Mapping[str, Mapping[str, Any]]) -> tuple[float, f
     return _mean([w["mean_input"] for w in rows]), _mean([w["mean_visible"] for w in rows])
 
 
-def grader_calls() -> dict[str, int]:
-    on_generations = FULL_RUN_GENERATIONS
-    # Upper reading: each replicate re-grades the 40-case calibration subset's generations of
-    # all four workers (40 cases x 4 epochs x 4 workers).
-    test_retest = TEST_RETEST_REPLICATES * CALIBRATION_CASES * EPOCHS * len(WORKERS)
-    return {"generations": on_generations, "test_retest": test_retest, "total": on_generations + test_retest}
+def calibration_calls(reading: str = "upper") -> dict[str, int]:
+    """Grader calls at one acceptance look on the calibration subset, under one reading.
+    upper: ~800 outputs per pass (CONTEXT.md), 3 test-retest replicates on top of the first
+    scoring, 4 bias-audit passes ((a) twice, (b), (c)). lower: 640 outputs per pass (40 cases x
+    4 epochs x 4 workers), the first scoring counted as replicate 1, 3 bias-audit passes ((c)
+    not applying)."""
+    r = CALIBRATION_READINGS[reading]
+    first, retest, bias = r["outputs"], r["retest_extra"] * r["outputs"], r["bias_passes"] * r["outputs"]
+    return {"outputs_per_pass": r["outputs"], "first_scoring": first, "test_retest": retest,
+            "bias_audit": bias, "total": first + retest + bias}
+
+
+def grader_calls() -> dict[str, Any]:
+    """Grader calls per full run: one per generation, plus the calibration-time work at the upper
+    reading (counted in the totals; the lower reading is shown beside)."""
+    cal = calibration_calls("upper")
+    return {"generations": FULL_RUN_GENERATIONS, "calibration": cal,
+            "calibration_lower": calibration_calls("lower"), "total": FULL_RUN_GENERATIONS + cal["total"]}
 
 
 def grader_estimate(workers: Mapping[str, Mapping[str, Any]], price_key: str,
                     output_tokens: float = JUDGE_OUTPUT_TOKENS) -> dict[str, Any]:
     case_in, answer = judge_call_shape(workers)
-    calls = grader_calls()["total"]
+    gc = grader_calls()
+    calls = gc["total"]
     price = PRICES[price_key]
     per_call_in = case_in + answer
+    per_call = price.cost(per_call_in, output_tokens)
     return {"model": price_key, "label": price.model, "calls": calls, "input_per_call": per_call_in,
-            "output_per_call": output_tokens, "cost": calls * price.cost(per_call_in, output_tokens),
+            "output_per_call": output_tokens, "cost": calls * per_call, "cost_per_call": per_call,
+            "generations_cost": gc["generations"] * per_call,
+            "calibration_cost": gc["calibration"]["total"] * per_call,
+            "calibration_lower_cost": gc["calibration_lower"]["total"] * per_call,
             "price_source": price.source}
 
 
@@ -363,10 +410,15 @@ def calibrator_estimate(workers: Mapping[str, Mapping[str, Any]]) -> dict[str, A
     per_call_in = opus["mean_input"] + _mean([w["mean_visible"] for w in non_opus])
     per_call_out = opus["mean_output"]
     price = PRICES[CALIBRATOR]
+    alt_calls = CALIBRATION_READINGS["upper"]["outputs"]
     return {"calls": calls, "input_per_call": per_call_in, "output_per_call": per_call_out,
             "cost": calls * price.cost(per_call_in, per_call_out),
             "worst": calls * price.cost(per_call_in, MAX_TOKENS_DEFAULT), "price_source": price.source,
-            "non_opus_workers_measured": len(non_opus)}
+            "non_opus_workers_measured": len(non_opus),
+            # Inferred: the calibrator's cache writes at the Opus 5.5 worker's measured write share.
+            "cache_write_cost": calls * price.cost(per_call_in * opus["cache_write_share"], 0),
+            # Not counted: the reading of "graded both ways" as grader and calibrator.
+            "both_ways_calls": alt_calls, "both_ways_cost": alt_calls * price.cost(per_call_in, per_call_out)}
 
 
 def scout_estimate(workers: Mapping[str, Mapping[str, Any]],
@@ -375,11 +427,31 @@ def scout_estimate(workers: Mapping[str, Mapping[str, Any]],
     scale = FULL_RUN_GENERATIONS / transcripts
     if scan is not None:
         calls, tin, tout = scan
-        return {"basis": "measured", "calls": calls * scale, "input_per_call": tin / calls if calls else 0.0,
-                "output_per_call": tout / calls if calls else 0.0,
-                "cost": price.cost(tin, tout) * scale, "price_source": price.source,
-                "note": f"the owner's scan: {calls} calls, {tin:,} in, {tout:,} out on {transcripts} transcripts, "
-                        f"scaled by {scale:g}"}
+        count_scaled = price.cost(tin, tout) * scale
+        # The scan reads Sonnet 5.5 transcripts. A scanner's input grows with the transcript, so
+        # each worker's share of the scan input is scaled by its measured mean input plus output
+        # against Sonnet 5.5's; the scanner's output is scaled by transcript count only.
+        ref = workers.get("anthropic/claude-sonnet-5-5")
+        if ref is not None:
+            ref_len = ref["mean_input"] + ref["mean_output"]
+            ratios = {m: (w["mean_input"] + w["mean_output"]) / ref_len for m, w in workers.items()}
+            per_worker = FULL_RUN_GENERATIONS / len(WORKERS)
+            in_tokens = sum(tin / transcripts * per_worker * r for r in ratios.values())
+            in_tokens += tin / transcripts * per_worker * (len(WORKERS) - len(ratios))  # unmeasured: as Sonnet 5.5
+            out_tokens = tout * scale
+            cost = price.cost(in_tokens, out_tokens)
+            how = (f"input scaled by each worker's measured mean input plus output against Sonnet 5.5's "
+                   f"(mean ratio {_mean(list(ratios.values())):.2f}); count-scaled figure "
+                   f"${count_scaled:,.2f}")
+        else:
+            in_tokens, out_tokens, cost = tin * scale, tout * scale, count_scaled
+            how = "scaled by transcript count only: no Sonnet 5.5 log to scale the input by length"
+        n = calls * scale
+        return {"basis": "measured", "calls": n, "input_per_call": in_tokens / n,
+                "output_per_call": out_tokens / n, "cost": cost, "count_scaled_cost": count_scaled,
+                "price_source": price.source,
+                "note": f"the owner's scan: {calls} calls, {tin:,} in, {tout:,} out on {transcripts} Sonnet 5.5 "
+                        f"transcripts, scaled to {FULL_RUN_GENERATIONS:,} transcripts ({how})"}
     rows = list(workers.values())
     per_in = _mean([w["mean_input"] + w["mean_output"] for w in rows])
     calls = SCOUT_MODEL_SCANNERS * FULL_RUN_GENERATIONS
@@ -417,14 +489,24 @@ def estimate(usages: Sequence[LogUsage], scan: tuple[int, int, int] | None = Non
     scout = scout_estimate(workers, scan, transcripts)
     base = worker_cost + (calibrator["cost"] if calibrator else 0.0) + scout["cost"]
     totals = {}
-    for step, g in graders.items():
+    for step, g in (*graders.items(), ("step 3 at standard price (reference only)", sol_standard)):
         t = base + g["cost"]
+        lower = t - g["calibration_cost"] + g["calibration_lower_cost"]
+        none = t - g["calibration_cost"]
         totals[step] = {"grader": g["label"], "without_route_judge": t, "with_route_judge": t + ROUTE_JUDGE_HIGH,
-                        "status_without": cap_status(t), "status_with": cap_status(t + ROUTE_JUDGE_HIGH)}
-    t_sol = base + sol_standard["cost"]
-    totals["step 3 at standard price (reference only)"] = {
-        "grader": sol_standard["label"], "without_route_judge": t_sol, "with_route_judge": t_sol + ROUTE_JUDGE_HIGH,
-        "status_without": cap_status(t_sol), "status_with": cap_status(t_sol + ROUTE_JUDGE_HIGH)}
+                        "status_without": cap_status(t), "status_with": cap_status(t + ROUTE_JUDGE_HIGH),
+                        "calibration_lower_reading": lower, "status_lower": cap_status(lower),
+                        "without_calibration": none, "status_none": cap_status(none)}
+    # Cache writes: every input token is billed at base price above. If a cache write costs a
+    # premium over base, the Claude input rises by (premium - 1) x the cache-write cost.
+    write_cost = sum(w["cache_write_cost"] for w in workers.values()) + (
+        calibrator["cache_write_cost"] if calibrator else 0.0)
+    cache_write = {
+        "cost_at_base": write_cost,
+        "premiums": {f"{p:g}": {"extra": (p - 1) * write_cost,
+                                "step 1 total": totals["step 1"]["without_route_judge"] + (p - 1) * write_cost}
+                     for p in CACHE_WRITE_PREMIUMS},
+    }
     worst_workers_row = sum(w["worst_row_input"] for w in workers.values())
     worst_workers_measured = sum(w["worst_measured_input"] for w in workers.values())
     worst_cal = calibrator["worst"] if calibrator else 0.0
@@ -455,6 +537,7 @@ def estimate(usages: Sequence[LogUsage], scan: tuple[int, int, int] | None = Non
         },
         "grader_output_sensitivity": sensitivity,
         "grader_output_thresholds": thresholds,
+        "cache_write": cache_write,
         "caps": {"soft": SOFT_CAP, "hard": HARD_CAP},
     }
 
@@ -513,9 +596,15 @@ def format_report(est: Mapping[str, Any]) -> str:
         L.append("| Calibrator, Opus 5.5 | not derived (no Opus 5.5 log) | | | | |")
     g = est["graders"]["step 1"]
     gc = est["grader_calls"]
-    L.append(f"| Grader, GPT-6 Luna ({gc['generations']:,} generations + {gc['test_retest']:,} test-retest) "
-             f"| assumed | {g['calls']:,} | {_tok(g['input_per_call'])} | {_tok(g['output_per_call'])} "
-             f"| {_usd(g['cost'])} |")
+    cal = gc["calibration"]
+    L.append(f"| Grader, GPT-6 Luna, on the {gc['generations']:,} generations | assumed | {gc['generations']:,} "
+             f"| {_tok(g['input_per_call'])} | {_tok(g['output_per_call'])} | {_usd(g['generations_cost'])} |")
+    for key, label in (("first_scoring", "calibration subset, first scoring (CONTEXT.md full-run list)"),
+                       ("test_retest", "test-retest replicates (CONTEXT.md full-run list)"),
+                       ("bias_audit", "bias-audit passes (same look; not on the full-run list)")):
+        L.append(f"| Grader, GPT-6 Luna, {label} | assumed, upper reading | {cal[key]:,} "
+                 f"| {_tok(g['input_per_call'])} | {_tok(g['output_per_call'])} "
+                 f"| {_usd(cal[key] * g['cost_per_call'])} |")
     s = est["scout"]
     L.append(f"| Scout scanners, GPT-6 Luna | {s['basis']} | {s['calls']:,.0f} | {_tok(s['input_per_call'])} "
              f"| {_tok(s['output_per_call'])} | {_usd(s['cost'])} |")
@@ -525,6 +614,22 @@ def format_report(est: Mapping[str, Any]) -> str:
     L.append("")
     L.append(f"Scout: {s['note']}.")
     L.append("")
+    lo = gc["calibration_lower"]
+    L.append(f"Calibration-time work at one acceptance look on the 40-case calibration subset, upper reading "
+             f"(counted): {cal['outputs_per_pass']:,} outputs per pass (CONTEXT.md \"~800 graded both ways\"), "
+             f"{cal['test_retest'] // cal['outputs_per_pass']} test-retest replicates on top of the first scoring, "
+             f"{cal['bias_audit'] // cal['outputs_per_pass']} bias-audit passes, {cal['total']:,} grader calls. "
+             f"Lower reading: {lo['outputs_per_pass']:,} outputs per pass (40 cases x 4 epochs x 4 workers), the "
+             f"first scoring as replicate 1, {lo['bias_audit'] // lo['outputs_per_pass']} bias-audit passes, "
+             f"{lo['total']:,} calls. \"Both ways\" is read as by hand and by the grader (the Autograder "
+             "calibration bullet), so the hand grades are human time. The intra-rater check is human time "
+             "only. Neither is in the dollar total.")
+    if c:
+        L.append("")
+        L.append(f"Not counted: if \"both ways\" meant grader and calibrator, the {c['both_ways_calls']:,} "
+                 f"calibration-subset outputs would add {c['both_ways_calls']:,} Opus 5.5 calls, "
+                 f"{_usd(c['both_ways_cost'])}.")
+    L.append("")
     L.append("## Totals against the caps ($150 soft, $300 hard)")
     L.append("")
     L.append("| Grader step | Grader | Total | Status | With route judge (high end) | Status |")
@@ -533,7 +638,15 @@ def format_report(est: Mapping[str, Any]) -> str:
         L.append(f"| {step} | {t['grader']} | {_usd(t['without_route_judge'])} | {t['status_without']} "
                  f"| {_usd(t['with_route_judge'])} | {t['status_with']} |")
     L.append("")
-    L.append("A grader step replaces GPT-6 Luna on every grader call; it does not add to it.")
+    L.append("A grader step replaces GPT-6 Luna on every grader call; it does not add to it. The totals hold "
+             "the calibration-time work at the upper reading. The same totals at the lower reading, and with no "
+             "calibration-time work:")
+    L.append("")
+    L.append("| Grader step | Lower reading | Status | No calibration-time work | Status |")
+    L.append("|---|---:|---|---:|---|")
+    for step, t in est["totals"].items():
+        L.append(f"| {step} | {_usd(t['calibration_lower_reading'])} | {t['status_lower']} "
+                 f"| {_usd(t['without_calibration'])} | {t['status_none']} |")
     L.append("")
     L.append("## Grader cost by output tokens per call (sensitivity)")
     L.append("")
@@ -581,12 +694,23 @@ def format_report(est: Mapping[str, Any]) -> str:
     in_cost = sum(w["input_cost"] for w in est["workers"].values()) + (
         est["calibrator"]["calls"] * PRICES[CALIBRATOR].cost(est["calibrator"]["input_per_call"], 0)
         if est["calibrator"] else 0.0)
-    shares = ", ".join(f"{w['label']} {100 * w['cache_read_share']:.0f} percent"
+    shares = ", ".join(f"{w['label']} {100 * w['cache_read_share']:.0f} and "
+                       f"{100 * w['cache_write_share']:.0f} percent"
                        for w in est["workers"].values())
+    cw = est["cache_write"]
     L.append("Every input token, cached or not, is billed at the base input price: no cache price is pinned. "
-             f"Claude input (workers and calibrator) is {_usd(in_cost)} of the step 1 total. Cache reads are "
-             f"this share of dev input tokens: {shares}. A cache-read discount would lower the input cost; "
-             "how much depends on a price the documents do not pin.")
+             f"Claude input (workers and calibrator) is {_usd(in_cost)} of the step 1 total. Cache reads and "
+             f"cache writes are these shares of dev input tokens: {shares}. Reads are usually billed below base "
+             "and writes above it. The figures are an upper estimate on input only if the read discount outweighs "
+             "the write premium; neither price is pinned, so they may not be an upper bound.")
+    L.append("")
+    L.append(f"Sensitivity (cache writes at a stated premium, reads still at base): cache writes are "
+             f"{_usd(cw['cost_at_base'])} of the Claude input at base price.")
+    L.append("")
+    L.append("| Cache-write price, times base input (assumed, not pinned) | Added | Step 1 total |")
+    L.append("|---:|---:|---:|")
+    for p, row in cw["premiums"].items():
+        L.append(f"| {p} | {_usd(row['extra'])} | {_usd(row['step 1 total'])} |")
     return "\n".join(L)
 
 

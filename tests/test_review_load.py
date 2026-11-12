@@ -170,6 +170,86 @@ def test_projection_scales_each_stratum_and_applies_the_volume_assumptions(tmp_p
     assert low["dj_hours"] == pytest.approx(4 * 108 * 45 / 3600)
 
 
+def _grouped_rows() -> list[dict]:
+    """Standard: one case, three finding units on one flagged sentence of N-1, one unit on another
+    sentence, one unit with no routed sentence; a narrative-only case with no route.
+    Hard: one case, one finding unit."""
+    def f(uid, case, nids, sents):
+        return {"row_kind": "finding", "unit_id": uid, "case_id": case, "route_key": uid,
+                "narrative_unit_ids": json.dumps(nids), "routed_sentences": json.dumps(sents)}
+    return [
+        f("F-1", "dev-std-001-ETH-M1", ["N-1"], ["Sentence A."]),
+        f("F-2", "dev-std-001-ETH-M1", ["N-1"], ["Sentence A."]),
+        f("F-3", "dev-std-001-ETH-M1", ["N-1"], ["Sentence A."]),
+        f("F-4", "dev-std-001-ETH-M1", ["N-1"], ["Sentence B."]),
+        f("F-5", "dev-std-001-ETH-M1", ["N-1"], []),
+        f("F-6", "dev-hc-001-SOL-M3", ["N-3"], ["Sentence C."]),
+        _narr("N-1", "dev-std-001-ETH-M1", "routed"),
+        _narr("N-2", "dev-std-002-BTC-M2", "narrative_only"),
+        _narr("N-3", "dev-hc-001-SOL-M3", "routed"),
+    ]
+
+
+def test_findings_are_charged_per_flagged_sentence_plus_further_keys(tmp_path):
+    pc = rl.read_packet(write_packet(tmp_path / "p", rows=_grouped_rows()))
+    st, hd = pc.by_stratum["standard"], pc.by_stratum["hard"]
+    # Groups: {F-1, F-2, F-3}, {F-4}, {F-5} on its own; hard {F-6}.
+    assert (st["finding"], st["finding_groups"], hd["finding_groups"]) == (5, 3, 1)
+    # Case facts only for cases with a route: dev-std-002 holds only a narrative-only unit.
+    assert (st["cases"], st["cases_routed"], hd["cases_routed"]) == (2, 1, 1)
+    r = rl.derive(pc, None, None, DEV)
+    for case, (first, further) in (("low", (30, 10)), ("high", (90, 20))):
+        finding_s = 4 * first + 2 * further               # 4 flagged sentences, 2 further keys
+        assert r["minutes_per_unit"][case]["finding"] == pytest.approx(finding_s / 6 / 60)
+    low = rl.TIME_MODEL["low"]
+    expected_low = (2 * 75 + (15 + 60) + (4 * 30 + 2 * 10) + 2 * low["case"]) / 3600
+    assert r["dev_model_hours"]["low"] == pytest.approx(expected_low)
+    p = r["projection"]["per_worker_units"]
+    assert p["cases"] == pytest.approx(2 * 73 + 54) and p["cases_routed"] == pytest.approx(73 + 54)
+    assert r["projection"]["high"]["workers"]["Sonnet 5.5"]["hours"]["case_facts"] == pytest.approx(
+        (73 + 54) * 180 / 3600)
+
+
+def test_not_reviewed_and_blank_rows_are_not_reviewed_work(tmp_path):
+    packet = write_packet(tmp_path / "p")
+    rows = [{"row_kind": "finding", "unit_id": f"F-{i}", "verdict": "correct", "date": "2026-11-12"}
+            for i in (1, 2, 3)]
+    # The desk's bulk button: every unanswered finding marked not_reviewed with that day's date.
+    rows += [{"row_kind": "finding", "unit_id": f"F-{i}", "verdict": "not_reviewed", "date": "2026-11-13"}
+             for i in (4, 5, 6)]
+    rows += [{"row_kind": "narrative", "unit_id": f"N-{i}", "verdict": "none_wrong", "date": "2026-11-12"}
+             for i in (1, 2, 3, 4)]
+    rows += [{"row_kind": "narrative", "unit_id": "N-5", "verdict": "", "date": ""},
+             {"row_kind": "fm_audit", "unit_id": "A-1", "verdict": "real_error", "date": "2026-11-12", "note": "x"}]
+    ans_path = tmp_path / "a.csv"
+    rs.write_rb7_csv(ans_path, rows)
+    answers = rl.read_answers(ans_path)
+    assert answers.marked_not_reviewed == 3 and answers.blank == 1
+    assert answers.not_reviewed_ids == frozenset({"F-4", "F-5", "F-6", "N-5"})
+    assert "2026-11-13" not in answers.by_date                 # the bulk date carries no reviewed row
+    assert answers.by_date["2026-11-12"] == {"finding": 3, "narrative": 4, "fm_audit": 1}
+    pc = rl.read_packet(packet)
+    sit = write_sittings(tmp_path / "s.csv", [("2026-11-12T09:00:00-05:00", "2026-11-12T09:30:00-05:00")])
+    pairs, hours = rl.read_sittings(sit)
+    r = rl.derive(pc, pairs, hours, DEV, answers)
+    reviewed = pc.without(answers.not_reviewed_ids)
+    assert (reviewed.total("finding"), reviewed.total("only")) == (3, 1)
+    assert r["answers"]["units_left_out_of_weights"] == 4 and r["answers"]["reviewed_units"] == 3 + 3 + 1 + 1
+    # The 30 measured minutes are shared over the reviewed units only.
+    for case in ("low", "high"):
+        mpu = r["minutes_per_unit"][case]
+        total = (3 * mpu["finding"] + 3 * mpu["narrative_routed"] + 1 * mpu["narrative_only"]
+                 + 3 * mpu["case"] + 1 * mpu["audit"])
+        assert total == pytest.approx(30.0)
+    # The projection still counts every unit of the packet.
+    assert r["projection"]["per_worker_units"]["finding"] == pytest.approx(4 * 73 + 2 * 54)
+    text = rl.format_report(r)
+    assert "3 finding row(s) marked not reviewed and 1 row(s) left blank" in text
+    assert "weak diagnostic" in text
+    for word in ("none_wrong", "real_error", "correct", "not_reviewed"):
+        assert word not in text, word
+
+
 def test_dev_cases_must_cover_the_packet(tmp_path):
     pc = rl.read_packet(write_packet(tmp_path / "p"))
     with pytest.raises(rl.Refused, match="more than --dev-cases"):
