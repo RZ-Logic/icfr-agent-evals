@@ -451,7 +451,7 @@ def test_output_facts_parsed():
     md = PILOT[0]
     parsed = _parsed(md)
     blocks = rf.output_facts(md, parsed)
-    assert [b.block_id for b in blocks] == ["worker_fields", "worker_items", "worker_split"]
+    assert [b.block_id for b in blocks] == ["worker_fields", "worker_items", "worker_split", "uncited_names"]
     fields = dict(blocks[0].rows)
     assert "narrative" not in fields
     assert fields["asset"] == parsed["asset"]
@@ -558,3 +558,18 @@ def test_imports_stay_inside_the_allowed_graph():
         elif isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("icfr_agent_evals"):
             mods.add(node.module.split(".")[-1])
     assert mods <= {"casefile", "policy", "review_schema", "scoring"}, mods
+
+
+def test_uncited_names_block_shows_what_code_records():
+    # owner request 2026-11-11: the reviewer sees the citation omissions code already counted
+    md = PILOT[0]
+    t = casefile.truth_of(md)
+    ref = t.items[0].reference
+    parsed = {"asset": t.asset, "period": t.period, "variance_amount_usd": 1.0, "variance_direction": "surplus",
+              "materiality_band": "M1", "entities_cited": [], "reconciling_items": [],
+              "narrative": f"Item {ref} is open."}
+    block = rf.output_facts(md, parsed)[-1]
+    assert block.block_id == "uncited_names"
+    assert any(row[0] == ref for row in block.rows)
+    parsed["entities_cited"] = [ref]
+    assert rf.output_facts(md, parsed)[-1].rows == (("none", ""),)

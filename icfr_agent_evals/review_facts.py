@@ -40,7 +40,7 @@ BLOCK_IDS: tuple[str, ...] = (
     "answer_key", "thresholds", "items", "wallets", "organizations", "notes",
     "worker_fields", "worker_items", "worker_split", "named_references", "fixture_rows",
     "named_wallets", "role_targets", "period_dates", "entities", "routed_field",
-    "type_labels", "case_file_exact",
+    "type_labels", "case_file_exact", "uncited_names",
 )
 
 TITLES: dict[str, str] = {
@@ -62,6 +62,7 @@ TITLES: dict[str, str] = {
     "routed_field": "Structured field named in the route, as stated and in the answer key",
     "type_labels": "Labels the schedule may show for the item's type",
     "case_file_exact": "Flagged names the case file holds exactly as written",
+    "uncited_names": "Case-file names the narrative gives that entities_cited leaves out, as code records them",
 }
 assert set(TITLES) == set(BLOCK_IDS)
 
@@ -601,7 +602,24 @@ def output_facts(metadata: Mapping[str, Any], parsed: Mapping[str, Any] | None) 
         _worker_fields_block(parsed),
         _worker_items_block(parsed),
         _worker_split_block(truth, parsed),
+        _uncited_names_block(truth, parsed),
     )
+
+
+def _uncited_names_block(truth: casefile.CaseTruth, parsed: Mapping[str, Any]) -> FactBlock:
+    """Owner request (2026-11-11): the citation omissions code records on this output
+    (P12, the case-file-exact sweep names and the wallet-label matcher), so a reviewer
+    sees what code already counted. A lookup of code's own record, never a reading of
+    a sentence; "none" when code records none."""
+    details = scoring.check_fabrication(dict(parsed), truth).details
+    seen: dict[str, str] = {}
+    for key, how in (("citation_omissions", "reference number or wallet label (P12)"),
+                     ("case_file_names_uncited", "name the case file holds exactly"),
+                     ("wallet_label_mentions_uncited", "wallet label, any case, space or hyphen form")):
+        for name in details.get(key, []) or []:
+            seen.setdefault(str(name), how)
+    rows = [(name, how) for name, how in seen.items()] or [("none", "")]
+    return _block("uncited_names", ("name", "recorded as"), rows, ("name",))  # the name as the narrative gives it
 
 
 def _named_references_block(names: Sequence[str], truth: casefile.CaseTruth,
