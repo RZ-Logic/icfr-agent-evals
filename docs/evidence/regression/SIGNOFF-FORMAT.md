@@ -1,6 +1,6 @@
 # Regression sign-off file format
 
-Status: draft for the owner to ratify. It answers section 13 row 26 of the pre-registration: the sign-off file format, how it records one of the four sign-off outcomes, and the repository path.
+Status: ratified 2026-11-11 (owner decision D-R11). It answers section 13 row 26 of the pre-registration: the sign-off file format, how it records one of the four sign-off outcomes, and the repository path.
 
 ## What it is for
 
