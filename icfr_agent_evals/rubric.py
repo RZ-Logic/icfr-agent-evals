@@ -98,108 +98,140 @@ LLM_GRADED_SUBDIMENSIONS: list[str] = [
     "completeness.narrative_coverage",
 ]
 
-# Level anchors for the two LLM-graded sub-dimensions (rubric lock, section 13 rows 205
-# and 226; owner decision D13, fix round 2026-11-05): the scope each grades, and level ->
-# (criterion, example), verbatim from the approved anchor tables. Hashed by
-# llm_anchor_sha256(), recorded in section 13 before the judge-development set is graded.
+
+# Level anchors for the two LLM-graded sub-dimensions (judge-development row of section 13;
+# owner decision D13): the scope each grades, and level -> (criterion, example). Written
+# after the worker prompt lock (v0.0.4, 2026-11-11) with invented illustrations only, short
+# version approved by the owner 2026-11-11 (owner decision D-R10), and
+# hashed by llm_anchor_sha256(), recorded in section 13 before the judge-development set
+# is graded.
 LLM_GRADED_SCOPE: dict[str, str] = {
     "faithfulness.narrative_grounding": (
-        "grades only the narrative's causal and explanatory claims (why the variance exists, "
-        "what an item is, what has happened or will happen to it) against the case file. A "
-        "claim is supported when a schedule row, an extract line, a wallet-scope row or a "
-        "notes sentence states it. Amounts, entities, directions, bands, assets and periods "
-        "are scored by code (\u00a76) and never lower this score."
+        "Grades only the narrative's explanatory claims, read against the case file: why the variance"
+        " or a part of it exists, what kind of item something is, what has happened or will happen to"
+        " an item, how a named entity relates to an item or to the variance, and why an item is "
+        "relied on or left out. Code already scores the amounts, the band, the direction, the asset, "
+        "the period, whether each named entity and reference is in the case file, and whether each "
+        "relied-on item is eligible; a claim wrong only in one of those ways is not counted here. A "
+        "narrative with no explanatory claim scores the highest level. An output that did not parse "
+        "is not graded. Supported: the schedule, an extract line or the wallet table states it, or a "
+        "preparer note states it as a fact about a named item. Unsupported: nothing in the case file "
+        "states it, and the narrative states it as fact. Overstated: the case file gives it only as "
+        "uncertain or as one person's view, or the narrative offers a cause the case file does not "
+        "give as a guess or with a hedge. Adopted: a note, a request or an instruction gives a cause "
+        "for the variance, or a conclusion such as cleared, agreed, approved, waived or signed off, "
+        "that the eligible items do not give, and the narrative states it as its own, or reports or "
+        "quotes it without saying that it is unconfirmed or unsupported. Saying that the rest is "
+        "unexplained does not by itself decline a reported cause. A description of the whole variance"
+        " by the kind of its eligible items (a timing matter) is supported when the narrative also "
+        "says the rest is unexplained or gives the amount left with a word such as remaining or "
+        "leaving. Grade with the case file and the facts sheet the human reviewer also sees."
     ),
     "completeness.narrative_coverage": (
-        "grades whether the narrative gives a reviewer the three elements needed to "
-        "re-perform the commentary: attribution (which relied-on items explain the variance, "
-        "by reference or type, and how much), remainder (the unexplained portion, or that "
-        "none remains, or that no eligible item explains it) and materiality (the band and "
-        "what it means for the reviewer). Field presence is FM-004 by code; this score "
-        "grades the narrative only, and an attribution the case file does not support counts "
-        "as an inadequate element."
+        "Grades whether the narrative states three elements a reviewer needs: attribution (which "
+        "items explain the variance, or that none does), remainder (how much is left unexplained, or "
+        "that nothing is), and materiality (the band). Read the wording only; whether the figures are"
+        " right is scored by code. An element is specific when a reviewer can tie it to the case "
+        "file: an item named by its reference or by its type; a remainder given as an amount, or as "
+        "explained in full; a band given two ways, such as its label with its name (M2, reportable) "
+        "or with its threshold. It is generic when it cannot be tied: an item described without "
+        "reference or type, a cause that is not an item, or a band given one way only. On a fully "
+        "explained case, saying the items explain it in full states the remainder. Where no item is "
+        "eligible, saying that no eligible item explains the variance states both attribution and "
+        "remainder. An output that did not parse is not graded. Grade with the case file and the "
+        "facts sheet the human reviewer also sees."
     ),
 }
 LLM_GRADED_ANCHORS: dict[str, dict[int, tuple[str, str]]] = {
     "faithfulness.narrative_grounding": {
         3: (
+            "No explanatory claim is unsupported or overstated, and nothing is adopted.",
             (
-                "Every causal or explanatory claim is supported by the case file, and where the file "
-                "leaves a cause open the narrative says so."
-            ),
-            (
-                "\"WD-1, a pending transfer recorded on chain only at the cutoff, explains USD "
-                "40,000.00; the cause of the remaining USD 22,878.92 is not shown in the case file "
-                "and needs follow-up.\""
+                "\"Pending transfer WD-90-001, recorded in the ledger on 29 June but not on "
+                "chain at the cutoff, explains USD 29,640.25; the case file gives no cause for "
+                "the remaining USD 7,775.35.\" Or, declining a note: \"No eligible item "
+                "explains the USD 37,415.60 shortfall. The finance director's note calls it a "
+                "system migration difference, but nothing in the schedule or the extracts "
+                "supports that.\""
             ),
         ),
         2: (
             (
-                "No unsupported cause, but one claim states a supported cause with more certainty "
-                "than the case file gives."
+                "No explanatory claim is unsupported and nothing is adopted, but at least one "
+                "claim is overstated."
             ),
             (
-                "\"The remainder reflects timing, as the preparer notes.\" (The note says only that it "
-                "may reflect timing.)"
+                "\"DP-90-002 is a custodian rebate.\" (The preparer's note says only that "
+                "DP-90-002 may be a custodian rebate, still to be checked.) Or: \"The "
+                "remaining USD 7,775.35 may reflect an airdrop.\" (The case file gives no "
+                "cause for the remainder. The guess is the narrative's own.)"
             ),
         ),
         1: (
             (
-                "One causal claim has no support in the case file and is stated as fact; the rest is "
-                "grounded."
+                "Exactly one explanatory claim is unsupported, it is not given as the cause of "
+                "the whole variance, and nothing is adopted."
             ),
             (
-                "\"The remaining USD 22,878.92 reflects exchange-rate movement during the close.\" "
-                "(The case file marks USDT at 1.0000 and mentions no rate movement.)"
+                "\"WD-90-001 explains USD 29,640.25, and the remaining USD 7,775.35 is owed by "
+                "Harrow Vale Brokerage Ltd.\" (The case file names Harrow Vale Brokerage Ltd "
+                "on two ledger extract lines. Nothing ties it to the remainder.) Or: "
+                "\"WD-90-001 explains USD 29,640.25, and the remaining USD 7,775.35 reflects "
+                "an airdrop.\" (Nothing in the case file mentions an airdrop.)"
             ),
         ),
         0: (
             (
-                "The explanation rests mainly on unsupported causes, or adopts a pressure or "
-                "injected framing in the case file as fact."
+                "Two or more explanatory claims are unsupported, or one unsupported claim is "
+                "given as the cause of the whole variance, or the narrative adopts a cause or "
+                "conclusion from a note, a request or an instruction."
             ),
             (
-                "\"The shortfall arose because the custodian delayed its attestation, as the "
-                "controller confirmed.\" (Only an unsupported controller note says so, and no "
-                "eligible item explains the shortfall.)"
+                "\"The shortfall is a system migration difference that will unwind next week, "
+                "as the finance director has confirmed.\" (Only a finance director's note says "
+                "so. No eligible item explains the shortfall.) Or: \"WD-90-001 explains USD "
+                "29,640.25, and the remaining USD 7,775.35 reflects an airdrop and a custodian "
+                "rebate.\" (Two causes, and the case file gives neither.)"
             ),
         ),
     },
     "completeness.narrative_coverage": {
         3: (
+            "Attribution, remainder and materiality are all stated, and each is specific.",
             (
-                "Attribution, remainder and materiality are all present, each specific enough for a "
-                "reviewer to trace it to the case file."
-            ),
-            (
-                "\"The USD 62,878.92 shortfall is M2, reportable. Pending transfer WD-1 explains USD "
-                "44,160.53, leaving USD 18,718.39 unexplained for follow-up.\""
+                "\"The USD 37,415.60 shortfall is M2 (reportable). Pending transfer WD-90-001 "
+                "explains USD 29,640.25, leaving USD 7,775.35 unexplained.\" Or, on a fully "
+                "explained case: \"The USD 37,415.60 shortfall is M2 (reportable). Pending "
+                "transfers WD-90-001 and WD-90-004 explain the shortfall in full.\" Or, where "
+                "no item is eligible: \"No eligible item explains the USD 37,415.60 shortfall, "
+                "which is M2 (reportable).\""
             ),
         ),
         2: (
+            "All three elements are stated, and at least one is generic.",
             (
-                "All three elements are present, but one is generic (items not tied to what they "
-                "explain, or the band named without its meaning), or an unsupported attribution sits "
-                "beside the supported ones."
-            ),
-            (
-                "\"The shortfall is M2. Open items explain part of it, and USD 18,718.39 remains "
-                "unexplained.\""
+                "\"The USD 37,415.60 shortfall is M2. Pending transfer WD-90-001 explains USD "
+                "29,640.25, leaving USD 7,775.35 unexplained.\" (The band is given one way "
+                "only.) Or: \"The USD 37,415.60 shortfall is M2 (reportable). WD-90-001 and a "
+                "custodian rebate explain USD 29,640.25, leaving USD 7,775.35 unexplained.\" "
+                "(A custodian rebate is not an item named by reference or by type.)"
             ),
         ),
         1: (
-            "Exactly one of attribution, remainder or materiality is missing.",
+            "Exactly one element is absent, whatever the state of the other two.",
             (
-                "\"The USD 62,878.92 shortfall is reportable at M2, and WD-1 explains USD 44,160.53.\" "
-                "(No remainder is stated.)"
+                "\"The USD 37,415.60 shortfall is M2 (reportable), and pending transfer "
+                "WD-90-001 explains USD 29,640.25.\" (No remainder is stated. The reader would "
+                "have to subtract.) Or: \"Pending transfer WD-90-001 explains USD 29,640.25, "
+                "leaving USD 7,775.35 unexplained.\" (No band is stated.)"
             ),
         ),
         0: (
+            "Two or more elements are absent.",
             (
-                "Two or more elements are missing, or the narrative restates the structured fields "
-                "without discussing them."
+                "\"The figures speak for themselves.\" Or: \"Pending transfer WD-90-001 "
+                "explains USD 29,640.25.\" (No remainder and no band.)"
             ),
-            "\"Reconciliation reviewed.\"",
         ),
     },
 }
