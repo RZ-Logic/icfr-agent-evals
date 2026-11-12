@@ -588,3 +588,12 @@ def test_package_hash_check_compares_the_package_at_the_run_commit(tmp_path):
     assert any("a.py differs" in g for g in gaps) and any("b.py is in the settlement code" in g for g in gaps)
     assert "not a hex commit hash" in pr.package_code_gaps(repo, "HEAD")[0]
     assert "cannot be read" in pr.package_code_gaps(repo, "0" * 40)[0]
+
+
+def test_running_package_gap_names_a_package_imported_from_elsewhere(tmp_path):
+    pr = _load("pilot_report_for_d_r9_run", "scripts/pilot_report.py")
+    import icfr_agent_evals
+    here = Path(icfr_agent_evals.__file__).resolve().parent.parent
+    assert pr.running_package_gap(here) == []
+    gap = pr.running_package_gap(tmp_path)
+    assert len(gap) == 1 and "the package that runs is" in gap[0]

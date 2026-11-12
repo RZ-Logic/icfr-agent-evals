@@ -310,7 +310,7 @@ def load_review_record(packet_dir: str, manifest: str | None = None) -> tuple[An
         man, mbytes, mpath, gaps = rf.check_record_files(str(packet_dir), repo=str(REPO_ROOT), manifest=manifest)
     except rf.Refused as e:
         raise Refused(f"review record {packet_dir} fails the frozen-record check: {e}") from e
-    gaps = [*gaps, *package_code_gaps(REPO_ROOT, str(man.get("run_commit", "")))]
+    gaps = [*gaps, *running_package_gap(REPO_ROOT), *package_code_gaps(REPO_ROOT, str(man.get("run_commit", "")))]
     if gaps:
         shown = "; ".join(gaps[:MAX_GAPS_SHOWN])
         more = f"; and {len(gaps) - MAX_GAPS_SHOWN} more" if len(gaps) > MAX_GAPS_SHOWN else ""
@@ -322,6 +322,19 @@ def load_review_record(packet_dir: str, manifest: str | None = None) -> tuple[An
 def _git(repo: Path, *args: str, stdin: str | None = None) -> subprocess.CompletedProcess:
     return subprocess.run(["git", "-C", str(repo), *args], input=None if stdin is None else stdin.encode("utf-8"),
                           capture_output=True, check=False, timeout=120)
+
+
+def running_package_gap(repo: Path) -> list[str]:
+    """The package-hash check hashes repo/icfr_agent_evals; it is only meaningful when
+    that is the package this process imported (verifier finding, 2026-11-11: without
+    PYTHONPATH the venv's editable install of another checkout runs instead)."""
+    import icfr_agent_evals as running
+    ran = Path(running.__file__).resolve().parent
+    root = (Path(repo) / PACKAGE_DIR).resolve()
+    if ran != root:
+        return [f"the package that runs is {ran}, not the repository's {root}; "
+                f"set PYTHONPATH to the repository so the hashed code is the code that settles"]
+    return []
 
 
 def package_code_gaps(repo: Path, run_commit: str) -> list[str]:
