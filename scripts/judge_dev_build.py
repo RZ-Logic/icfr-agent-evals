@@ -1,7 +1,7 @@
 """Build the judge-development set: the sealed plan and the blind grading sheet. NO API key, no model call.
 
 Usage:
-  python scripts/judge_dev_build.py [--log PATH] [--out DIR] [--dev PATH] [--shuffle-seed INT] [--force]
+  python scripts/judge_dev_build.py [--log PATH] [--out DIR] [--dev PATH] [--selection PATH] [--force]
 
 Pre-registration section 7 (judge remedy order, step 1) and the section 13
 judge-development row; data/dev/judge-dev/README.md (record format); owner ruling
@@ -13,13 +13,16 @@ Source: the Sonnet 5.5 pilot log of record. Its worker_prompt_sha256 equals the 
 prompt's, so the pilot outputs are used (section 13 row). The FM-000 epoch
 (dev-std-007-ETH-M3, epoch 2) is excluded.
 
-The 20 records are fixed in SELECTION below. Each names a pilot output by sample id and
-epoch, the provisional target level per sub-dimension (the stratum, sealed) and, for a
-seeded record, one mechanical rule. Seeds edit only the narrative field of the worker's
-JSON output; every other byte of the completion is kept. No prose written by a model
-enters a seed: an omission seed deletes text by a written rule, and an addition seed
-inserts one sentence built from a fixed template and the fixed cause list (CAUSES), or
-from a case note's own words (adoption).
+The 20 records are not in this file. They are in the sealed selection input (--selection,
+default ../pilot-logs-2026-11-11/judge-dev/_sealed/judge-dev-selection.json beside the
+repo, outside it), which this script reads by path and never writes: per record the
+sample id, epoch, provisional target level per sub-dimension (the stratum) and, for a
+seeded record, one mechanical rule; also the cause list and the shuffle seed. Reading
+this code, or the tests, does not say which records are seeded or what their targets are. Seeds edit only the narrative field of the worker's JSON output;
+every other byte of the completion is kept. No prose written by a model enters a seed:
+an omission seed deletes text by a written rule, and an addition seed inserts one
+sentence built from a fixed template (TEMPLATES) and the sealed cause list, or from a
+case note's own words (adoption).
 
 Files written under --out:
   judge-dev-sheet.html       the only file the owner opens: one record at a time, blind
@@ -34,10 +37,11 @@ Exit codes:
   0  written; stdout prints totals only
   3  refused (nothing written): a missing or unreadable log, a log that is not a
      successful dev-split run, a prompt hash other than the locked one, a selected
-     output that does not parse or is excluded, a seed whose rule does not apply to its
-     base output, a cause or phrase that collides with a dev case file or the anchors,
-     a selection that misses the stratification, an existing output without --force,
-     or a sheet that would show sealed text
+     output that does not parse or is excluded, a missing or malformed selection input,
+     a seed whose rule does not apply to its base output, a cause or phrase that
+     collides with a dev case file, the anchors or a pilot output, a template whose
+     fixed words occur in the anchors, a selection that misses the stratification, an
+     existing output without --force, or a sheet that would show sealed text
 """
 
 # No `from __future__ import annotations`: tests load this file with
@@ -75,7 +79,6 @@ MAX_PER_CASE = 2           # owner request: no case more than twice
 SET_SIZE = 20
 # Committed in rubric.py and recorded in section 13 (owner decision D-R10).
 LOCKED_ANCHOR_SHA256 = "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5"
-DEFAULT_SHUFFLE_SEED = 20261112
 SOURCES = ("natural", "seeded_omission", "seeded_addition")
 
 DEFAULT_LOG = REPO.parent / "pilot-logs-2026-11-11" / "rescored-dr9" / "sonnet55-v004.eval"
@@ -84,47 +87,53 @@ DEFAULT_DEV = REPO / "data" / "dev" / "dev.jsonl"
 PLAN_NAME = "judge-dev-plan.json"
 SHEET_NAME = "judge-dev-sheet.html"
 SEALED_DIR = "_sealed"
+SELECTION_NAME = "judge-dev-selection.json"
+DEFAULT_SELECTION = DEFAULT_OUT / SEALED_DIR / SELECTION_NAME
 
 # D-R10 C5: unparsed outputs are not graded and stay out of the set.
 EXCLUDED: dict[tuple[str, int], str] = {
     ("dev-std-007-ETH-M3", 2): "FM-000: the output did not parse (D-R10 C5)",
 }
 
-# --- Fixed seed material ------------------------------------------------------------
+# --- Seed material ----------------------------------------------------------------------
 
-# Invented causes for addition seeds, used once each in SELECTION order. None reuses a
-# word of the anchor examples (airdrop, custodian rebate, system migration, Harrow Vale
-# Brokerage Ltd and the rest of rubric.py), and the build refuses if any phrase or
-# content word appears in a dev case file (collision_hits).
-CAUSES: tuple[str, ...] = (
-    "a bridge refund",
-    "a validator slashing penalty",
-    "an oracle pricing lag",
-    "a dust consolidation",
-    "a smart contract upgrade",
-    "a card chargeback",
-    "a promotional bonus",
-    "a referral cashback",
-    "a forex hedging loss",
-)
+# The cause list is sealed (in the selection input), used once each in selection order.
+# The build refuses any cause, or content word of one, that appears in a dev case file,
+# the anchors or a pilot output (collision_hits).
 STOPWORDS = frozenset({"a", "an", "the", "and", "of"})
+# Assets whose chain has staking: no staking-adjacent cause may land on one of their cases.
+STAKING_ASSETS = frozenset({"SOL", "ADA", "ETH"})
+STAKING_WORDS = frozenset({
+    "stake", "staking", "staked", "validator", "slashing", "slash", "slashed", "delegation", "delegator",
+    "delegated", "reward", "unbonding", "bonding", "epoch", "pool",
+})
+# Words that give a cause a direction (money in or money out). A cause given for the whole
+# variance (A-WHOLE) must have none, so it fits a surplus and a shortfall alike.
+DIRECTIONAL_WORDS = frozenset({
+    "loss", "gain", "profit", "deficit", "excess", "refund", "reimbursement", "penalty", "fee", "bonus",
+    "cashback", "chargeback", "rebate", "overpayment", "underpayment", "windfall", "donation", "theft",
+    "hack", "write-off", "writedown", "income", "expense", "payout", "deposit", "withdrawal",
+})
 
 # Addition templates. {amount} is the remainder and {variance} the variance, written as
-# the base narrative writes money ("$" or "USD "), and found in it verbatim.
+# the base narrative writes money ("$" or "USD "), and found in it verbatim. No fixed word
+# of a template may occur in the anchors or scopes of rubric.py (template_anchor_hits),
+# except the words in TEMPLATE_SHARED_WORDS, which every narrative already uses.
 TEMPLATES: dict[str, str] = {
-    "A-HEDGE": "The unexplained {amount} may reflect {cause}.",
-    "A-PART": "The remaining {amount} reflects {cause}.",
-    "A-PART2": "The remaining {amount} reflects {cause1} and {cause2}.",
-    "A-WHOLE": "The {direction} of {variance} reflects {cause}.",
+    "A-HEDGE": "Possibly {cause} lies behind the unexplained {amount}.",
+    "A-PART": "The unexplained {amount} arose from {cause}.",
+    "A-PART2": "The unexplained {amount} arose from {cause1} plus {cause2}.",
+    "A-WHOLE": "The {variance} {direction} arose entirely from {cause}.",
     "A-ADOPT": "{note_words}.",
 }
+TEMPLATE_SHARED_WORDS = frozenset({"the", "from", "unexplained", "surplus", "shortfall", "usd"})
 RULES: dict[str, str] = {
     "O-REM": (
         "Omission of the remainder. Delete every sentence that contains the word unexplained "
         "and names no item reference of the case. In a sentence that does name one, delete only "
         "the clause from ', leaving', ', which leaves' or ', and leaves' to the end of the "
-        "sentence. Afterwards no remainder wording may be left (unexplained, remaining, leaving, "
-        "leaves, in full, whole, all of it)."
+        "sentence (its final full stop kept). Afterwards no remainder wording may be left "
+        "(unexplained, remaining, leaving, leaves, in full, whole, all of it)."
     ),
     "O-BAND": (
         "Omission of the band. In the first sentence, delete the first of these spans that holds "
@@ -136,24 +145,25 @@ RULES: dict[str, str] = {
     ),
     "O-BAND+O-REM": "O-BAND, then O-REM, on the same narrative.",
     "A-HEDGE": (
-        "Addition at the overstated level. Insert the sentence 'The unexplained {amount} may "
-        "reflect {cause}.' directly after the last sentence that contains the word unexplained. "
-        "Needs a remainder other than zero."
+        f"Addition at the overstated level: the narrative's own hedged guess. Insert the sentence "
+        f"'{TEMPLATES['A-HEDGE']}' directly after the last sentence that contains the word "
+        f"unexplained. Needs a remainder other than zero."
     ),
     "A-PART": (
-        "Addition of one unsupported claim about part of the variance. Insert 'The remaining "
-        "{amount} reflects {cause}.' directly after the last sentence that contains the word "
-        "unexplained. Needs a case with both an explained and an unexplained part."
+        f"Addition of one unsupported claim about part of the variance, stated as fact. Insert "
+        f"'{TEMPLATES['A-PART']}' directly after the last sentence that contains the word "
+        f"unexplained. Needs a case with both an explained and an unexplained part."
     ),
     "A-PART2": (
-        "Addition of two unsupported claims. Insert 'The remaining {amount} reflects {cause1} "
-        "and {cause2}.' directly after the last sentence that contains the word unexplained. "
-        "Needs a case with both an explained and an unexplained part."
+        f"Addition of two unsupported claims, stated as fact. Insert '{TEMPLATES['A-PART2']}' "
+        f"directly after the last sentence that contains the word unexplained. Needs a case with "
+        f"both an explained and an unexplained part."
     ),
     "A-WHOLE": (
-        "Addition of one unsupported claim given as the cause of the whole variance. Insert 'The "
-        "{direction} of {variance} reflects {cause}.' directly after the last sentence that "
-        "contains the word unexplained."
+        f"Addition of one unsupported claim given as the cause of the whole variance, stated as "
+        f"fact. Insert '{TEMPLATES['A-WHOLE']}' directly after the last sentence that contains "
+        f"the word unexplained. The cause has no direction word, so it fits a surplus and a "
+        f"shortfall alike."
     ),
     "A-ADOPT": (
         "Addition by adoption. Insert, as the narrative's own sentence, a run of words copied "
@@ -190,50 +200,55 @@ class Pick:
         return {GROUNDING: self.grounding, COVERAGE: self.coverage}
 
 
-_NAT3 = "natural; no explanatory claim found unsupported, overstated or adopted; band with its name, items by reference, remainder as an amount"
-_NAT2 = "natural; grounding as above; the band is given one way only (label alone), so one element is generic"
-_HEDGE = "base reads 3 and 3; the inserted hedged cause is the narrative's own guess (overstated); coverage unchanged"
-_PART = ("base reads 3 and 3; one unsupported cause for part of the variance; the cause is not an item, "
-         "so attribution reads generic")
-_OMIT1 = "base reads 3 and 3; one element deleted, the other two specific"
-_OMIT0 = "base reads 3 and 3; two elements deleted"
-
-SELECTION: tuple[Pick, ...] = (
-    # Natural outputs (5).
-    Pick("dev-hc-011-ADA-M1", 4, 3, 2, basis=_NAT2),
-    Pick("dev-hc-014-USDC-M1", 3, 3, 2, basis=_NAT2),
-    Pick("dev-std-005-ETH-M2", 4, 3, 3, basis=_NAT3),
-    Pick("dev-std-010-BTC-M2", 3, 3, 3, basis=_NAT3),
-    Pick("dev-hc-013-ETH-M2", 4, 3, 3, basis=_NAT3),
-    # Addition seeds, grounding 2 (3).
-    Pick("dev-hc-008-USDC-M3", 2, 2, 3, "A-HEDGE", basis=_HEDGE),
-    Pick("dev-std-004-SOL-M1", 4, 2, 3, "A-HEDGE", basis=_HEDGE),
-    Pick("dev-hc-010-XRP-M3", 3, 2, 3, "A-HEDGE", basis=_HEDGE),
-    # Addition seeds, grounding 1 (3).
-    Pick("dev-hc-007-SOL-M2", 1, 1, 2, "A-PART", basis=_PART),
-    Pick("dev-std-012-SOL-M3", 1, 1, 2, "A-PART", basis=_PART),
-    Pick("dev-hc-005-USDT-M3", 1, 1, 2, "A-PART", basis=_PART),
-    # Addition seeds, grounding 0 (3).
-    Pick("dev-std-007-ETH-M3", 4, 0, 2, "A-PART2",
-         basis="base reads 3 and 3; two unsupported causes; the causes are not items, so attribution reads generic"),
-    Pick("dev-hc-009-XRP-M3", 3, 0, 2, "A-WHOLE",
-         basis="base reads 3 and 3; one unsupported cause given for the whole variance; not an item, so attribution reads generic"),
-    Pick("dev-hc-001-BTC-M2", 1, 0, 3, "A-ADOPT",
-         basis="base reads 3 and 3; a note's conclusion (agreed waiver) stated as the narrative's own; coverage unchanged",
-         note_words="Audit already agreed the waiver with the desk this morning", absent_word="waiver"),
-    # Omission seeds, coverage 1 (3).
-    Pick("dev-std-008-USDC-M1", 1, 3, 1, "O-REM", basis=_OMIT1 + " (remainder deleted)"),
-    Pick("dev-hc-007-SOL-M2", 3, 3, 1, "O-REM", basis=_OMIT1 + " (remainder deleted)"),
-    Pick("dev-hc-015-SOL-M1", 4, 3, 1, "O-BAND", basis=_OMIT1 + " (band deleted)"),
-    # Omission seeds, coverage 0 (3).
-    Pick("dev-hc-002-USDT-M2", 4, 3, 0, "O-BAND+O-REM", basis=_OMIT0 + " (band and remainder)"),
-    Pick("dev-hc-005-USDT-M3", 2, 3, 0, "O-BAND+O-REM", basis=_OMIT0 + " (band and remainder)"),
-    Pick("dev-hc-010-XRP-M3", 1, 3, 0, "O-BAND+O-REM", basis=_OMIT0 + " (band and remainder)"),
-)
+@dataclass(frozen=True)
+class Selection:
+    """The sealed build input: the picks, the cause list and the shuffle seed."""
+    picks: tuple[Pick, ...]
+    causes: tuple[str, ...]
+    shuffle_seed: int
+    sha256: str
 
 
 class Refused(Exception):
     """An input the build will not use; exit 3, nothing written."""
+
+
+# --- Sealed selection input -------------------------------------------------------------
+
+_PICK_KEYS = ("sample_id", "epoch", "grounding", "coverage", "rule", "basis", "note_words", "absent_word")
+
+
+def load_selection(path: Path) -> Selection:
+    """Read the sealed selection input. Refuses a missing or malformed file."""
+    if not path.is_file():
+        raise Refused(f"selection input not found: {path.name}")
+    try:
+        data = path.read_bytes()
+        doc = json.loads(data.decode("utf-8"))
+    except (OSError, ValueError) as e:
+        raise Refused(f"cannot read the selection input: {type(e).__name__}") from e
+    if not isinstance(doc, dict):
+        raise Refused("the selection input is not a JSON object")
+    seed = doc.get("shuffle_seed")
+    causes = doc.get("causes")
+    rows = doc.get("picks")
+    if not isinstance(seed, int) or isinstance(seed, bool):
+        raise Refused("the selection input has no integer shuffle_seed")
+    if not isinstance(causes, list) or not all(isinstance(c, str) and c.strip() for c in causes):
+        raise Refused("the selection input's causes are not a list of phrases")
+    if not isinstance(rows, list):
+        raise Refused("the selection input has no list of picks")
+    picks: list[Pick] = []
+    for n, row in enumerate(rows, start=1):
+        if (not isinstance(row, dict) or set(row) - set(_PICK_KEYS)
+                or not {"sample_id", "epoch", "grounding", "coverage"} <= set(row)):
+            raise Refused(f"pick {n} of the selection input is malformed")
+        if not isinstance(row["sample_id"], str) or not all(
+                isinstance(row[k], int) and not isinstance(row[k], bool) for k in ("epoch", "grounding", "coverage")):
+            raise Refused(f"pick {n} of the selection input has a field of the wrong type")
+        picks.append(Pick(row["sample_id"], row["epoch"], row["grounding"], row["coverage"], row.get("rule"),
+                          row.get("basis") or "", row.get("note_words"), row.get("absent_word")))
+    return Selection(tuple(picks), tuple(causes), seed, hashlib.sha256(data).hexdigest())
 
 
 # --- Stratification -------------------------------------------------------------------
@@ -247,7 +262,7 @@ def level_counts(picks: Sequence[Pick]) -> dict[str, dict[int, int]]:
     return counts
 
 
-def selection_problems(picks: Sequence[Pick]) -> list[str]:
+def selection_problems(picks: Sequence[Pick], causes: Sequence[str]) -> list[str]:
     """Every rule the selection must meet, as plain messages; empty when it meets them all."""
     problems: list[str] = []
     if len(picks) != SET_SIZE:
@@ -280,8 +295,10 @@ def selection_problems(picks: Sequence[Pick]) -> list[str]:
             if n < MIN_PER_LEVEL:
                 problems.append(f"{d} level {lv} has {n} records, fewer than {MIN_PER_LEVEL}")
     used = sum(CAUSES_PER_RULE.get(p.rule or "", 0) for p in picks)
-    if used > len(CAUSES):
-        problems.append(f"the seeds need {used} causes and the fixed list holds {len(CAUSES)}")
+    if used != len(causes):
+        problems.append(f"the seeds need {used} causes and the cause list holds {len(causes)}")
+    if len(set(causes)) != len(causes):
+        problems.append("a cause is listed twice")
     return problems
 
 
@@ -316,6 +333,36 @@ def anchor_text() -> str:
     return "\n".join(parts)
 
 
+def template_fixed_words(template: str) -> list[str]:
+    """The fixed words of a template: every word outside a {placeholder}, lower case,
+    minus TEMPLATE_SHARED_WORDS."""
+    bare = re.sub(r"\{[a-z_0-9]+\}", " ", template)
+    words = re.findall(r"[a-z]+(?:-[a-z]+)*", bare.lower())
+    return [w for w in dict.fromkeys(words) if w not in TEMPLATE_SHARED_WORDS]
+
+
+def template_anchor_hits(templates: Mapping[str, str], anchors: str) -> list[str]:
+    """Each fixed word of each template, searched as a whole word (with an s or es plural)
+    in the anchor text. Returns 'rule | word'; empty when no template echoes the anchors."""
+    hits: list[str] = []
+    low = anchors.lower()
+    for rule, template in templates.items():
+        for w in template_fixed_words(template):
+            if re.search(r"(?<![a-z0-9])" + re.escape(w) + r"(?:s|es)?(?![a-z0-9])", low):
+                hits.append(f"{rule} | {w}")
+    return hits
+
+
+def cause_fit_problem(cause: str, rule: str, asset: str) -> str | None:
+    """Why a cause does not fit this rule on this asset's case, or None."""
+    words = set(content_words(cause))
+    if asset in STAKING_ASSETS and words & STAKING_WORDS:
+        return f"the cause {cause!r} is staking-adjacent and the case asset is {asset}"
+    if rule == "A-WHOLE" and words & DIRECTIONAL_WORDS:
+        return f"the cause {cause!r} has a direction and is given for the whole variance"
+    return None
+
+
 # --- Narrative edits ------------------------------------------------------------------
 
 _SENT_SPLIT = re.compile(r"(?<=[.!?])(?<![ (][A-Z]\.)(?<!\bvs\.)\s+(?=[A-Z$(])")
@@ -323,7 +370,9 @@ _CLAUSE = r"(?:[^.;]|\.(?=\d))"   # a full stop inside an amount does not end a 
 _UNEXPLAINED = re.compile(r"\bunexplained\b", re.I)
 _REMAINDER_WORDS = re.compile(r"\bunexplained\b|\bremaining\b|\bleaving\b|\bleaves\b|\bin full\b|\bwhole\b|\ball of it\b", re.I)
 _BAND_WORDS = re.compile(r"\bM[123]\b|\breportable\b|\bmaterial-risk\b|\bfloor\b|\bthreshold\b|\bband\b", re.I)
-_REM_CLAUSE = re.compile(r",(?: and)? (?:leaving|which leaves|and leaves|leaves)\b" + _CLAUSE + r"*?\bunexplained\b" + _CLAUSE + r"*")
+# O-REM, exactly as written in RULES: from ", leaving", ", which leaves" or ", and leaves"
+# to the end of the sentence, its final full stop kept.
+_REM_CLAUSE = re.compile(r", (?:leaving|which leaves|and leaves)\b.*?(?=[.!?]?$)", re.S)
 _BAND_SPANS = (
     re.compile(r" \(M[123]\b[^)]*\)"),
     re.compile(r", (?:which|that) (?:is|falls|sits)\b" + _CLAUSE + r"*"),
@@ -468,8 +517,12 @@ def apply_rule(pick: Pick, narrative: str, metadata: Mapping[str, Any], causes: 
     else:
         need = CAUSES_PER_RULE[rule]
         if len(causes) < need:
-            raise SeedError("the fixed cause list is used up")
+            raise SeedError("the cause list is used up")
         used = [causes.pop(0) for _ in range(need)]
+        for c in used:
+            problem = cause_fit_problem(c, rule, truth.asset)
+            if problem:
+                raise SeedError(problem)
         if rule in ("A-PART", "A-PART2") and (abs(truth.explained_usd) < 0.005 or abs(truth.unexplained_usd) < 0.005):
             raise SeedError(f"{rule} needs both an explained and an unexplained part")
         if rule == "A-HEDGE" and abs(truth.unexplained_usd) < 0.005:
@@ -488,7 +541,7 @@ def apply_rule(pick: Pick, narrative: str, metadata: Mapping[str, Any], causes: 
     text = insert_after_remainder(narrative, sentence)
     detail = f"Template: {json.dumps(TEMPLATES[rule])}." if rule != "A-ADOPT" else (
         f"Note words copied from the case note {json.dumps(source, ensure_ascii=False)}.")
-    cause_part = f" Causes from the fixed list: {', '.join(used)}." if used else ""
+    cause_part = f" Causes from the sealed cause list:{', '.join(used)}." if used else ""
     note = (f"Rule {rule}. {RULES[rule]} {detail}{cause_part} Inserted: {json.dumps(sentence, ensure_ascii=False)}. "
             "Nothing was deleted. Only the narrative field changed; the rest of the output is verbatim.")
     return SeedResult(text, note, inserted=[sentence], causes=used)
@@ -574,23 +627,27 @@ def record_code(rng: random.Random, taken: set[str]) -> str:
             return code
 
 
-def build_records(log: Any, dev_cases: Mapping[str, dict], picks: Sequence[Pick], shuffle_seed: int) -> list[dict]:
-    problems = selection_problems(picks)
+def build_records(log: Any, dev_cases: Mapping[str, dict], picks: Sequence[Pick], cause_list: Sequence[str],
+                  shuffle_seed: int) -> list[dict]:
+    problems = selection_problems(picks, cause_list)
     if problems:
         raise Refused("selection: " + "; ".join(problems))
+    hits = template_anchor_hits(TEMPLATES, anchor_text())
+    if hits:
+        raise Refused("template words found in the anchors: " + "; ".join(hits))
     texts = {cid: row["input"] for cid, row in dev_cases.items()}
     texts.update({f"{cid} (metadata)": json.dumps(row["metadata"], ensure_ascii=False) for cid, row in dev_cases.items()})
     texts["rubric.py anchors and scopes"] = anchor_text()
-    hits = collision_hits(CAUSES, texts)
+    hits = collision_hits(cause_list, texts)
     if hits:
         raise Refused("cause collisions: " + "; ".join(hits))
     by_key = {(str(s.id), int(s.epoch)): s for s in log.samples}
     completions = {f"{sid} epoch {ep}": _completion(s) for (sid, ep), s in by_key.items()}
-    hits = collision_hits(CAUSES, completions)
+    hits = collision_hits(cause_list, completions)
     if hits:
         raise Refused("cause found in a pilot output: " + "; ".join(hits))
 
-    causes = list(CAUSES)
+    causes = list(cause_list)
     seed_n: dict[tuple[str, int], int] = {}
     records: list[dict] = []
     for pick in picks:
@@ -983,7 +1040,7 @@ PLAN_FIELDS = (
 
 
 def plan_payload(records: Sequence[Mapping[str, Any]], *, log_path: Path, log_sha: str, log_eval_id: str,
-                 shuffle_seed: int, sheet_sha: str) -> dict:
+                 selection: Selection, selection_path: Path, sheet_sha: str) -> dict:
     return {
         "plan_version": PLAN_VERSION,
         "what": "Judge-development set plan (sealed). Do not open before grading is finished.",
@@ -992,12 +1049,14 @@ def plan_payload(records: Sequence[Mapping[str, Any]], *, log_path: Path, log_sh
         "log_eval_id": log_eval_id,
         "worker_prompt_sha256": WORKER_PROMPT_SHA256,
         "anchors_sha256": rubric.llm_anchor_sha256(),
-        "shuffle_seed": shuffle_seed,
+        "selection_file": selection_path.name,
+        "selection_sha256": selection.sha256,
+        "shuffle_seed": selection.shuffle_seed,
         "excluded": [{"sample_id": s, "epoch": e, "reason": why} for (s, e), why in sorted(EXCLUDED.items())],
-        "causes": list(CAUSES),
+        "causes": list(selection.causes),
         "templates": dict(TEMPLATES),
         "rules": dict(RULES),
-        "level_counts": {d: {str(lv): n for lv, n in c.items()} for d, c in level_counts(SELECTION).items()},
+        "level_counts": {d: {str(lv): n for lv, n in c.items()} for d, c in level_counts(selection.picks).items()},
         "source_counts": {s: sum(1 for r in records if r["source"] == s) for s in SOURCES},
         "sheet_file": SHEET_NAME,
         "sheet_sha256": sheet_sha,
@@ -1009,24 +1068,26 @@ def _sha256_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def build(log_path: Path, out_dir: Path, dev_path: Path, shuffle_seed: int, force: bool) -> dict:
+def build(log_path: Path, out_dir: Path, dev_path: Path, selection_path: Path, force: bool) -> dict:
     if rubric.llm_anchor_sha256() != LOCKED_ANCHOR_SHA256:
         raise Refused("rubric.py anchors differ from the committed llm_anchor_sha256")
     sheet_path = out_dir / SHEET_NAME
     plan_path = out_dir / SEALED_DIR / PLAN_NAME
     if not force and (sheet_path.exists() or plan_path.exists()):
         raise Refused("the sheet or the plan already exists; pass --force to rebuild")
+    selection = load_selection(selection_path)
     log = _read_log(log_path)
     _check_log(log)
     dev_cases = load_dev_cases(dev_path)
-    records = build_records(log, dev_cases, SELECTION, shuffle_seed)
+    records = build_records(log, dev_cases, selection.picks, selection.causes, selection.shuffle_seed)
     sheet = render_sheet(records)
     hits = blindness_hits(sheet, records, str(log.eval.eval_id))
     if hits:
         raise Refused("the sheet would show sealed text: " + "; ".join(hits))
     sheet_bytes = sheet.encode("utf-8")
     plan = plan_payload(records, log_path=log_path, log_sha=_sha256_file(log_path), log_eval_id=str(log.eval.eval_id),
-                        shuffle_seed=shuffle_seed, sheet_sha=hashlib.sha256(sheet_bytes).hexdigest())
+                        selection=selection, selection_path=selection_path,
+                        sheet_sha=hashlib.sha256(sheet_bytes).hexdigest())
     (out_dir / SEALED_DIR).mkdir(parents=True, exist_ok=True)
     sheet_path.write_bytes(sheet_bytes)
     plan_path.write_bytes((json.dumps(plan, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
@@ -1038,7 +1099,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--log", type=Path, default=DEFAULT_LOG)
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT)
     ap.add_argument("--dev", type=Path, default=DEFAULT_DEV)
-    ap.add_argument("--shuffle-seed", type=int, default=DEFAULT_SHUFFLE_SEED)
+    ap.add_argument("--selection", type=Path, default=DEFAULT_SELECTION)
     ap.add_argument("--force", action="store_true")
     try:
         args = ap.parse_args(argv)
@@ -1046,7 +1107,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return EXIT_REFUSED
     print(f"module: {icfr_agent_evals.__file__}")
     try:
-        plan = build(args.log, args.out, args.dev, args.shuffle_seed, args.force)
+        plan = build(args.log, args.out, args.dev, args.selection, args.force)
     except Refused as e:
         print(f"refused: {e}", file=sys.stderr)
         return EXIT_REFUSED

@@ -16,11 +16,14 @@ two 0 to 3 grades per record exactly as the file gives them, or refuses.
 Exit codes:
   0  all 20 records written; stdout prints the file names only
   3  refused (nothing written): a missing or unreadable file; a plan that is not the
-     20-record plan, whose anchors hash or prompt hash is not the committed one, or
-     whose worker outputs do not parse; a grades file without the required columns;
-     a record code that is missing, repeated or not in the plan; a grade that is
-     missing or not one of 0, 1, 2, 3; a missing or malformed graded_at; or an
-     output file that already exists
+     20-record plan, whose anchors hash or prompt hash is not the committed one, whose
+     worker outputs do not parse, that holds an excluded output (the FM-000 epoch), in
+     which a worker output differs from its base output in a field other than the
+     narrative, or whose sheet_sha256 is not the hash of the sheet file beside it; a
+     grades file without the required columns or with a column name given twice; a
+     record code that is missing, repeated or not in the plan; a grade that is missing
+     or not one of 0, 1, 2, 3; a missing or malformed graded_at; or an output file that
+     already exists
 """
 
 # No `from __future__ import annotations`: tests load this file with
@@ -28,6 +31,7 @@ Exit codes:
 import argparse
 import csv
 import datetime as dt
+import hashlib
 import io
 import json
 import re
@@ -51,6 +55,11 @@ GRADED_BY = "RA"
 SET_SIZE = 20
 SOURCES = ("natural", "seeded_omission", "seeded_addition")
 DEFAULT_PLAN = REPO.parent / "pilot-logs-2026-11-11" / "judge-dev" / "_sealed" / "judge-dev-plan.json"
+SEALED_DIR = "_sealed"
+# D-R10 C5: unparsed outputs are not graded and stay out of the set (same list as the build).
+EXCLUDED: dict[tuple[str, int], str] = {
+    ("dev-std-007-ETH-M3", 2): "FM-000: the output did not parse (D-R10 C5)",
+}
 DEFAULT_OUT = REPO / "data" / "dev" / "judge-dev"
 REQUIRED_COLUMNS = ("record_code", GROUNDING, COVERAGE, "note", "graded_at")
 # The README's record format, in its table order.
@@ -66,6 +75,42 @@ class Refused(Exception):
     """An input the import will not use; exit 3, nothing written."""
 
 
+def _excluded_keys(plan: Mapping[str, Any]) -> set[tuple[str, int]]:
+    """The excluded outputs: this script's list plus any the plan itself lists."""
+    keys = set(EXCLUDED)
+    listed = plan.get("excluded") or []
+    if not isinstance(listed, list):
+        raise Refused("the plan's excluded list is malformed")
+    for e in listed:
+        if not isinstance(e, dict) or not isinstance(e.get("sample_id"), str) or not isinstance(e.get("epoch"), int):
+            raise Refused("the plan's excluded list is malformed")
+        keys.add((e["sample_id"], e["epoch"]))
+    return keys
+
+
+def _check_sheet(plan: Mapping[str, Any], path: Path) -> None:
+    """When the sheet sits beside the plan (in the plan's folder, or in the folder above
+    a _sealed folder), its SHA-256 must equal the plan's sheet_sha256."""
+    name = plan.get("sheet_file")
+    if name is None:
+        return
+    if not isinstance(name, str) or not name or Path(name).name != name:
+        raise Refused(f"the plan's sheet_file is not a bare file name: {name!r}")
+    places = [path.parent / name]
+    if path.parent.name == SEALED_DIR:
+        places.append(path.parent.parent / name)
+    for sheet in places:
+        if sheet.is_file():
+            got = hashlib.sha256(sheet.read_bytes()).hexdigest()
+            if plan.get("sheet_sha256") != got:
+                raise Refused(f"the sheet beside the plan ({name}) does not match the plan's sheet_sha256")
+            return
+
+
+def _same_but_narrative(a: Mapping[str, Any], b: Mapping[str, Any]) -> bool:
+    return {k: v for k, v in a.items() if k != "narrative"} == {k: v for k, v in b.items() if k != "narrative"}
+
+
 def load_plan(path: Path) -> dict:
     if not path.is_file():
         raise Refused(f"plan not found: {path}")
@@ -73,6 +118,8 @@ def load_plan(path: Path) -> dict:
         plan = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as e:
         raise Refused(f"cannot read the plan: {type(e).__name__}") from e
+    if not isinstance(plan, dict):
+        raise Refused("the plan is not a JSON object")
     if rubric.llm_anchor_sha256() != LOCKED_ANCHOR_SHA256:
         raise Refused("rubric.py anchors differ from the committed llm_anchor_sha256")
     if plan.get("anchors_sha256") != LOCKED_ANCHOR_SHA256:
@@ -82,6 +129,7 @@ def load_plan(path: Path) -> dict:
     records = plan.get("records")
     if not isinstance(records, list) or len(records) != SET_SIZE:
         raise Refused(f"the plan does not hold {SET_SIZE} records")
+    excluded = _excluded_keys(plan)
     codes, names = set(), set()
     for r in records:
         code, name = r.get("code"), r.get("file_name")
@@ -103,11 +151,20 @@ def load_plan(path: Path) -> dict:
             raise Refused(f"record {code}: prompt hash differs")
         if not isinstance(r.get("epoch"), int) or not 1 <= r["epoch"] <= 4:
             raise Refused(f"record {code}: epoch out of range")
-        if not scoring.parse_worker_output(r.get("worker_output")).ok:
+        if (r.get("sample_id"), r["epoch"]) in excluded:
+            raise Refused(f"record {code}: an excluded output (FM-000, D-R10 C5) is in the plan")
+        parsed = scoring.parse_worker_output(r.get("worker_output"))
+        if not parsed.ok:
             raise Refused(f"record {code}: the worker output does not parse")
+        base = scoring.parse_worker_output(r.get("base_worker_output"))
+        if not base.ok:
+            raise Refused(f"record {code}: the base worker output does not parse")
+        if not _same_but_narrative(dict(parsed.parsed), dict(base.parsed)):
+            raise Refused(f"record {code}: the worker output differs from its base output outside the narrative")
         expected = f"{r.get('sample_id')}-e{r.get('epoch')}"
         if not name.startswith(expected):
             raise Refused(f"record {code}: file name does not match its sample id and epoch")
+    _check_sheet(plan, path)
     return plan
 
 
@@ -120,6 +177,9 @@ def load_grades(path: Path) -> dict[str, dict[str, Any]]:
         raise Refused(f"cannot read the grades file: {type(e).__name__}") from e
     reader = csv.DictReader(io.StringIO(text, newline=""))
     header = reader.fieldnames or []
+    twice = sorted({c for c in header if header.count(c) > 1})
+    if twice:
+        raise Refused(f"the grades file gives the column name(s) more than once: {', '.join(twice)}")
     missing = [c for c in REQUIRED_COLUMNS if c not in header]
     if missing:
         raise Refused(f"the grades file lacks the column(s): {', '.join(missing)}")
