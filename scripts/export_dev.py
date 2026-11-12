@@ -23,6 +23,7 @@ sys.path.insert(0, str(ROOT))
 from icfr_agent_evals.casefile import EVAL_SEED, dataset_sha256, split_seed, truth_of  # noqa: E402
 from icfr_agent_evals.dataset import build_dataset, split_jsonl  # noqa: E402
 from icfr_agent_evals.generator import GENERATOR_VERSION  # noqa: E402
+from icfr_agent_evals.scoring import check_wallet_labels_in_table  # noqa: E402
 
 
 def keys(samples):
@@ -41,10 +42,11 @@ def keys(samples):
 def main() -> int:
     out_dir = ROOT / "data" / "dev"
     out_dir.mkdir(parents=True, exist_ok=True)
+    dev = list(build_dataset(split="dev", seed=EVAL_SEED))
+    check_wallet_labels_in_table(dev)  # D-R9 m7, on the split this script writes, before it is written
     blob = split_jsonl("dev", EVAL_SEED)
     (out_dir / "dev.jsonl").write_bytes(blob)
 
-    dev = list(build_dataset(split="dev", seed=EVAL_SEED))
     dev_keys = keys(dev)
     disjoint = {}
     for other in ("eval", "ci"):

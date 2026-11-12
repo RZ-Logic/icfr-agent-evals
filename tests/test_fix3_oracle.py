@@ -978,9 +978,10 @@ def test_p11_both_before_unknown_vault_swept():
 
 # --- P12: citation omission (owner ruling 2026-11-07) --------------------------------
 # A sweep hit grounded exactly in the case file (a reference or wallet label from the
-# fixture) but missing from entities_cited goes to details["citation_omissions"]; the
-# anchor scores 0; no review route on that ground; not FM-005. Real Sonnet sentences
-# with the entities_cited Sonnet gave.
+# fixture) but missing from entities_cited goes to details["citation_omissions"]; no
+# review route on that ground; not FM-005. Since owner decision D-R9 (2026-11-11) the
+# anchor scores 3: the omission is counted, not a content failure. Real Sonnet
+# sentences with the entities_cited Sonnet gave.
 
 HC007_ENTS = ["HOT01", "WD-2511-041445", "DP-2511-421421", "OPS-2511-81805", "BitGo Trust"]
 STD010_ENTS = ["HOT01", "HOT02", "DP-2512-574449", "OI-251231-441"]
@@ -1051,16 +1052,16 @@ def _names(reasons, token: str) -> list[str]:
 def test_p12_citation_omission_recorded_not_routed(case_id, entities, text, refs):
     result = _fabrication(case_id, text, entities)
     assert "FM-005" not in result.failure_modes, result.details
-    assert result.points == 0, result.details
+    assert result.points == 3, result.details  # D-R9
     assert sorted(_omissions(result)) == sorted(refs), result.details
     for ref in refs:
         assert not _names(result.review_reasons, ref), (ref, result.review_reasons)
 
 
 @pytest.mark.parametrize("case_id,entities,text,refs", _rows(P12))
-def test_p12_faithfulness_scores_zero(case_id, entities, text, refs):
+def test_p12_faithfulness_scores_three(case_id, entities, text, refs):
     result = check_faithfulness(answer(case_id, text, entities=entities), truth(case_id))
-    assert result.points == 0 and "FM-005" not in result.failure_modes, result
+    assert result.points == 3 and "FM-005" not in result.failure_modes, result  # D-R9
 
 
 @pytest.mark.parametrize("case_id,entities,text,refs", _rows(P12))
@@ -1591,7 +1592,8 @@ def _after_fix_params():
 @pytest.mark.parametrize("case_id,epoch,rows,entities,items,text,anchor", _after_fix_params())
 def test_whole_epoch_after_fix(case_id, epoch, rows, entities, items, text, anchor):
     """After the round: every owner-fine route of the anchor is decided by code and
-    clears; every P12 row becomes a citation omission with the anchor at 0."""
+    clears; every P12 row becomes a citation omission, with the anchor at 3 since owner
+    decision D-R9 (2026-11-11)."""
     t = truth(case_id)
     parsed = _epoch_parsed(case_id, entities, items, text)
     if anchor == "correctness":
@@ -1603,7 +1605,7 @@ def test_whole_epoch_after_fix(case_id, epoch, rows, entities, items, text, anch
         omitted = sorted({DEV_ROWS[r][2] for r in rows if DEV_ROWS[r][0] == "uncited_reference"})
         assert result.failure_modes == () and result.review_reasons == (), result.details
         assert sorted(_omissions(result)) == omitted, result.details
-        assert result.points == (0 if omitted else 3), result.details
+        assert result.points == 3, result.details
 
 
 def test_dev_rows_cover_every_epoch_row():

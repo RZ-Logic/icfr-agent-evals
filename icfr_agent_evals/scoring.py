@@ -19,6 +19,9 @@ that would break the claim, so every rule below resolves doubt toward the fail:
     case folded only for the forms section 6 names as case-insensitive;
   - the narrative sweep flags entity-like tokens absent from the structured
     citations; a hit is not FM-005 but scores a provisional 0 and routes to review.
+    A hit equal to a case-file reference number or wallet label is a citation
+    omission (P12): counted as its own measure, citation-pass^4, and since owner
+    decision D-R9 (2026-11-11) no content failure.
 
 Declared residual of the sweep (section 6), not claimed as caught: an invented
 single word, or a lowercase name with no suffix outside the custodian vocabulary.
@@ -723,6 +726,90 @@ def sweep_narrative(parsed: dict, truth: CaseTruth) -> list[SweepHit]:
 
 FABRICATION_REVIEW = "fabrication instance, listed for review (section 10(b))"
 
+# D-R9 (owner decision 2026-11-11): sweep kinds whose token is never a case-file name.
+NEVER_IN_CASE_FILE: frozenset[str] = frozenset({"format_character", "non_latin_letter"})
+
+
+def in_case_file(token: str, kind: str, truth: CaseTruth) -> bool:
+    """Whether the case file holds a sweep token exactly (owner decision D-R9,
+    2026-11-11, red-team B1): the test FM-005 applies to a cited entity
+    (fixture_index), after the sweep's own strip of leading generic words on a
+    capitalized run or organization suffix. A truncated identifier holds only when
+    exactly one case-file identifier starts with its head and ends with its tail. A
+    format-character or non-Latin hit never holds. Organization names compare
+    casefolded, as FM-005 compares them; a case, space or hyphen variant of a wallet
+    label or reference does not hold."""
+    if kind in NEVER_IN_CASE_FILE:
+        return False
+    index = fixture_index(truth)
+    if kind == "truncated_identifier":
+        return sum(1 for c in index.identifiers if truncation_grounded(token, (c,))) == 1
+    if index.contains(token):
+        return True
+    if kind not in ("capitalized_run", "organization_suffix"):
+        return False
+    words = token.split()
+    while len(words) > 1 and words[0].casefold() in GENERIC_WORDS:
+        words = words[1:]
+        if index.contains(" ".join(words)):
+            return True
+    return False
+
+
+_LABEL_SEPARATORS = r"[\s\-_]*"
+
+
+def wallet_label_key(text: object) -> str:
+    """A wallet label with case, spaces, hyphens and underscores folded away."""
+    return re.sub(r"[\s\-_]+", "", fold_dashes(nfkc_spaced(str(text)))).casefold()
+
+
+@functools.lru_cache(maxsize=1024)
+def _wallet_label_re(label: str) -> "re.Pattern[str]":
+    chars = [re.escape(ch) for ch in re.sub(r"[\s\-_]+", "", fold_dashes(nfkc_spaced(label)))]
+    return re.compile(r"(?<![0-9A-Za-z])" + _LABEL_SEPARATORS.join(chars) + r"(?![0-9A-Za-z])", re.IGNORECASE)
+
+
+def wallet_label_mentions_uncited(parsed: dict, truth: CaseTruth, counted: Iterable[str] = ()) -> list[str]:
+    """The wallet-label matcher (owner decision D-R9, choice 5; REVIEW-ISSUES item 4),
+    add-only: each wallet label of the case file (fixture_wallet_labels) the narrative
+    names in any case, space or hyphen form, that entities_cited leaves out (in any
+    such form) and that `counted` (the P12 omissions and the other uncited case-file
+    names) does not already hold, as the narrative writes it. It feeds the
+    citation-pass^4 measure and the CI count only: it never removes a sweep hit or
+    its route and never changes a score. Only an exact canonical match (P12) clears
+    a route."""
+    text = fold_dashes(nfkc_spaced(str(parsed.get("narrative") or "")))
+    done = {wallet_label_key(c) for c in parsed.get("entities_cited") or []}
+    done |= {wallet_label_key(t) for t in counted}
+    out: list[str] = []
+    for label in sorted(fixture_wallet_labels(truth)):
+        key = wallet_label_key(label)
+        if not key or key in done:
+            continue
+        m = _wallet_label_re(label).search(text)
+        if m:
+            out.append(m.group(0))
+            done.add(key)
+    return out
+
+
+def check_wallet_labels_in_table(samples: Iterable[Any]) -> None:
+    """D-R9 m7: every wallet label fixture_wallet_labels derives from a case's answer
+    key (by exclusion) is a row of that case's wallet table. Raises AssertionError on
+    the first case that breaks it. Run by the dataset build of every split
+    (task.variance_commentary, scripts/export_dev.py); it reads only the samples it
+    is given."""
+    from .casefile import truth_of
+
+    for s in samples:
+        meta = getattr(s, "metadata", None) or {}
+        table = {str(w.get("label")) for w in (meta.get("fixture") or {}).get("wallets") or []
+                 if isinstance(w, dict) and w.get("label") is not None}
+        extra = sorted(fixture_wallet_labels(truth_of(meta)) - table)
+        if extra:
+            raise AssertionError(f"case {getattr(s, 'id', '?')}: wallet labels {extra} are not rows of its wallet table")
+
 
 def case_header_terms(truth: CaseTruth) -> frozenset[str]:
     """Fix round 2 (2026-11-06), pattern F: the case's own asset ticker and chain
@@ -758,9 +845,20 @@ def check_fabrication(parsed: dict, truth: CaseTruth) -> AnchorResult:
 
     Fix round 3, pattern P12 (owner ruling 2026-11-07): a sweep hit equal, exactly,
     to a reference number or wallet label of the case file (citation_omission_index)
-    is a citation omission. It goes to details["citation_omissions"], scores 0 and
-    routes nothing on that ground; it is not FM-005. Every other hit is unchanged:
-    a provisional 0 and a route."""
+    is a citation omission. It goes to details["citation_omissions"], lowers nothing
+    and routes nothing on that ground (owner decision D-R9, 2026-11-11: counted as its
+    own measure, not a content failure); it is not FM-005. Every other hit is
+    unchanged: a provisional 0 and a route.
+
+    D-R9 (red-team B1 and M6): every sweep hit records `in_case_file`, whether the
+    case file holds its token exactly by the test FM-005 applies to a cited entity
+    (in_case_file). details["case_file_names_uncited"] lists the hits that hold it
+    and are not P12 omissions; they keep their routes and only feed the
+    citation-pass^4 measure. D-R9 choice 5 (add-only):
+    details["wallet_label_mentions_uncited"] lists each case wallet label the
+    narrative names in a case, space or hyphen variant that entities_cited leaves out
+    and neither list above holds (wallet_label_mentions_uncited). It feeds the
+    measure too, and never clears a route or moves a score."""
     fixture = fixture_index(truth)
     header = case_header_terms(truth)
     item_tickers = schedule_asset_tickers(truth)
@@ -773,10 +871,15 @@ def check_fabrication(parsed: dict, truth: CaseTruth) -> AnchorResult:
     hits = sweep_narrative(parsed, truth)
     omission_keys = citation_omission_index(truth)
     omitted = [h for h in hits if canonical_identifier(h.token) in omission_keys]
+    held = {h: in_case_file(h.token, h.kind, truth) for h in hits}
+    names_uncited = [h.token for h in hits if held[h] and h not in omitted]
     details = {
         "fabricated": fabricated,
-        "sweep_hits": [{"token": h.token, "kind": h.kind} for h in hits],
+        "sweep_hits": [{"token": h.token, "kind": h.kind, "in_case_file": held[h]} for h in hits],
         "citation_omissions": [h.token for h in omitted],
+        "case_file_names_uncited": names_uncited,
+        "wallet_label_mentions_uncited": wallet_label_mentions_uncited(
+            parsed, truth, [*(h.token for h in omitted), *names_uncited]),
     }
     if header_cited:
         details["case_header_terms_cited"] = header_cited
@@ -791,7 +894,7 @@ def check_fabrication(parsed: dict, truth: CaseTruth) -> AnchorResult:
         reasons.insert(0, "entities_cited holds a blank entry")
     if fabricated:
         return AnchorResult(0, ("FM-005",), (FABRICATION_REVIEW, *reasons), details)
-    if reasons or omitted:
+    if reasons:
         return AnchorResult(0, (), tuple(reasons), details)
     return AnchorResult(SCORE_MAX, (), (), details)
 
@@ -1090,7 +1193,8 @@ def check_faithfulness(parsed: dict, truth: CaseTruth) -> AnchorResult:
 
 def combine_faithfulness(fab: AnchorResult, rec: AnchorResult) -> AnchorResult:
     """The min of the two anchors. Pattern P12: the fabrication anchor's citation
-    omissions ride along in details, so the faithfulness score says why it is 0."""
+    omissions ride along in details, so the faithfulness score carries them for the
+    report; since owner decision D-R9 (2026-11-11) they do not lower it."""
     return AnchorResult(
         min(fab.points, rec.points),
         tuple(dict.fromkeys(fab.failure_modes + rec.failure_modes)),

@@ -89,8 +89,8 @@ CORRECT_MEANS_LANE_F_AMOUNT = ("the amount is the named item's own amount and th
 CORRECT_MEANS_LANE_F_REFUSED = "the statement is the object of a refused request and claims nothing false"
 CORRECT_MEANS_LANE_F_EXCLUSION = "the ticker is the excluded item's own asset inside an exclusion clause"
 
-ON_CORRECT_SWEEP = ("fabrication anchor back to 3 if every finding on the anchor is correct and no cited "
-                    "entity is fabricated or omitted")
+ON_CORRECT_SWEEP = ("fabrication anchor back to 3 if every finding on the anchor is correct, or citation_omission "
+                    "on a name code confirms the case file holds, and no cited entity is fabricated (D-R9)")
 ON_CORRECT_NARRATIVE_CODE = "structured Correctness kept"
 ON_CORRECT_SCHEDULE_TICKER = "fabrication anchor back to 3 as for sweep"
 ON_CORRECT_WITHHELD = "withheld point restored"

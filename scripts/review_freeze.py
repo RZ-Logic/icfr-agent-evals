@@ -119,7 +119,7 @@ RUN_RESULT_KEYS: tuple[str, ...] = (
     "N", "n", "strata", "first_class_counts", "second_class_counts", "sample_first_correct",
     "sample_first_not_correct", "run_first_not_correct", "kappa", "ci_lower", "ci_upper", "resamples",
     "degenerate_resamples", "correct_to_not_correct", "not_correct_to_correct", "disagreements",
-    "disagreeing_first_unit_ids", "gate",
+    "citation_omission_to_wrong", "wrong_to_citation_omission", "disagreeing_first_unit_ids", "gate",
 )
 PUBLIC_RUN_RESULT_KEYS: tuple[str, ...] = tuple(k for k in RUN_RESULT_KEYS if k != "disagreeing_first_unit_ids")
 SECOND_LOOK_RESULT_KEYS: tuple[str, ...] = ("agreement", "bootstrap_seed", "runs")
@@ -1033,6 +1033,32 @@ def worker_run_ids(rec: Record) -> list[str]:
     return sorted(rid for rid, info in rec.runs.items() if not info.get("template_baseline"))
 
 
+CITATION_OMISSION = "citation_omission"
+CASE_FILE_EXACT_BLOCK = "case_file_exact"  # review_facts.case_file_exact_block (D-R9)
+
+
+def confirmed_omission(rec: Record, finding_unit_id: str) -> bool:
+    """Owner decision D-R9 (2026-11-11), red-team B1 step 3: code confirms the flagged
+    name of a finding unit is in the case file exactly, read from the looked-up fact the
+    packet shows on it (block case_file_exact: "yes" on every flagged name). A packet
+    built before D-R9 has no such block, so no unit of it is confirmed."""
+    try:
+        blocks = json.loads((rec.units.get(finding_unit_id) or {}).get("facts_json") or "[]")
+    except (TypeError, ValueError):
+        return False
+    for b in blocks if isinstance(blocks, list) else ():
+        if isinstance(b, dict) and b.get("block_id") == CASE_FILE_EXACT_BLOCK:
+            rows = b.get("rows") or []
+            return bool(rows) and all(isinstance(r, list) and len(r) == 2 and r[1] == "yes" for r in rows)
+    return False
+
+
+def finding_passes(rec: Record, finding_unit_id: str, verdict: str | None) -> bool:
+    """A finding's trial effect (D-R9): `correct`, or `citation_omission` on a name code
+    confirms the case file holds, settles it as passed; any other verdict does not."""
+    return verdict == "correct" or (verdict == CITATION_OMISSION and confirmed_omission(rec, finding_unit_id))
+
+
 def second_look_units(rec: Record) -> dict[str, list[dict]]:
     """Per worker run: one unit per narrative unit with at least one routed member epoch in
     that run (an epoch carrying a finding or unsettleable member), with every finding unit
@@ -1042,7 +1068,11 @@ def second_look_units(rec: Record) -> dict[str, list[dict]]:
     one distinct routed narrative"). A narrative-only unit (an unrouted, uncoded narrative of
     a difficulty-bearing case, D-J) is never a unit here: it has no routed member epoch, so it
     is neither counted in N nor sampled. An FM-coded narrative with no route is not a unit
-    either; with the D-H default its routes are findings, so an FM-coded epoch that routes is."""
+    either; with the D-H default its routes are findings, so an FM-coded epoch that routes is.
+
+    A unit's first class is its trial effect (owner decision D-R9, red-team B1 step 3):
+    correct when the narrative is none_wrong and every finding passes (finding_passes:
+    `correct`, or `citation_omission` on a name code confirms the case file holds)."""
     verdicts = _verdict_of(rec)
     out: dict[str, list[dict]] = {}
     for run in worker_run_ids(rec):
@@ -1070,7 +1100,8 @@ def second_look_units(rec: Record) -> dict[str, list[dict]]:
                 raise Refused(f"unknown route class in run {run}: {sorted(classes - set(ROUTE_CLASSES))}")
             stratum = STRATUM_BOTH if len(classes) == 2 else next(iter(classes))
             findings = sorted(slot["findings"])
-            correct = verdicts.get(nu) == "none_wrong" and all(verdicts.get(f) == "correct" for f in findings)
+            correct = verdicts.get(nu) == "none_wrong" and all(finding_passes(rec, f, verdicts.get(f))
+                                                                for f in findings)
             units.append({"first_unit_id": nu, "run_id": run, "finding_unit_ids": findings,
                           "stratum": stratum, "first_class": FIRST_CORRECT if correct else FIRST_NOT_CORRECT})
         out[run] = units
@@ -1280,8 +1311,13 @@ def gate(result_for_run: Mapping[str, Any]) -> dict:
 
 def second_look_result(rec: Record, sl_rows: Sequence[dict], sl_map: Sequence[dict], *, bootstrap_seed: int) -> dict:
     """Per worker run: first and second class per drawn unit, kappa with its bootstrap CI,
-    flips both ways, the disagreement count and ids (private), and the gate. Agreement only."""
+    flips both ways, the disagreement count and ids (private), and the gate. Agreement only.
+    Classes are trial effects (D-R9): a `citation_omission` on a name code confirms the
+    case file holds passes like `correct`. Finding units ruled `citation_omission` once
+    and `wrong` the other time are counted apart, both ways (D-R9); the first verdict
+    stays of record (D-M)."""
     units_by_run = second_look_units(rec)
+    first_verdict = _verdict_of(rec)
     sl_verdict = {r["unit_id"]: r["verdict"] for r in sl_rows}
     finding_sl = {r["first_unit_id"]: r["sl_unit_id"] for r in sl_map if r["row_kind"] == "finding"}
     runs: dict[str, dict] = {}
@@ -1290,6 +1326,7 @@ def second_look_result(rec: Record, sl_rows: Sequence[dict], sl_map: Sequence[di
         drawn = sorted((r for r in sl_map if r["row_kind"] == "narrative" and r["run_id"] == run),
                        key=lambda r: r["first_unit_id"])
         first, second, ids = [], [], []
+        co_to_wrong = wrong_to_co = 0
         strata: Counter = Counter()
         for r in drawn:
             u = by_first.get(r["first_unit_id"])
@@ -1299,7 +1336,11 @@ def second_look_result(rec: Record, sl_rows: Sequence[dict], sl_map: Sequence[di
             if missing:
                 raise Refused(f"second-look map lacks {len(missing)} finding unit(s) of {r['first_unit_id']}")
             ok = sl_verdict.get(r["sl_unit_id"]) == "none_wrong" and all(
-                sl_verdict.get(finding_sl[f]) == "correct" for f in u["finding_unit_ids"])
+                finding_passes(rec, f, sl_verdict.get(finding_sl[f])) for f in u["finding_unit_ids"])
+            for f in u["finding_unit_ids"]:
+                pair = (first_verdict.get(f), sl_verdict.get(finding_sl[f]))
+                co_to_wrong += pair == (CITATION_OMISSION, "wrong")
+                wrong_to_co += pair == ("wrong", CITATION_OMISSION)
             first.append(u["first_class"] == FIRST_CORRECT)
             second.append(ok)
             ids.append(u["first_unit_id"])
@@ -1316,6 +1357,7 @@ def second_look_result(rec: Record, sl_rows: Sequence[dict], sl_map: Sequence[di
             "kappa": boot["kappa"], "ci_lower": boot["ci_lower"], "ci_upper": boot["ci_upper"],
             "resamples": boot["resamples"], "degenerate_resamples": boot["degenerate_resamples"],
             "correct_to_not_correct": c2n, "not_correct_to_correct": n2c, "disagreements": c2n + n2c,
+            "citation_omission_to_wrong": co_to_wrong, "wrong_to_citation_omission": wrong_to_co,
             "disagreeing_first_unit_ids": [i for i, a, b in zip(ids, first, second) if a != b],
         }
         result["gate"] = gate(result)

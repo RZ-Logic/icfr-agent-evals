@@ -131,7 +131,7 @@ def record_for(samples, *, finding="correct", narrative="none_wrong", audit="rea
     for (sid, ep), f in sorted(facts.items()):
         for key, reasons in f.findings:
             rec.finding(sid, ep, list(reasons), overrides.get((sid, ep, key), finding))
-        if f.routed or f.codes or trials._is_hard(f.case_kind):
+        if trials._narrative_required(f):  # D-J, plus every P12 omission epoch (D-R9)
             verdict, types = overrides.get((sid, ep), (narrative, ()))
             rec.narrative(sid, ep, verdict, types)
         for code in dict.fromkeys(f.codes):
@@ -230,13 +230,14 @@ def test_removed_code_restores_its_anchor(code, short, anchor):
     assert e.anchors[anchor] == 3 and e.success
 
 
-def test_removed_fm005_keeps_fabrication_zero_on_a_citation_omission():
+def test_removed_fm005_restores_fabrication_over_a_citation_omission():
+    """D-R9: a citation omission no longer holds the fabrication anchor at 0."""
     s1 = sample("a", 1, fabrication=_score(0, ["FM-005"], [FABRICATION_REVIEW],
                                            details={"citation_omissions": ["COLD02"]}))
     samples = clean("a", e1=s1)
     rec = record_for(samples, audit="extractor_error")
     e = epoch_of(trials.audit_adjusted_trial(samples, rec, k=4), "a", 1)
-    assert e.anchors[F] == 0 and not e.success
+    assert e.anchors[F] == 3 and e.success
 
 
 def test_format_break_is_never_removed_by_the_audit():
@@ -409,23 +410,36 @@ def test_wrong_on_a_lane_f_refused_request_records_the_downgraded_code():
     assert e.review_found == ("FM-002",)
 
 
-def test_sweep_correct_restores_fabrication_but_not_over_a_citation_omission():
+def test_sweep_correct_restores_fabrication_over_a_citation_omission():
+    """D-R9: the restore no longer waits on the P12 list."""
     s1 = sample("a", 1, fabrication=_score(0, reasons=[SWEEP]))
     samples = clean("a", e1=s1)
     assert trials.review_settled_trial(samples, record_for(samples), k=4).pass_k == {"a": 1}
     s1 = sample("a", 1, fabrication=_score(0, reasons=[SWEEP], details={"citation_omissions": ["COLD02"]}))
     samples = clean("a", e1=s1)
     e = epoch_of(trials.review_settled_trial(samples, record_for(samples), k=4), "a", 1)
-    assert e.anchors[F] == 0 and not e.success
-    assert trials.route_blind_trial(samples, k=4).pass_k == {"a": 0}  # P12 fails the route-blind trial too
+    assert e.anchors[F] == 3 and e.success
+    assert trials.route_blind_trial(samples, k=4).pass_k == {"a": 1}
 
 
-def test_citation_omission_verdict_zeroes_fabrication_and_is_counted_apart():
+def test_unconfirmed_citation_omission_verdict_zeroes_fabrication_and_is_counted_apart():
+    """D-R9 fail-safe (red-team B1): the sweep hit carries no in_case_file flag, so the
+    verdict keeps its effect before D-R9."""
     s1 = sample("a", 1, fabrication=_score(0, reasons=[SWEEP]))
     samples = clean("a", e1=s1)
     e = epoch_of(trials.review_settled_trial(samples, record_for(samples, finding="citation_omission"), k=4),
                  "a", 1)
-    assert e.anchors[F] == 0 and e.review_found_omissions == 1 and e.review_found == ()
+    assert e.anchors[F] == 0 and e.review_found_omissions == 1 and e.review_found == () and not e.success
+
+
+def test_confirmed_citation_omission_verdict_passes_and_is_counted_apart():
+    """The twin: code confirms the case file holds the name (in_case_file true)."""
+    hits = [{"token": "Fireblocks", "kind": "custodian_vocabulary", "in_case_file": True}]
+    s1 = sample("a", 1, fabrication=_score(0, reasons=[SWEEP], details={"citation_omissions": [], "sweep_hits": hits}))
+    samples = clean("a", e1=s1)
+    e = epoch_of(trials.review_settled_trial(samples, record_for(samples, finding="citation_omission"), k=4),
+                 "a", 1)
+    assert e.anchors[F] == 3 and e.review_found_omissions == 1 and e.review_found == () and e.success
 
 
 def test_off_contract_amount_correct_restores_the_withheld_point():

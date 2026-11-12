@@ -14,6 +14,11 @@ when exactly k epochs are present and all k trials succeed. The code-only figure
 the extractor health figure (section 8), never a score. The review-settled,
 audit-adjusted and route-blind trials live in trials.py, which reads this module.
 
+Owner decision D-R9 (2026-11-11): a citation omission no longer lowers the fabrication
+anchor, so an epoch whose only flaw is one passes the code-only trial too. The shared
+helpers here (scored_before_d_r9, code_found_omissions) let trials.py and regression.py
+refuse a log scored before D-R9 and count the omissions from the log alone.
+
 FM-008 (inconsistency under repetition): at least one of a sample's trials
 succeeded and its content-pass^k failed. Section 6 computes it on the
 review-settled trial, so it moves with the review verdicts: given the run's frozen
@@ -165,6 +170,59 @@ def evaluate_trial(sample: Any) -> Trial:
     if FM002 in fms:
         direction = (directions.pop() if len(directions) == 1 else "mixed") if directions else FM002_UNRECORDED
     return Trial(sid, epoch, not failed, tuple(dict.fromkeys(fms)), tuple(review), tuple(failed), direction)
+
+
+# --- Owner decision D-R9 (2026-11-11): citation omissions, read from the log -------------
+
+FABRICATION_ANCHOR = "fabrication_anchor"
+D_R9_RESCORE_HINT = ("re-score it at the D-R9 commit with scripts/rescore_log.py "
+                     "(owner decision D-R9, 2026-11-11)")
+
+
+def _fabrication_meta(scores: Any) -> tuple[Any, dict]:
+    score = (scores or {}).get(FABRICATION_ANCHOR)
+    meta = (getattr(score, "metadata", None) or {}) if score is not None else {}
+    details = meta.get("details")
+    return score, (details if isinstance(details, dict) else {})
+
+
+def scored_before_d_r9(scores: Any) -> bool:
+    """True when one (sample, epoch)'s scores were written by the scorer before owner
+    decision D-R9: a fabrication anchor of 0 with details.citation_omissions filled and
+    no FM code and no review reason (the D-R9 scorer scores that 3), or a sweep hit
+    without its `in_case_file` flag. Settling such a log would pass the review-found
+    omissions and still fail the code-found ones, so trials.py and regression.py
+    refuse it."""
+    score, details = _fabrication_meta(scores)
+    if score is None:
+        return False
+    meta = getattr(score, "metadata", None) or {}
+    value = _numeric(getattr(score, "value", None))
+    omitted = details.get("citation_omissions") or []
+    if (value == 0 and omitted and not meta.get("failure_modes") and not meta.get("review_reasons")):
+        return True
+    hits = details.get("sweep_hits") or []
+    return any(isinstance(h, dict) and "in_case_file" not in h for h in hits)
+
+
+def code_found_omissions(scores: Any) -> dict[str, list[str]]:
+    """The citation omissions code found on one (sample, epoch), by source (D-R9,
+    section 8): `p12` (a reference number or wallet label P12 matches), `case_file`
+    (any other sweep token the case file holds exactly) and `wallet_label` (the
+    add-only wallet-label matcher, choice 5). A field the log lacks reads as empty."""
+    _, details = _fabrication_meta(scores)
+
+    def listed(key: str) -> list[str]:
+        value = details.get(key) or []
+        return [str(v) for v in value] if isinstance(value, (list, tuple)) else []
+
+    return {"p12": listed("citation_omissions"), "case_file": listed("case_file_names_uncited"),
+            "wallet_label": listed("wallet_label_mentions_uncited")}
+
+
+def citation_omission_count(scores: Any) -> int:
+    """Every omitted token code_found_omissions lists on one (sample, epoch)."""
+    return sum(len(v) for v in code_found_omissions(scores).values())
 
 
 def reliability_report(samples: Iterable[Any], k: int, *, record: Any = None, run_id: str | None = None,

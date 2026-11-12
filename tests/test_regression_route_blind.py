@@ -207,10 +207,11 @@ def test_sweep_routes_settleable_or_not(reasons, passes):
     assert not evaluate_trial(s).success
 
 
-def test_sweep_route_does_not_lift_a_citation_omission():
+def test_sweep_route_lifts_fabrication_over_a_citation_omission():
+    """D-R9: a citation omission no longer holds the anchor at 0."""
     reasons = (_sweep("organization_suffix"),)
     s = _sample({"fabrication_anchor": _score(0, reasons=reasons, details={"citation_omissions": ["TX-1"]})})
-    assert not route_blind_epoch(s)
+    assert route_blind_epoch(s)
 
 
 def test_fabrication_zero_without_a_route_stands():

@@ -94,6 +94,19 @@ def test_template_rows_fill_everything_but_the_reviewer_cells():
     assert [(r["baseline_count"], r["candidate_count"]) for r in rows] == [("0", "4"), ("0", "1"), ("1", "2")]
 
 
+def test_a_citation_omission_case_can_be_signed(tmp_path):
+    """Owner decision D-R9 (2026-11-11): the citation-omission trigger is recordable, with
+    route_class citation_omission, and a wrong class is refused."""
+    cases = (*CASES, SignoffCase("dev-004", "citation_omission", 0, 2, "R1"))
+    rows = _rows(cases=cases)
+    assert rows[-1]["route_key"] == "citation_omission" and rows[-1]["route_class"] == so.CITATION_CLASS
+    rec = so.check_signoff_file(_write(tmp_path, rows=rows), PAIR, cases)
+    assert rec.outcomes[("dev-004", "citation_omission")] == "b_false_positive"
+    rows[-1]["route_class"] = "fm_code"
+    _refused(_write(tmp_path, rows=rows, name="bad.csv"), "route_class 'fm_code', expected 'citation_omission'",
+             cases=cases)
+
+
 # --- Part A: refusals, one per check ----------------------------------------------------
 
 def test_refuses_a_missing_file(tmp_path):

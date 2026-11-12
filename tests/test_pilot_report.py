@@ -61,6 +61,16 @@ def _load_script():
 
 
 pr = _load_script()
+_REAL_PACKAGE_CODE_GAPS = pr.package_code_gaps
+
+
+@pytest.fixture(autouse=True)
+def _package_check_passes(monkeypatch):
+    """The synthetic manifests here record run commit 0000000, which no repository holds,
+    so the section 8 package-hash check (owner decision D-R9, choice 6) is stubbed to pass;
+    test_refuses_a_record_whose_run_commit_package_differs runs the real check and
+    tests/test_d_r9.py tests it on a scratch repository."""
+    monkeypatch.setattr(pr, "package_code_gaps", lambda repo, commit: [])
 
 
 def _log_dir(tmp_path_factory, label: str) -> str:
@@ -509,6 +519,12 @@ def test_without_a_record_prints_route_blind_and_code_only_and_says_the_record_i
     assert "SCORE OF RECORD" not in out and "FM-008 on the review-settled trial:" not in out
     assert "per sample (route-blind / code-only): " in sonnet
     assert "FM-008 on the code-only trial (extractor health only, not the FM-008 count): 0" in sonnet
+    # D-R9: citation-pass^4 beside the figures, read from the log alone; no review-found without a record
+    assert ("citation-pass^4 (D-R9: its own measure, never a content failure) 20/20 = 1.000 (Clopper-Pearson 95% "
+            "[0.832, 1.000]); epochs with an omission 0 (0 tokens, of them wallet-label matcher 0), not assessable 0, "
+            "review-found needs a frozen review record; synthetic") in sonnet
+    assert "content-pass^4 under the rule before D-R9, route-blind: 20/20" in sonnet
+    assert "content-pass^4 under the rule before D-R9, review-settled" not in sonnet
 
 
 def test_with_a_record_prints_all_four_figures_labeled_and_fm008_on_the_review_settled_trial(logs, records, capsys,
@@ -551,6 +567,15 @@ def test_with_a_record_prints_all_four_figures_labeled_and_fm008_on_the_review_s
     assert (f"Frozen review record {records.correct}: every file it lists hashes to its manifest "
             f"{records.correct_manifest} (sha256 {sha})") in out
     assert data["runs"]["haiku"]["content_pass4_figures"]["score_of_record"] is None
+    # D-R9: the citation line, the figures under the rule before D-R9 and the JSON keys
+    assert "review-found 0; synthetic" in sonnet
+    for name in ("review-settled", "audit-adjusted", "route-blind", "code-only"):
+        assert f"content-pass^4 under the rule before D-R9, {name}: 20/20" in sonnet
+    assert "means, review-settled, rule before D-R9 (H1, H3): overall fabrication 3.000" in sonnet
+    cite = figs["citation_pass4"]
+    assert (cite["passed"], cite["n"], cite["review_found"]) == (20, 20, 0)
+    assert {k: v["passed"] for k, v in figs["content_pass4_before_d_r9"].items()} == {
+        "review_settled": 20, "audit_adjusted": 20, "route_blind": 20, "code_only": 20}
 
 
 def test_review_settled_reads_the_verdicts_and_the_code_only_figure_is_not_the_score(logs, records, capsys, tmp_path):
@@ -663,6 +688,15 @@ def test_refuses_a_record_whose_manifest_is_missing_or_not_its_own(logs, capsys,
     manifest.write_text(json.dumps({**man, "private_files": files}), encoding="utf-8", newline="\n")
     code, out, err = _main(capsys, *_base(logs), "--review-record", packet, "--review-manifest", manifest)
     assert code == pr.EXIT_REFUSED and out == "" and "the manifest does not list private file verdicts.csv" in err
+
+
+def test_refuses_a_record_whose_run_commit_package_differs(logs, capsys, records, monkeypatch):
+    """Section 8 package-hash check (owner decision D-R9, choice 6): the manifest's run
+    commit must hold the package code the report runs; 0000000 is no commit here."""
+    monkeypatch.setattr(pr, "package_code_gaps", _REAL_PACKAGE_CODE_GAPS)
+    code, out, err = _main(capsys, *_base(logs), *_rec(records, "correct"))
+    assert code == pr.EXIT_REFUSED and out == ""
+    assert "fails the frozen-record check" in err and "run commit 0000000 cannot be read" in err
 
 
 def test_review_manifest_needs_a_review_record(logs, capsys, records):

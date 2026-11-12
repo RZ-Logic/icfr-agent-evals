@@ -213,8 +213,9 @@ def test_correct_means_and_on_correct_texts() -> None:
     for r in settlement.TABLE:
         if r.row_id in ("S01", "S02", "S03", "S04", "S05", "S06"):
             assert r.correct_means == sweep
-            assert r.on_correct == ("fabrication anchor back to 3 if every finding on the anchor is correct and "
-                                    "no cited entity is fabricated or omitted")
+            assert r.on_correct == ("fabrication anchor back to 3 if every finding on the anchor is correct, or "
+                                    "citation_omission on a name code confirms the case file holds, and no cited "
+                                    "entity is fabricated (D-R9)")
         elif r.row_id in NARRATIVE_KIND_OF_ROW:
             assert r.correct_means == code
             assert r.on_correct == "structured Correctness kept"
