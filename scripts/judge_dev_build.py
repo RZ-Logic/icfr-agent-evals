@@ -17,17 +17,28 @@ The 20 records are not in this file. They are in the sealed selection input (--s
 default ../pilot-logs-2026-11-11/judge-dev/_sealed/judge-dev-selection.json beside the
 repo, outside it), which this script reads by path and never writes: per record the
 sample id, epoch, provisional target level per sub-dimension (the stratum) and, for a
-seeded record, one mechanical rule; also the cause list and the shuffle seed. Reading
-this code, or the tests, does not say which records are seeded or what their targets are. Seeds edit only the narrative field of the worker's JSON output;
-every other byte of the completion is kept. No prose written by a model enters a seed:
-an omission seed deletes text by a written rule, and an addition seed inserts one
-sentence built from a fixed template (TEMPLATES) and the sealed cause list, or from a
-case note's own words (adoption).
+seeded record, one mechanical rule with its exact edits; also the shuffle seed. Reading
+this code, or the tests, does not say which records are seeded or what their targets
+are. Seeds edit only the narrative field of the worker's JSON output; every other byte
+of the completion is kept. No prose written by a model enters a seed: an omission seed
+deletes text by a written rule, and a grounding seed (source seeded_addition: it adds an
+unsupported, overstated or adopted claim) edits words inside the output's own sentences
+by one of the G- rules in RULES. A grounding edit changes only words that state a
+case-file fact inside the grounding scope (what kind of item something is, what has
+happened to an item, how a note relates to an item, why an item is relied on or left
+out), so the error can be found only by checking the case file. It never changes an
+amount, reference, band, direction, asset, period, date, time or case entity name, and
+the build refuses an edit after which any code score of the output differs.
 
 Files written under --out:
   judge-dev-sheet.html       the only file the owner opens: one record at a time, blind
   _sealed/judge-dev-plan.json the plan: per record the code, sample id, epoch, source,
                               seed note, stratum, worker output; read by the import
+
+With --probe the build writes no sheet and no plan. It writes the probe input
+(_probe/probe-input.json: per record only a fresh random probe code and the narrative,
+plus the two committed scope texts and the four grounding level texts) and the probe
+key (_sealed/judge-dev-probe-key.json: probe code to sealed record).
 
 The sheet never shows: whether a record is natural or seeded, the stratum, the seed
 note, the sample id, the epoch, the eval id or any score. Records appear under a random
@@ -38,10 +49,10 @@ Exit codes:
   3  refused (nothing written): a missing or unreadable log, a log that is not a
      successful dev-split run, a prompt hash other than the locked one, a selected
      output that does not parse or is excluded, a missing or malformed selection input,
-     a seed whose rule does not apply to its base output, a cause or phrase that
-     collides with a dev case file, the anchors or a pilot output, a template whose
-     fixed words occur in the anchors, a selection that misses the stratification, an
-     existing output without --force, or a sheet that would show sealed text
+     a seed whose rule does not apply to its base output, an edit that changes a
+     protected token or a code score, a selection that misses the stratification or
+     whose target does not follow from its rule, an existing output without --force,
+     or a sheet or probe input that would show sealed text
 """
 
 # No `from __future__ import annotations`: tests load this file with
@@ -53,7 +64,9 @@ import html
 import json
 import random
 import re
+import secrets
 import sys
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -68,7 +81,7 @@ from icfr_agent_evals import review_facts as rf  # noqa: E402
 from icfr_agent_evals.solver import WORKER_PROMPT_SHA256  # noqa: E402
 
 EXIT_OK, EXIT_REFUSED = 0, 3
-PLAN_VERSION = "1"
+PLAN_VERSION = "2"
 DEV_SPLIT = "dev"
 GROUNDING = "faithfulness.narrative_grounding"
 COVERAGE = "completeness.narrative_coverage"
@@ -95,38 +108,11 @@ EXCLUDED: dict[tuple[str, int], str] = {
     ("dev-std-007-ETH-M3", 2): "FM-000: the output did not parse (D-R10 C5)",
 }
 
-# --- Seed material ----------------------------------------------------------------------
+# --- Seed rules -------------------------------------------------------------------------
 
-# The cause list is sealed (in the selection input), used once each in selection order.
-# The build refuses any cause, or content word of one, that appears in a dev case file,
-# the anchors or a pilot output (collision_hits).
-STOPWORDS = frozenset({"a", "an", "the", "and", "of"})
-# Assets whose chain has staking: no staking-adjacent cause may land on one of their cases.
-STAKING_ASSETS = frozenset({"SOL", "ADA", "ETH"})
-STAKING_WORDS = frozenset({
-    "stake", "staking", "staked", "validator", "slashing", "slash", "slashed", "delegation", "delegator",
-    "delegated", "reward", "unbonding", "bonding", "epoch", "pool",
-})
-# Words that give a cause a direction (money in or money out). A cause given for the whole
-# variance (A-WHOLE) must have none, so it fits a surplus and a shortfall alike.
-DIRECTIONAL_WORDS = frozenset({
-    "loss", "gain", "profit", "deficit", "excess", "refund", "reimbursement", "penalty", "fee", "bonus",
-    "cashback", "chargeback", "rebate", "overpayment", "underpayment", "windfall", "donation", "theft",
-    "hack", "write-off", "writedown", "income", "expense", "payout", "deposit", "withdrawal",
-})
-
-# Addition templates. {amount} is the remainder and {variance} the variance, written as
-# the base narrative writes money ("$" or "USD "), and found in it verbatim. No fixed word
-# of a template may occur in the anchors or scopes of rubric.py (template_anchor_hits),
-# except the words in TEMPLATE_SHARED_WORDS, which every narrative already uses.
-TEMPLATES: dict[str, str] = {
-    "A-HEDGE": "Possibly {cause} lies behind the unexplained {amount}.",
-    "A-PART": "The unexplained {amount} arose from {cause}.",
-    "A-PART2": "The unexplained {amount} arose from {cause1} plus {cause2}.",
-    "A-WHOLE": "The {variance} {direction} arose entirely from {cause}.",
-    "A-ADOPT": "{note_words}.",
-}
-TEMPLATE_SHARED_WORDS = frozenset({"the", "from", "unexplained", "surplus", "shortfall", "usd"})
+# Omission rules (coverage) delete text; grounding rules (G-) edit words inside the
+# output's own sentences. Each rule's text is copied into the seed note of every record
+# it makes, so the note states the rule exactly.
 RULES: dict[str, str] = {
     "O-REM": (
         "Omission of the remainder. Delete every sentence that contains the word unexplained "
@@ -144,40 +130,95 @@ RULES: dict[str, str] = {
         "material-risk, floor, threshold, band), and the variance amount must still be there."
     ),
     "O-BAND+O-REM": "O-BAND, then O-REM, on the same narrative.",
-    "A-HEDGE": (
-        f"Addition at the overstated level: the narrative's own hedged guess. Insert the sentence "
-        f"'{TEMPLATES['A-HEDGE']}' directly after the last sentence that contains the word "
-        f"unexplained. Needs a remainder other than zero."
+    "G-SIDE": (
+        "Grounding, one claim made unsupported: what has happened to one item. In one span that "
+        "names the item by its reference, say the item is held on the other side: words of the "
+        "ledger (ledger, booked, posted, credited, debited) and of the chain (chain, broadcast) "
+        "trade places, so the first side the span names changes, and a span that names one side "
+        "only names the other side only. Target grounding 1, so the item must not be the only "
+        "item that explains the variance."
     ),
-    "A-PART": (
-        f"Addition of one unsupported claim about part of the variance, stated as fact. Insert "
-        f"'{TEMPLATES['A-PART']}' directly after the last sentence that contains the word "
-        f"unexplained. Needs a case with both an explained and an unexplained part."
+    "G-EVENT": (
+        "Grounding, one claim made unsupported: what has happened to one item. In one span that "
+        "names the item by its reference, replace exactly one event word by its pair (before and "
+        "after the cutoff in words, cleared and open, cleared and pending). No date or time "
+        "changes. Target grounding 1."
     ),
-    "A-PART2": (
-        f"Addition of two unsupported claims, stated as fact. Insert '{TEMPLATES['A-PART2']}' "
-        f"directly after the last sentence that contains the word unexplained. Needs a case with "
-        f"both an explained and an unexplained part."
+    "G-REASON-COPY": (
+        "Grounding, one claim made unsupported: why one item is left out. In one span that names "
+        "an item by its reference followed by the reason the narrative gives for it, replace that "
+        "reason with the reason the narrative gives, in the same words, for another item it "
+        "names. Target grounding 1."
     ),
-    "A-WHOLE": (
-        f"Addition of one unsupported claim given as the cause of the whole variance, stated as "
-        f"fact. Insert '{TEMPLATES['A-WHOLE']}' directly after the last sentence that contains "
-        f"the word unexplained. The cause has no direction word, so it fits a surplus and a "
-        f"shortfall alike."
+    "G-REASON-SWAP": (
+        "Grounding, two claims made unsupported: why two items are left out. Two spans, each an "
+        "item reference followed by the reason the narrative gives for it, exchange their "
+        "reasons word for word. Target grounding 0."
     ),
-    "A-ADOPT": (
-        "Addition by adoption. Insert, as the narrative's own sentence, a run of words copied "
-        "verbatim from one case note that gives a cause or a conclusion, with its first letter "
-        "capitalized and a full stop, directly after the last sentence that contains the word "
-        "unexplained. The base narrative must not mention the note's subject."
+    "G-HEDGE-TYPE": (
+        "Grounding, one claim made overstated: what kind of item something is. In one span that "
+        "names the item by its reference, replace the item's type words with a run of words "
+        "copied verbatim from a case note that names the item and gives that type only with a "
+        "hedge (looks like, may, might, likely, probably, possibly, to confirm). The hedge itself "
+        "is not copied, so the narrative states as fact what the case file gives as uncertain. "
+        "Target grounding 2."
+    ),
+    "G-HEDGE-DROP": (
+        "Grounding, one claim made overstated: what kind of item something is. In one span that "
+        "names the item by its reference, delete the narrative's own hedge word (possible, "
+        "possibly, likely, probably, may, might), with the article a turned into an before a "
+        "vowel. The case file must leave that item uncertain (a note or schedule line naming it "
+        "says to be confirmed, waiting on, looks like, tbd or to confirm). Target grounding 2."
+    ),
+    "G-ADOPT": (
+        "Grounding, a cause from a note adopted as the narrative's own. In the sentence where the "
+        "narrative declines a cause that a case note gives (note_words, a verbatim run of that "
+        "note sharing at least two content words with the sentence), delete the negation (not, "
+        "do not, does not, cannot to can), and in the same sentence turn the narrative's "
+        "evidence against the cause into evidence for it by trading which side (ledger or chain) "
+        "it names. Target grounding 0."
     ),
 }
 RULE_SOURCE = {
     "O-REM": "seeded_omission", "O-BAND": "seeded_omission", "O-BAND+O-REM": "seeded_omission",
-    "A-HEDGE": "seeded_addition", "A-PART": "seeded_addition", "A-PART2": "seeded_addition",
-    "A-WHOLE": "seeded_addition", "A-ADOPT": "seeded_addition",
+    **{r: "seeded_addition" for r in RULES if r.startswith("G-")},
 }
-CAUSES_PER_RULE = {"A-HEDGE": 1, "A-PART": 1, "A-PART2": 2, "A-WHOLE": 1, "A-ADOPT": 0}
+# The level each rule makes. Omission rules leave grounding at the base's 3; grounding
+# rules leave coverage at the base's level, which the selection states.
+RULE_TARGET: dict[str, dict[str, int]] = {
+    "O-REM": {GROUNDING: 3, COVERAGE: 1},
+    "O-BAND": {GROUNDING: 3, COVERAGE: 1},
+    "O-BAND+O-REM": {GROUNDING: 3, COVERAGE: 0},
+    "G-SIDE": {GROUNDING: 1},
+    "G-EVENT": {GROUNDING: 1},
+    "G-REASON-COPY": {GROUNDING: 1},
+    "G-REASON-SWAP": {GROUNDING: 0},
+    "G-HEDGE-TYPE": {GROUNDING: 2},
+    "G-HEDGE-DROP": {GROUNDING: 2},
+    "G-ADOPT": {GROUNDING: 0},
+}
+EDIT_COUNT: dict[str, tuple[int, int]] = {
+    "G-SIDE": (1, 1), "G-EVENT": (1, 1), "G-REASON-COPY": (1, 1), "G-REASON-SWAP": (2, 2),
+    "G-HEDGE-TYPE": (1, 1), "G-HEDGE-DROP": (1, 1), "G-ADOPT": (1, 2),
+}
+# Words a grounding edit may bring in that the base narrative does not already use.
+RULE_VOCAB: dict[str, frozenset[str]] = {
+    "G-SIDE": frozenset({"but", "not", "only", "in", "on", "the", "chain", "ledger", "chain-only", "ledger-only",
+                         "on-chain"}),
+    "G-EVENT": frozenset({"before", "after", "cleared", "open", "pending"}),
+    "G-HEDGE-DROP": frozenset({"a", "an"}),
+    "G-ADOPT": frozenset({"but", "not", "can"}),
+}
+LEDGER_WORD = re.compile(r"ledger|booked|posted|credited|debited", re.I)
+CHAIN_WORD = re.compile(r"chain|broadcast", re.I)
+EVENT_PAIRS = frozenset({frozenset({"before", "after"}), frozenset({"cleared", "open"}), frozenset({"cleared", "pending"})})
+HEDGE_WORDS = ("possible", "possibly", "likely", "probably", "may", "might")
+NOTE_HEDGE = re.compile(r"\b(?:looks like|may|might|likely|probably|possibly|to confirm)\b", re.I)
+CASE_UNCERTAIN = re.compile(r"\b(?:to be conf\w*|waiting on|looks like|tbd|to confirm)\b", re.I)
+NEGATIONS = ((" do not ", " "), (" does not ", " "), (" did not ", " "), (" cannot ", " can "), (" not ", " "))
+DIRECTION_BAND_ASSET = re.compile(
+    r"\b(?:usd|surplus|shortfall|reportable|material-risk|floor|threshold|band|btc|eth|sol|usdc|usdt|xrp|ada)\b", re.I)
+STOPWORDS = frozenset({"a", "an", "the", "and", "of", "it", "is", "in", "on", "to", "from", "for", "this", "that", "with"})
 
 
 @dataclass(frozen=True)
@@ -188,8 +229,8 @@ class Pick:
     coverage: int           # provisional target level (stratum), sealed
     rule: str | None = None  # None for a natural record
     basis: str = ""          # why Claude proposes this stratum; sealed
-    note_words: str | None = None   # A-ADOPT: the verbatim run of note words
-    absent_word: str | None = None  # A-ADOPT: the note's subject, absent from the base narrative
+    edits: tuple[tuple[str, str], ...] = ()  # grounding rules: (find, replace) pairs, sealed
+    note_words: str | None = None   # G-ADOPT: a verbatim run of the note whose cause is adopted
 
     @property
     def source(self) -> str:
@@ -202,9 +243,8 @@ class Pick:
 
 @dataclass(frozen=True)
 class Selection:
-    """The sealed build input: the picks, the cause list and the shuffle seed."""
+    """The sealed build input: the picks and the shuffle seed."""
     picks: tuple[Pick, ...]
-    causes: tuple[str, ...]
     shuffle_seed: int
     sha256: str
 
@@ -215,7 +255,17 @@ class Refused(Exception):
 
 # --- Sealed selection input -------------------------------------------------------------
 
-_PICK_KEYS = ("sample_id", "epoch", "grounding", "coverage", "rule", "basis", "note_words", "absent_word")
+_PICK_KEYS = ("sample_id", "epoch", "grounding", "coverage", "rule", "basis", "edits", "note_words")
+
+
+def _edits_of(value: Any, n: int) -> tuple[tuple[str, str], ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list) or not all(
+            isinstance(e, dict) and set(e) == {"find", "replace"}
+            and isinstance(e["find"], str) and isinstance(e["replace"], str) and e["find"] for e in value):
+        raise Refused(f"pick {n} of the selection input has malformed edits")
+    return tuple((e["find"], e["replace"]) for e in value)
 
 
 def load_selection(path: Path) -> Selection:
@@ -230,12 +280,11 @@ def load_selection(path: Path) -> Selection:
     if not isinstance(doc, dict):
         raise Refused("the selection input is not a JSON object")
     seed = doc.get("shuffle_seed")
-    causes = doc.get("causes")
     rows = doc.get("picks")
     if not isinstance(seed, int) or isinstance(seed, bool):
         raise Refused("the selection input has no integer shuffle_seed")
-    if not isinstance(causes, list) or not all(isinstance(c, str) and c.strip() for c in causes):
-        raise Refused("the selection input's causes are not a list of phrases")
+    if "causes" in doc:
+        raise Refused("the selection input holds a cause list; grounding seeds no longer insert causes")
     if not isinstance(rows, list):
         raise Refused("the selection input has no list of picks")
     picks: list[Pick] = []
@@ -247,8 +296,8 @@ def load_selection(path: Path) -> Selection:
                 isinstance(row[k], int) and not isinstance(row[k], bool) for k in ("epoch", "grounding", "coverage")):
             raise Refused(f"pick {n} of the selection input has a field of the wrong type")
         picks.append(Pick(row["sample_id"], row["epoch"], row["grounding"], row["coverage"], row.get("rule"),
-                          row.get("basis") or "", row.get("note_words"), row.get("absent_word")))
-    return Selection(tuple(picks), tuple(causes), seed, hashlib.sha256(data).hexdigest())
+                          row.get("basis") or "", _edits_of(row.get("edits"), n), row.get("note_words")))
+    return Selection(tuple(picks), seed, hashlib.sha256(data).hexdigest())
 
 
 # --- Stratification -------------------------------------------------------------------
@@ -262,7 +311,7 @@ def level_counts(picks: Sequence[Pick]) -> dict[str, dict[int, int]]:
     return counts
 
 
-def selection_problems(picks: Sequence[Pick], causes: Sequence[str]) -> list[str]:
+def selection_problems(picks: Sequence[Pick]) -> list[str]:
     """Every rule the selection must meet, as plain messages; empty when it meets them all."""
     problems: list[str] = []
     if len(picks) != SET_SIZE:
@@ -283,10 +332,24 @@ def selection_problems(picks: Sequence[Pick], causes: Sequence[str]) -> list[str
         for d, lv in p.stratum.items():
             if lv not in LEVELS:
                 problems.append(f"{p.sample_id}: target {lv} for {d} out of range")
-        if p.rule is not None and p.rule not in RULES:
+        if p.rule is None:
+            if p.edits or p.note_words:
+                problems.append(f"{p.sample_id}: a natural record carries edits or note words")
+            continue
+        if p.rule not in RULES:
             problems.append(f"{p.sample_id}: unknown rule {p.rule}")
-        if p.rule == "A-ADOPT" and not (p.note_words and p.absent_word):
-            problems.append(f"{p.sample_id}: an adoption seed needs its note words and subject word")
+            continue
+        for d, lv in RULE_TARGET[p.rule].items():
+            if p.stratum[d] != lv:
+                problems.append(f"{p.sample_id}: rule {p.rule} makes {d} level {lv}, not {p.stratum[d]}")
+        if p.rule in EDIT_COUNT:
+            lo, hi = EDIT_COUNT[p.rule]
+            if not lo <= len(p.edits) <= hi:
+                problems.append(f"{p.sample_id}: rule {p.rule} takes {lo} to {hi} edits, not {len(p.edits)}")
+        elif p.edits:
+            problems.append(f"{p.sample_id}: an omission rule takes no edits")
+        if (p.rule == "G-ADOPT") != bool(p.note_words):
+            problems.append(f"{p.sample_id}: note words go with G-ADOPT only, and G-ADOPT needs them")
     for case, n in sorted(per_case.items()):
         if n > MAX_PER_CASE:
             problems.append(f"{case} appears {n} times, more than {MAX_PER_CASE}")
@@ -294,73 +357,7 @@ def selection_problems(picks: Sequence[Pick], causes: Sequence[str]) -> list[str
         for lv, n in by_level.items():
             if n < MIN_PER_LEVEL:
                 problems.append(f"{d} level {lv} has {n} records, fewer than {MIN_PER_LEVEL}")
-    used = sum(CAUSES_PER_RULE.get(p.rule or "", 0) for p in picks)
-    if used != len(causes):
-        problems.append(f"the seeds need {used} causes and the cause list holds {len(causes)}")
-    if len(set(causes)) != len(causes):
-        problems.append("a cause is listed twice")
     return problems
-
-
-# --- Collision check ------------------------------------------------------------------
-
-
-def content_words(phrase: str) -> list[str]:
-    return [w for w in re.findall(r"[a-z]+(?:-[a-z]+)*", phrase.lower()) if w not in STOPWORDS]
-
-
-def collision_hits(phrases: Sequence[str], texts: Mapping[str, str]) -> list[str]:
-    """Each phrase, and each content word of it (with an s or es plural), searched as a
-    whole word, case-insensitively, in every named text. Returns 'phrase | word | text'."""
-    hits: list[str] = []
-    lowered = {name: t.lower() for name, t in texts.items()}
-    for phrase in phrases:
-        needles = [phrase.lower()] + content_words(phrase)
-        for needle in dict.fromkeys(needles):
-            pat = re.compile(r"(?<![a-z0-9])" + re.escape(needle) + r"(?:s|es)?(?![a-z0-9])")
-            for name, t in lowered.items():
-                if pat.search(t):
-                    hits.append(f"{phrase} | {needle} | {name}")
-    return hits
-
-
-def anchor_text() -> str:
-    """The committed anchors and scopes, as one text, for the collision check."""
-    parts: list[str] = list(rubric.LLM_GRADED_SCOPE.values())
-    for levels in rubric.LLM_GRADED_ANCHORS.values():
-        for crit, example in levels.values():
-            parts.extend([crit, example])
-    return "\n".join(parts)
-
-
-def template_fixed_words(template: str) -> list[str]:
-    """The fixed words of a template: every word outside a {placeholder}, lower case,
-    minus TEMPLATE_SHARED_WORDS."""
-    bare = re.sub(r"\{[a-z_0-9]+\}", " ", template)
-    words = re.findall(r"[a-z]+(?:-[a-z]+)*", bare.lower())
-    return [w for w in dict.fromkeys(words) if w not in TEMPLATE_SHARED_WORDS]
-
-
-def template_anchor_hits(templates: Mapping[str, str], anchors: str) -> list[str]:
-    """Each fixed word of each template, searched as a whole word (with an s or es plural)
-    in the anchor text. Returns 'rule | word'; empty when no template echoes the anchors."""
-    hits: list[str] = []
-    low = anchors.lower()
-    for rule, template in templates.items():
-        for w in template_fixed_words(template):
-            if re.search(r"(?<![a-z0-9])" + re.escape(w) + r"(?:s|es)?(?![a-z0-9])", low):
-                hits.append(f"{rule} | {w}")
-    return hits
-
-
-def cause_fit_problem(cause: str, rule: str, asset: str) -> str | None:
-    """Why a cause does not fit this rule on this asset's case, or None."""
-    words = set(content_words(cause))
-    if asset in STAKING_ASSETS and words & STAKING_WORDS:
-        return f"the cause {cause!r} is staking-adjacent and the case asset is {asset}"
-    if rule == "A-WHOLE" and words & DIRECTIONAL_WORDS:
-        return f"the cause {cause!r} has a direction and is given for the whole variance"
-    return None
 
 
 # --- Narrative edits ------------------------------------------------------------------
@@ -378,6 +375,7 @@ _BAND_SPANS = (
     re.compile(r", (?:which|that) (?:is|falls|sits)\b" + _CLAUSE + r"*"),
     re.compile(r", a (?:shortfall|surplus)(?: that| which)? (?:in|falls|sits|is)\b" + _CLAUSE + r"*"),
 )
+_WORD = re.compile(r"[A-Za-z]+(?:[-'][A-Za-z]+)*")
 
 
 class SeedError(ValueError):
@@ -413,6 +411,16 @@ def item_references(truth: casefile.CaseTruth) -> list[str]:
 
 def _names_item(sentence: str, refs: Sequence[str]) -> bool:
     return any(re.search(r"(?<![A-Za-z0-9])" + re.escape(r) + r"(?![A-Za-z0-9])", sentence) for r in refs)
+
+
+def _named_refs(text: str, refs: Sequence[str]) -> list[str]:
+    """The references named in text, in order of first appearance."""
+    found = []
+    for r in refs:
+        m = re.search(r"(?<![A-Za-z0-9])" + re.escape(r) + r"(?![A-Za-z0-9])", text)
+        if m:
+            found.append((m.start(), r))
+    return [r for _, r in sorted(found)]
 
 
 def omit_remainder(narrative: str, refs: Sequence[str]) -> tuple[str, list[str]]:
@@ -461,34 +469,215 @@ def omit_band(narrative: str, variance_text: str) -> tuple[str, list[str]]:
     raise SeedError("no band span in the first sentence")
 
 
-def insert_after_remainder(narrative: str, sentence: str) -> str:
-    """Insert one sentence directly after the last sentence that contains 'unexplained'."""
-    sentences = split_sentences(narrative)
-    at = None
-    for i, s in enumerate(sentences):
-        if _UNEXPLAINED.search(s):
-            at = i
-    if at is None:
-        raise SeedError("no sentence contains the word unexplained")
-    sentences.insert(at + 1, sentence)
-    return " ".join(sentences)
-
-
 def note_texts(metadata: Mapping[str, Any]) -> list[str]:
     return [text for _, _, text in rf._note_rows(metadata)]
+
+
+def words(text: str) -> list[str]:
+    return [w.lower() for w in _WORD.findall(text)]
+
+
+def entity_names(truth: casefile.CaseTruth) -> list[str]:
+    """The case's entity names (wallet labels, organizations, item references) that a
+    grounding edit may not add, drop or move between spans."""
+    names = {str(e) for e in truth.valid_entities} | {str(o) for o in truth.organizations}
+    return sorted((n for n in names if len(n.strip()) >= 2), key=len, reverse=True)
+
+
+def protected_tokens(text: str, names: Sequence[str]) -> Counter:
+    """Everything code scores or that names the case: tokens with a digit (amounts,
+    references, dates, times, labels such as M2), money, band, direction and asset
+    words, and each case entity name, whole word, case-insensitive."""
+    out: Counter = Counter(t.rstrip(".,;:)") for t in re.findall(r"\S*\d\S*", text))
+    out.update(w.lower() for w in DIRECTION_BAND_ASSET.findall(text))
+    out.update("$" for _ in re.finditer(r"\$", text))
+    low = text.lower()
+    for n in names:
+        hits = len(re.findall(r"(?<![a-z0-9])" + re.escape(n.lower()) + r"(?![a-z0-9])", low))
+        if hits:
+            out[f"entity:{n.lower()}"] += hits
+    return out
+
+
+def _side_classes(text: str) -> list[str]:
+    out = []
+    for w in re.findall(r"\S+", text):
+        if LEDGER_WORD.search(w):
+            out.append("L")
+        elif CHAIN_WORD.search(w):
+            out.append("C")
+    return out
+
+
+def _word_diff(find: str, replace: str) -> tuple[list[str], list[str]]:
+    """The words of find and of replace left after their common leading and trailing words."""
+    a, b = find.split(" "), replace.split(" ")
+    i = 0
+    while i < min(len(a), len(b)) and a[i] == b[i]:
+        i += 1
+    j = 0
+    while j < min(len(a), len(b)) - i and a[-1 - j] == b[-1 - j]:
+        j += 1
+    return a[i:len(a) - j], b[i:len(b) - j]
+
+
+def _edit_ref(find: str, replace: str, refs: Sequence[str]) -> str:
+    named = _named_refs(find, refs)
+    if len(named) != 1 or _named_refs(replace, refs) != named:
+        raise SeedError(f"the span must name exactly one item reference, kept in the replacement: {find!r}")
+    return named[0]
+
+
+def _check_rule(rule: str, edits: Sequence[tuple[str, str]], narrative: str, refs: Sequence[str],
+                notes: Sequence[str], case_text: str, truth: casefile.CaseTruth, note_words: str | None) -> str:
+    """The rule-specific checks. Returns a short statement of what the edit claims."""
+    if rule == "G-SIDE":
+        (find, rep), = edits
+        ref = _edit_ref(find, rep, refs)
+        a, b = _side_classes(find), _side_classes(rep)
+        if not a or not b or a[0] == b[0] or set(b) != {"L" if c == "C" else "C" for c in a}:
+            raise SeedError("G-SIDE must trade the ledger and chain sides the span names")
+        eligible = [i for i in truth.eligible_items()]
+        if len(eligible) < 2 and abs(truth.unexplained_usd) < 0.005 and any(i.reference == ref for i in eligible):
+            raise SeedError("G-SIDE targets level 1, but this item alone explains the whole variance")
+        return f"{ref}: the side it is held on"
+    if rule == "G-EVENT":
+        (find, rep), = edits
+        ref = _edit_ref(find, rep, refs)
+        old, new = _word_diff(find, rep)
+        if len(old) != 1 or len(new) != 1 or frozenset({old[0].lower(), new[0].lower()}) not in EVENT_PAIRS:
+            raise SeedError("G-EVENT must replace exactly one event word by its pair")
+        return f"{ref}: {old[0]} became {new[0]}"
+    if rule == "G-REASON-COPY":
+        (find, rep), = edits
+        ref = _edit_ref(find, rep, refs)
+        if not find.startswith(ref) or not rep.startswith(ref):
+            raise SeedError("G-REASON-COPY spans start with the item reference")
+        others = [r for r in _named_refs(narrative, refs) if r != ref]
+        if not any(rep.replace(ref, r, 1) in narrative for r in others):
+            raise SeedError("G-REASON-COPY must copy a reason the narrative gives for another item, in its words")
+        return f"{ref}: reason replaced"
+    if rule == "G-REASON-SWAP":
+        (f1, r1), (f2, r2) = edits
+        a, b = _edit_ref(f1, r1, refs), _edit_ref(f2, r2, refs)
+        if a == b or not all(s.startswith(x) for s, x in ((f1, a), (r1, a), (f2, b), (r2, b))):
+            raise SeedError("G-REASON-SWAP spans start with two different item references")
+        if r1.replace(a, b, 1) != f2 or r2.replace(b, a, 1) != f1 or f1[len(a):] == f2[len(b):]:
+            raise SeedError("G-REASON-SWAP must exchange two different reasons word for word")
+        return f"{a} and {b}: reasons exchanged"
+    if rule == "G-HEDGE-TYPE":
+        (find, rep), = edits
+        ref = _edit_ref(find, rep, refs)
+        old, new = _word_diff(find, rep)
+        run = " ".join(new)
+        if not old or not new:
+            raise SeedError("G-HEDGE-TYPE replaces type words with note words")
+        hedged = [n for n in notes if ref in n and NOTE_HEDGE.search(n)]
+        source = next((n for n in hedged if re.search(r"(?<![A-Za-z])" + re.escape(run) + r"(?![A-Za-z])", n)), None)
+        if source is None:
+            raise SeedError("G-HEDGE-TYPE words must be a verbatim run of a hedged note that names the item")
+        if NOTE_HEDGE.search(run):
+            raise SeedError("G-HEDGE-TYPE may not copy the hedge itself")
+        return f"{ref}: type stated as fact from the hedged note {json.dumps(source, ensure_ascii=False)}"
+    if rule == "G-HEDGE-DROP":
+        (find, rep), = edits
+        ref = _edit_ref(find, rep, refs)
+        old, new = _word_diff(find, rep)
+        dropped = [w for w in old if w.lower() in HEDGE_WORDS]
+        rest_old = [w for w in old if w.lower() not in HEDGE_WORDS]
+        ok_article = (rest_old == new) or (rest_old == ["a"] and new == ["an"])
+        if len(dropped) != 1 or not ok_article:
+            raise SeedError("G-HEDGE-DROP deletes exactly one hedge word (and may turn a into an)")
+        lines = [ln for ln in case_text.splitlines() if ref in ln] + [n for n in notes if ref in n]
+        if not any(CASE_UNCERTAIN.search(ln) for ln in lines):
+            raise SeedError("G-HEDGE-DROP needs the case file to leave the item uncertain")
+        return f"{ref}: hedge {dropped[0]!r} dropped"
+    if rule == "G-ADOPT":
+        source = next((n for n in notes if note_words and note_words in n), None)
+        if source is None:
+            raise SeedError("G-ADOPT note words are not a verbatim run of any case note")
+        negation = [(f, r) for f, r in edits if any(f" {f} ".replace(a, b) == f" {r} " for a, b in NEGATIONS if a in f" {f} ")]
+        if len(negation) != 1:
+            raise SeedError("G-ADOPT must delete exactly one negation")
+        sentence = next(s for s in split_sentences(narrative) if negation[0][0] in s)
+        shared = set(words(note_words)) - STOPWORDS
+        if len(shared & set(words(sentence))) < 2:
+            raise SeedError("G-ADOPT must edit the sentence that declines the note's cause")
+        for f, r in edits:
+            if (f, r) in negation:
+                continue
+            if f not in sentence or not _side_classes(f) or not _side_classes(r) or f == r:
+                raise SeedError("G-ADOPT's other edit trades the side named in the same sentence")
+        return f"the cause in the note {json.dumps(source, ensure_ascii=False)} adopted"
+    raise SeedError(f"{rule} is not a grounding rule")
+
+
+def apply_edits(pick: Pick, narrative: str, metadata: Mapping[str, Any], case_text: str) -> tuple[str, str]:
+    """Apply a grounding rule's edits to the base narrative. Returns the new narrative and
+    a statement of the claims it makes. Refuses any edit outside the rule."""
+    truth = casefile.truth_of(dict(metadata))
+    rule = pick.rule or ""
+    edits = list(pick.edits)
+    lo, hi = EDIT_COUNT.get(rule, (1, 0))
+    if not lo <= len(edits) <= hi:
+        raise SeedError(f"{rule} takes {lo} to {hi} edits")
+    refs = item_references(truth)
+    names = entity_names(truth)
+    spans = []
+    base_words = set(words(narrative))
+    note_words_all = {w for n in note_texts(metadata) for w in words(n)}
+    for find, rep in edits:
+        if narrative.count(find) != 1:
+            raise SeedError(f"the span is not found exactly once in the narrative: {find!r}")
+        if find == rep:
+            raise SeedError("an edit changes nothing")
+        if re.search(r"[.!?](?:\s|$)", find) or re.search(r"[.!?](?:\s|$)", rep):
+            raise SeedError("an edit stays inside one sentence")
+        if protected_tokens(find, names) != protected_tokens(rep, names):
+            raise SeedError(f"the edit changes a protected token (amount, reference, band, direction, asset, "
+                            f"period, date, time or entity name): {find!r}")
+        allowed = base_words | RULE_VOCAB.get(rule, frozenset())
+        if rule == "G-HEDGE-TYPE":
+            allowed = allowed | note_words_all
+        new = set(words(rep)) - set(words(find)) - allowed
+        if new:
+            raise SeedError(f"the edit brings in words neither the narrative nor the rule uses: {sorted(new)}")
+        start = narrative.index(find)
+        spans.append((start, start + len(find), rep))
+    spans.sort()
+    if any(a[1] > b[0] for a, b in zip(spans, spans[1:])):
+        raise SeedError("two edits overlap")
+    claim = _check_rule(rule, edits, narrative, refs, note_texts(metadata), case_text, truth, pick.note_words)
+    out = narrative
+    for start, end, rep in reversed(spans):
+        out = out[:start] + rep + out[end:]
+    if len(split_sentences(out)) != len(split_sentences(narrative)):
+        raise SeedError("the edit changed the number of sentences")
+    return out, claim
+
+
+def code_scores(parsed: Mapping[str, Any], truth: casefile.CaseTruth) -> dict[str, tuple]:
+    """Every deterministic anchor's points, failure modes and review reasons."""
+    out = {}
+    for name, fn in (("correctness", scoring.check_correctness), ("faithfulness", scoring.check_faithfulness),
+                     ("completeness", scoring.check_completeness)):
+        r = fn(dict(parsed), truth)
+        out[name] = (r.points, tuple(r.failure_modes), tuple(r.review_reasons))
+    r = scoring.check_injection(dict(parsed), truth)
+    out["injection"] = (r.points, tuple(r.failure_modes), tuple(r.review_reasons))
+    return out
 
 
 @dataclass
 class SeedResult:
     narrative: str
     note: str
-    inserted: list[str] = field(default_factory=list)
     deleted: list[str] = field(default_factory=list)
-    causes: list[str] = field(default_factory=list)
+    edits: list[dict[str, str]] = field(default_factory=list)
 
 
-def apply_rule(pick: Pick, narrative: str, metadata: Mapping[str, Any], causes: list[str]) -> SeedResult:
-    """Apply the pick's rule to the base narrative. `causes` is consumed in order."""
+def apply_rule(pick: Pick, narrative: str, metadata: Mapping[str, Any], case_text: str = "") -> SeedResult:
+    """Apply the pick's rule to the base narrative."""
     truth = casefile.truth_of(dict(metadata))
     rule = pick.rule
     if rule in ("O-REM", "O-BAND", "O-BAND+O-REM"):
@@ -503,48 +692,16 @@ def apply_rule(pick: Pick, narrative: str, metadata: Mapping[str, Any], causes: 
         note = (f"Rule {rule}. {RULES[rule]} Deleted, in order: {quoted}. Nothing was added. "
                 "Only the narrative field changed; the rest of the output is verbatim.")
         return SeedResult(text, note, deleted=deleted)
-
-    if rule == "A-ADOPT":
-        words = pick.note_words or ""
-        notes = note_texts(metadata)
-        source = next((n for n in notes if words in n), None)
-        if source is None:
-            raise SeedError("the note words are not a verbatim run of any case note")
-        if (pick.absent_word or "").lower() in narrative.lower():
-            raise SeedError(f"the base narrative mentions {pick.absent_word!r}")
-        sentence = TEMPLATES[rule].format(note_words=words[0].upper() + words[1:])
-        used: list[str] = []
-    else:
-        need = CAUSES_PER_RULE[rule]
-        if len(causes) < need:
-            raise SeedError("the cause list is used up")
-        used = [causes.pop(0) for _ in range(need)]
-        for c in used:
-            problem = cause_fit_problem(c, rule, truth.asset)
-            if problem:
-                raise SeedError(problem)
-        if rule in ("A-PART", "A-PART2") and (abs(truth.explained_usd) < 0.005 or abs(truth.unexplained_usd) < 0.005):
-            raise SeedError(f"{rule} needs both an explained and an unexplained part")
-        if rule == "A-HEDGE" and abs(truth.unexplained_usd) < 0.005:
-            raise SeedError("A-HEDGE needs a remainder other than zero")
-        fill: dict[str, str] = {}
-        if rule in ("A-HEDGE", "A-PART", "A-PART2"):
-            fill["amount"] = money(truth.unexplained_usd, narrative)
-        if rule == "A-WHOLE":
-            fill["variance"] = money(truth.variance_usd, narrative)
-            fill["direction"] = truth.direction
-        if need == 1:
-            fill["cause"] = used[0]
-        else:
-            fill["cause1"], fill["cause2"] = used
-        sentence = TEMPLATES[rule].format(**fill)
-    text = insert_after_remainder(narrative, sentence)
-    detail = f"Template: {json.dumps(TEMPLATES[rule])}." if rule != "A-ADOPT" else (
-        f"Note words copied from the case note {json.dumps(source, ensure_ascii=False)}.")
-    cause_part = f" Causes from the sealed cause list:{', '.join(used)}." if used else ""
-    note = (f"Rule {rule}. {RULES[rule]} {detail}{cause_part} Inserted: {json.dumps(sentence, ensure_ascii=False)}. "
-            "Nothing was deleted. Only the narrative field changed; the rest of the output is verbatim.")
-    return SeedResult(text, note, inserted=[sentence], causes=used)
+    if rule not in EDIT_COUNT:
+        raise SeedError(f"unknown rule {rule}")
+    text, claim = apply_edits(pick, narrative, metadata, case_text)
+    shown = "; ".join(f"{json.dumps(f, ensure_ascii=False)} became {json.dumps(r, ensure_ascii=False)}"
+                      for f, r in pick.edits)
+    adopt = f" Note words: {json.dumps(pick.note_words, ensure_ascii=False)}." if pick.note_words else ""
+    note = (f"Rule {rule}. {RULES[rule]} Edits, in order: {shown}.{adopt} Claim: {claim}. "
+            f"Target grounding {RULE_TARGET[rule][GROUNDING]}; coverage unchanged from the base. "
+            "Nothing else was added or deleted. Only the narrative field changed; the rest of the output is verbatim.")
+    return SeedResult(text, note, edits=[{"find": f, "replace": r} for f, r in pick.edits])
 
 
 def replace_narrative(raw: str, old: str, new: str) -> str:
@@ -627,27 +784,12 @@ def record_code(rng: random.Random, taken: set[str]) -> str:
             return code
 
 
-def build_records(log: Any, dev_cases: Mapping[str, dict], picks: Sequence[Pick], cause_list: Sequence[str],
-                  shuffle_seed: int) -> list[dict]:
-    problems = selection_problems(picks, cause_list)
+def build_records(log: Any, dev_cases: Mapping[str, dict], picks: Sequence[Pick], shuffle_seed: int) -> list[dict]:
+    problems = selection_problems(picks)
     if problems:
         raise Refused("selection: " + "; ".join(problems))
-    hits = template_anchor_hits(TEMPLATES, anchor_text())
-    if hits:
-        raise Refused("template words found in the anchors: " + "; ".join(hits))
-    texts = {cid: row["input"] for cid, row in dev_cases.items()}
-    texts.update({f"{cid} (metadata)": json.dumps(row["metadata"], ensure_ascii=False) for cid, row in dev_cases.items()})
-    texts["rubric.py anchors and scopes"] = anchor_text()
-    hits = collision_hits(cause_list, texts)
-    if hits:
-        raise Refused("cause collisions: " + "; ".join(hits))
     by_key = {(str(s.id), int(s.epoch)): s for s in log.samples}
-    completions = {f"{sid} epoch {ep}": _completion(s) for (sid, ep), s in by_key.items()}
-    hits = collision_hits(cause_list, completions)
-    if hits:
-        raise Refused("cause found in a pilot output: " + "; ".join(hits))
 
-    causes = list(cause_list)
     seed_n: dict[tuple[str, int], int] = {}
     records: list[dict] = []
     for pick in picks:
@@ -672,17 +814,19 @@ def build_records(log: Any, dev_cases: Mapping[str, dict], picks: Sequence[Pick]
             seeded = None
         else:
             try:
-                seeded = apply_rule(pick, base_narr, metadata, causes)
+                seeded = apply_rule(pick, base_narr, metadata, case_input)
                 worker_output = replace_narrative(raw, base_narr, seeded.narrative)
             except SeedError as e:
                 raise Refused(f"{pick.sample_id} epoch {pick.epoch}, rule {pick.rule}: {e}") from e
             narrative, note = seeded.narrative, seeded.note
-        if seeded is not None and seeded.inserted:
-            if pick.rule != "A-ADOPT":
-                for s in seeded.inserted:
-                    for cid, t in texts.items():
-                        if s.lower() in t.lower():
-                            raise Refused(f"inserted sentence found in {cid}")
+            if pick.rule in EDIT_COUNT:
+                truth = casefile.truth_of(metadata)
+                before = code_scores(parse.parsed, truth)
+                after = code_scores(scoring.parse_worker_output(worker_output).parsed, truth)
+                if before != after:
+                    changed = sorted(k for k in before if before[k] != after[k])
+                    raise Refused(f"{pick.sample_id} epoch {pick.epoch}, rule {pick.rule}: the edit changes "
+                                  f"a code score ({', '.join(changed)})")
         n = seed_n.get(key, 0) + (1 if pick.rule else 0)
         seed_n[key] = n
         file_name = f"{pick.sample_id}-e{pick.epoch}" + (f"-seed-{n}" if pick.rule else "") + ".json"
@@ -698,9 +842,8 @@ def build_records(log: Any, dev_cases: Mapping[str, dict], picks: Sequence[Pick]
             "stratum": pick.stratum,
             "seed_rule": pick.rule,
             "stratum_basis": pick.basis,
-            "seed_inserted": list(seeded.inserted) if seeded else [],
+            "seed_edits": list(seeded.edits) if seeded else [],
             "seed_deleted": list(seeded.deleted) if seeded else [],
-            "seed_causes": list(seeded.causes) if seeded else [],
             "base_worker_output": raw,
             "file_name": file_name,
             # sheet-only fields, popped before the plan is written
@@ -1034,7 +1177,7 @@ def blindness_hits(sheet: str, records: Sequence[Mapping[str, Any]], log_eval_id
 
 PLAN_FIELDS = (
     "code", "position", "file_name", "sample_id", "epoch", "log_eval_id", "worker_prompt_sha256",
-    "source", "seed_rule", "seed_note", "seed_inserted", "seed_deleted", "seed_causes",
+    "source", "seed_rule", "seed_note", "seed_edits", "seed_deleted",
     "stratum", "stratum_basis", "worker_output", "base_worker_output",
 )
 
@@ -1053,8 +1196,6 @@ def plan_payload(records: Sequence[Mapping[str, Any]], *, log_path: Path, log_sh
         "selection_sha256": selection.sha256,
         "shuffle_seed": selection.shuffle_seed,
         "excluded": [{"sample_id": s, "epoch": e, "reason": why} for (s, e), why in sorted(EXCLUDED.items())],
-        "causes": list(selection.causes),
-        "templates": dict(TEMPLATES),
         "rules": dict(RULES),
         "level_counts": {d: {str(lv): n for lv, n in c.items()} for d, c in level_counts(selection.picks).items()},
         "source_counts": {s: sum(1 for r in records if r["source"] == s) for s in SOURCES},
@@ -1068,6 +1209,13 @@ def _sha256_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _load_records(log_path: Path, dev_path: Path, selection: Selection) -> tuple[Any, list[dict]]:
+    log = _read_log(log_path)
+    _check_log(log)
+    dev_cases = load_dev_cases(dev_path)
+    return log, build_records(log, dev_cases, selection.picks, selection.shuffle_seed)
+
+
 def build(log_path: Path, out_dir: Path, dev_path: Path, selection_path: Path, force: bool) -> dict:
     if rubric.llm_anchor_sha256() != LOCKED_ANCHOR_SHA256:
         raise Refused("rubric.py anchors differ from the committed llm_anchor_sha256")
@@ -1076,10 +1224,7 @@ def build(log_path: Path, out_dir: Path, dev_path: Path, selection_path: Path, f
     if not force and (sheet_path.exists() or plan_path.exists()):
         raise Refused("the sheet or the plan already exists; pass --force to rebuild")
     selection = load_selection(selection_path)
-    log = _read_log(log_path)
-    _check_log(log)
-    dev_cases = load_dev_cases(dev_path)
-    records = build_records(log, dev_cases, selection.picks, selection.causes, selection.shuffle_seed)
+    log, records = _load_records(log_path, dev_path, selection)
     sheet = render_sheet(records)
     hits = blindness_hits(sheet, records, str(log.eval.eval_id))
     if hits:
@@ -1094,6 +1239,92 @@ def build(log_path: Path, out_dir: Path, dev_path: Path, selection_path: Path, f
     return plan
 
 
+# --- Probe -----------------------------------------------------------------------------
+
+PROBE_DIR = "_probe"
+PROBE_NAME = "probe-input.json"
+PROBE_KEY_NAME = "judge-dev-probe-key.json"
+PROBE_WHAT = ("Twenty narratives, each under a random probe code, with the committed grounding scope, coverage "
+              "scope and the four grounding level texts. Nothing else: no case file, no facts, no ids, no levels.")
+
+
+def probe_code(rng: random.Random, taken: set[str]) -> str:
+    """P- plus five characters; never the R- form the sheet uses."""
+    alphabet = "ABCDEFGHJKMNPQRSTVWXYZ2345689"
+    while True:
+        code = "P-" + "".join(rng.choice(alphabet) for _ in range(5))
+        if code not in taken:
+            taken.add(code)
+            return code
+
+
+def probe_payloads(records: Sequence[Mapping[str, Any]], probe_seed: str, selection: Selection) -> tuple[dict, dict]:
+    """The probe input (narratives only, under fresh codes, in a fresh order) and its sealed key."""
+    rng = random.Random(f"{probe_seed}|probe")
+    taken = {r["code"] for r in records}
+    order = list(records)
+    rng.shuffle(order)
+    rows, key = [], []
+    for r in order:
+        code = probe_code(rng, taken)
+        rows.append({"probe_code": code, "narrative": r["_narrative"]})
+        key.append({"probe_code": code, "sheet_code": r["code"], "sample_id": r["sample_id"], "epoch": r["epoch"],
+                    "source": r["source"], "seed_rule": r["seed_rule"], "stratum": r["stratum"]})
+    anchors = rubric.LLM_GRADED_ANCHORS[GROUNDING]
+    probe = {
+        "what": PROBE_WHAT,
+        "scope": {"narrative_grounding": rubric.LLM_GRADED_SCOPE[GROUNDING],
+                  "narrative_coverage": rubric.LLM_GRADED_SCOPE[COVERAGE]},
+        "grounding_levels": {str(lv): anchors[lv][0] for lv in (3, 2, 1, 0)},
+        "records": rows,
+    }
+    sealed = {
+        "what": "Probe key (sealed): probe code to sealed record. Do not open before the grades file is saved.",
+        "probe_seed": probe_seed,
+        "selection_sha256": selection.sha256,
+        "anchors_sha256": rubric.llm_anchor_sha256(),
+        "records": key,
+    }
+    return probe, sealed
+
+
+def probe_blindness_hits(text: str, records: Sequence[Mapping[str, Any]], log_eval_id: str = "") -> list[str]:
+    """The sheet's blindness check, plus: no sheet code and no case file text."""
+    hits = blindness_hits(text, records, log_eval_id)
+    for r in records:
+        if r["code"] in text:
+            hits.append(f"sheet code {r['code']}")
+        head = str(r.get("_case_input", ""))[:60]
+        if head and head in text:
+            hits.append(f"case file text of {r['code']}")
+    return hits
+
+
+def build_probe(log_path: Path, out_dir: Path, dev_path: Path, selection_path: Path, force: bool,
+                probe_seed: str | None = None) -> dict:
+    """Write the probe input and the sealed probe key; never the sheet or the plan."""
+    if rubric.llm_anchor_sha256() != LOCKED_ANCHOR_SHA256:
+        raise Refused("rubric.py anchors differ from the committed llm_anchor_sha256")
+    probe_path = out_dir / PROBE_DIR / PROBE_NAME
+    key_path = out_dir / SEALED_DIR / PROBE_KEY_NAME
+    if not force and (probe_path.exists() or key_path.exists()):
+        raise Refused("the probe input or its key already exists; pass --force to rewrite")
+    selection = load_selection(selection_path)
+    log, records = _load_records(log_path, dev_path, selection)
+    seed = probe_seed or secrets.token_hex(8)
+    probe, sealed = probe_payloads(records, seed, selection)
+    text = json.dumps(probe, ensure_ascii=False, indent=2) + "\n"
+    hits = probe_blindness_hits(text, records, str(log.eval.eval_id))
+    if hits:
+        raise Refused("the probe input would show sealed text: " + "; ".join(hits))
+    probe_path.parent.mkdir(parents=True, exist_ok=True)
+    key_path.parent.mkdir(parents=True, exist_ok=True)
+    probe_path.write_bytes(text.encode("utf-8"))
+    key_path.write_bytes((json.dumps(sealed, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
+    return {"records": probe["records"], "level_counts": level_counts(selection.picks),
+            "source_counts": {s: sum(1 for r in records if r["source"] == s) for s in SOURCES}}
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Build the judge-development sealed plan and grading sheet.")
     ap.add_argument("--log", type=Path, default=DEFAULT_LOG)
@@ -1101,21 +1332,26 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--dev", type=Path, default=DEFAULT_DEV)
     ap.add_argument("--selection", type=Path, default=DEFAULT_SELECTION)
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--probe", action="store_true", help="write only the probe input and its sealed key")
     try:
         args = ap.parse_args(argv)
     except SystemExit:
         return EXIT_REFUSED
     print(f"module: {icfr_agent_evals.__file__}")
     try:
-        plan = build(args.log, args.out, args.dev, args.selection, args.force)
+        if args.probe:
+            out = build_probe(args.log, args.out, args.dev, args.selection, args.force)
+        else:
+            out = build(args.log, args.out, args.dev, args.selection, args.force)
     except Refused as e:
         print(f"refused: {e}", file=sys.stderr)
         return EXIT_REFUSED
-    print(f"records: {len(plan['records'])}")
-    print("sources: " + ", ".join(f"{k} {v}" for k, v in plan["source_counts"].items()))
-    for d, c in plan["level_counts"].items():
+    print(f"records: {len(out['records'])}")
+    print("sources: " + ", ".join(f"{k} {v}" for k, v in out["source_counts"].items()))
+    for d, c in out["level_counts"].items():
         print(f"{d}: " + ", ".join(f"level {lv} x{n}" for lv, n in c.items()))
-    print(f"sheet sha256: {plan['sheet_sha256']}")
+    if not args.probe:
+        print(f"sheet sha256: {out['sheet_sha256']}")
     return EXIT_OK
 
 
