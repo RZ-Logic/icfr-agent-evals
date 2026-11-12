@@ -15,7 +15,13 @@ from inspect_ai import eval as inspect_eval
 from inspect_ai.model import GenerateConfig, ModelOutput, get_model
 
 from icfr_agent_evals import baseline, roster, task as task_module
-from icfr_agent_evals.roster import REASONING_EFFORT, RunConfigError, check_run_config
+from icfr_agent_evals.roster import (
+    GRADER_REASONING_EFFORT,
+    REASONING_EFFORT,
+    RunConfigError,
+    check_run_config,
+    grader_generate_config_args,
+)
 
 ROLES = {"grader": "mockllm/model", "calibrator": "mockllm/model"}
 PILOT_CASES = 20
@@ -231,13 +237,81 @@ def test_one_model_event_off_the_pin_is_refused_even_when_plan_config_is_clean(c
         check_run_config(log)
 
 
-def test_a_role_event_with_extra_headers_is_refused(clean_run):
-    sample = clean_run.samples[0]
+def _with_role_event(log, role, config, sample_index=0):
+    """A copy of a log with one extra ModelEvent of the given role and config in one
+    sample, the way Inspect records a call to a model bound to that role."""
+    sample = log.samples[sample_index]
     (model_event,) = [e for e in sample.events if e.event == "model"]
-    role_event = model_event.model_copy(update={"role": "grader", "config": GenerateConfig(extra_headers={"X": "y"})})
-    samples = [sample.model_copy(update={"events": [*sample.events, role_event]}), *clean_run.samples[1:]]
-    with pytest.raises(RunConfigError, match="role 'grader' sets extra_headers"):
-        check_run_config(clean_run.model_copy(update={"samples": samples}))
+    role_event = model_event.model_copy(update={"role": role, "config": config})
+    samples = list(log.samples)
+    samples[sample_index] = sample.model_copy(update={"events": [*sample.events, role_event]})
+    return log.model_copy(update={"samples": samples})
+
+
+@pytest.mark.parametrize("role, config", [
+    ("calibrator", GenerateConfig(extra_headers={"X": "y"})),
+    ("grader", GenerateConfig(reasoning_effort=GRADER_REASONING_EFFORT, extra_headers={"X": "y"})),
+])
+def test_a_role_event_with_extra_headers_is_refused(clean_run, role, config):
+    with pytest.raises(RunConfigError, match=f"role '{role}' sets extra_headers"):
+        check_run_config(_with_role_event(clean_run, role, config))
+
+
+# --- Grader reasoning_effort (section 13 grader configuration row; D-T1, D-R12) ------
+
+
+def test_a_log_without_grader_events_passes_and_counts_none(clean_run):
+    # No Phase 1 scorer calls the grader yet, so the dev pilot log holds no grader event.
+    assert check_run_config(clean_run, expected_samples=PILOT_CASES)["grader_model_events"] == 0
+
+
+@pytest.mark.parametrize("step", [1, 2, 3])
+def test_a_grader_event_with_the_pinned_config_passes(clean_run, step):
+    log = _with_role_event(clean_run, "grader", GenerateConfig(**grader_generate_config_args(step)))
+    assert check_run_config(log, expected_samples=PILOT_CASES)["grader_model_events"] == 1
+
+
+@pytest.mark.parametrize("effort", [None, "none", "low", "medium", "xhigh"])
+def test_a_grader_event_off_the_effort_pin_is_refused(clean_run, effort):
+    log = _with_role_event(clean_run, "grader", GenerateConfig(reasoning_effort=effort))
+    with pytest.raises(RunConfigError, match=f"role 'grader' has reasoning_effort={effort!r}, not the pin 'high'"):
+        check_run_config(log)
+
+
+def test_one_grader_event_off_the_pin_among_clean_ones_is_refused(clean_run):
+    log = _with_role_event(clean_run, "grader", GenerateConfig(**grader_generate_config_args(1)), sample_index=0)
+    log = _with_role_event(log, "grader", GenerateConfig(reasoning_effort="low"), sample_index=5)
+    with pytest.raises(RunConfigError, match="sample .* role 'grader' has reasoning_effort='low'"):
+        check_run_config(log)
+
+
+@pytest.mark.parametrize("field, value", [("temperature", 0.0), ("top_p", 0.9), ("seed", 7), ("reasoning_tokens", 1000)])
+def test_a_grader_event_with_a_sampling_field_is_refused(clean_run, field, value):
+    # D-T1: temperature unset on every grader; no sampling parameter or seed anywhere.
+    log = _with_role_event(clean_run, "grader",
+                           GenerateConfig(reasoning_effort=GRADER_REASONING_EFFORT, **{field: value}))
+    with pytest.raises(RunConfigError, match=f"role 'grader' sets {field}="):
+        check_run_config(log)
+
+
+def test_a_grader_event_with_max_tokens_is_refused(clean_run):
+    log = _with_role_event(clean_run, "grader",
+                           GenerateConfig(reasoning_effort=GRADER_REASONING_EFFORT, max_tokens=4000))
+    with pytest.raises(RunConfigError, match="role 'grader' sets max_tokens=4000; no grader max_tokens is pinned"):
+        check_run_config(log)
+
+
+def test_a_grader_batch_event_follows_allow_batch(clean_run):
+    log = _with_role_event(clean_run, "grader", GenerateConfig(**grader_generate_config_args(2)))
+    assert check_run_config(log)["grader_model_events"] == 1
+    with pytest.raises(RunConfigError, match="role 'grader' sets batch=True"):
+        check_run_config(log, allow_batch=False)
+
+
+def test_the_calibrator_role_is_not_held_to_the_grader_effort_pin(clean_run):
+    # The calibrator is an Anthropic model; this check reads only its extra_headers.
+    log = _with_role_event(clean_run, "calibrator", GenerateConfig())
+    assert check_run_config(log)["grader_model_events"] == 0
 
 
 def test_a_log_with_no_evaluated_model_event_is_refused(clean_run):

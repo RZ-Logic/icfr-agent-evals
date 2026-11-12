@@ -15,6 +15,7 @@ from icfr_agent_evals.roster import (
     GRADER,
     GRADER_BATCH_STEPS,
     GRADER_BY_STEP,
+    GRADER_REASONING_EFFORT,
     GRADER_STEP2,
     GRADER_STEP3,
     GRADER_STEPS,
@@ -107,9 +108,9 @@ def test_every_ladder_grader_is_openai_so_none_is_a_same_vendor_substitution():
 
 def test_grader_batch_is_pinned_for_steps_two_and_three_only():
     assert GRADER_BATCH_STEPS == (2, 3)
-    assert grader_generate_config_args(1) == {}
-    assert grader_generate_config_args(2) == {"batch": True}
-    assert grader_generate_config_args(3) == {"batch": True}
+    assert grader_generate_config_args(1) == {"reasoning_effort": "high"}
+    assert grader_generate_config_args(2) == {"reasoning_effort": "high", "batch": True}
+    assert grader_generate_config_args(3) == {"reasoning_effort": "high", "batch": True}
     with pytest.raises(RosterError, match="grader_step"):
         grader_generate_config_args(4)
 
@@ -120,7 +121,17 @@ def test_grader_generate_config_builds_a_real_inspect_config(step):
 
     config = GenerateConfig(**grader_generate_config_args(step))
     assert (config.batch is True) == (step in GRADER_BATCH_STEPS)
-    assert config.temperature is None and config.reasoning_effort is None
+    assert config.temperature is None and config.reasoning_effort == GRADER_REASONING_EFFORT
+
+
+def test_grader_reasoning_effort_is_pinned_high_at_every_step():
+    # Section 13 grader configuration row; owner decisions D-T1 (pinned, not "none",
+    # temperature unset) and D-R12 (high), one value for Luna, Terra and Sol.
+    assert GRADER_REASONING_EFFORT == "high"
+    for step in GRADER_STEPS:
+        args = grader_generate_config_args(step)
+        assert args["reasoning_effort"] == "high"
+        assert "temperature" not in args
 
 
 def test_calibrator_bound_away_from_its_pin_is_rejected():
@@ -212,8 +223,9 @@ def test_roster_metadata_records_pins_and_effort():
     assert roster_metadata(2)["roles"]["grader"] == GRADER_STEP2
     assert roster_metadata(3)["roles"]["grader"] == GRADER_STEP3
     assert meta["grader_ladder"] == [GRADER, GRADER_STEP2, GRADER_STEP3]
-    assert meta["grader_generate_config"] == {}
-    assert roster_metadata(2)["grader_generate_config"] == {"batch": True}
+    assert meta["grader_generate_config"] == {"reasoning_effort": "high"}
+    assert roster_metadata(2)["grader_generate_config"] == {"reasoning_effort": "high", "batch": True}
+    assert meta["grader_reasoning_effort"] == "high"
     assert roster_metadata(3)["grader_step"] == 3
     assert meta["serving_platforms"] == SERVING_PLATFORMS
 

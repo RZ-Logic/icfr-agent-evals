@@ -37,7 +37,8 @@ RunConfigError unless the run used the section 5 configuration. CLI generate fla
 (--reasoning-effort, --max-tokens, --seed and the sampling flags)
 replace the Task's GenerateConfig without a warning and the run still ends in
 success, so the readers check the log itself: plan.config and every ModelEvent the
-evaluated model sent.
+evaluated model sent, and every grader ModelEvent the log holds against the grader's
+own effort pin (GRADER_REASONING_EFFORT).
 
 validate_roster and validate_serving are pure (no Inspect import) so each
 violation has a unit test; roster_check is the setup solver that resolves the
@@ -79,6 +80,14 @@ GRADER_BY_STEP: dict[int, str] = {1: GRADER, 2: GRADER_STEP2, 3: GRADER_STEP3}
 # step 1 runs interactively. It applies to the grader role only: the worker and the
 # calibrator are called as before.
 GRADER_BATCH_STEPS: tuple[int, ...] = (2, 3)
+# The grader's reasoning_effort, one value for every ladder step (GPT-6 Luna, GPT-6.1
+# Terra, GPT-6.1 Sol): section 13 grader configuration row, owner decision D-T1
+# (2026-11-09: pinned, not "none", no sampling parameter) and D-R12 (2026-11-11: high).
+# A role model does not inherit the eval-wide config's reasoning_effort in the pinned
+# inspect-ai (Model._resolve_config merges only the operational fields into a model
+# that is not the active one), so the grader call must pass it itself, through
+# grader_generate_config_args.
+GRADER_REASONING_EFFORT = "high"
 
 # One effort setting for each Anthropic model in the roster, whatever role it holds.
 REASONING_EFFORT = "high"
@@ -171,12 +180,16 @@ def role_pins(grader_step: int = 1) -> dict[str, str]:
 
 
 def grader_generate_config_args(grader_step: int = 1) -> dict[str, Any]:
-    """GenerateConfig fields pinned for the grader role at a ladder step: batch True at
-    steps 2 and 3, nothing at step 1. Pure (no Inspect import); pass the result to
-    GenerateConfig(**args) where the grader is called, never to the worker or calibrator."""
+    """GenerateConfig fields pinned for the grader role at a ladder step: reasoning_effort
+    GRADER_REASONING_EFFORT at every step, and batch True at steps 2 and 3. Pure (no
+    Inspect import); pass the result to GenerateConfig(**args) where the grader is
+    called, never to the worker or calibrator."""
     if grader_step not in GRADER_STEPS:
         raise RosterError(f"grader_step must be one of {GRADER_STEPS}, got {grader_step!r}")
-    return {"batch": True} if grader_step in GRADER_BATCH_STEPS else {}
+    args: dict[str, Any] = {"reasoning_effort": GRADER_REASONING_EFFORT}
+    if grader_step in GRADER_BATCH_STEPS:
+        args["batch"] = True
+    return args
 
 
 def calibrator_may_sample(evaluated_model: str) -> bool:
@@ -398,6 +411,7 @@ def roster_metadata(grader_step: int = 1) -> dict:
         "grader_ladder": [GRADER_BY_STEP[s] for s in GRADER_STEPS],
         "grader_step": grader_step,
         "grader_generate_config": grader_generate_config_args(grader_step),
+        "grader_reasoning_effort": GRADER_REASONING_EFFORT,
         "scout_scanner": SCOUT_SCANNER,
         "reasoning_effort": REASONING_EFFORT,
         "serving_platforms": dict(SERVING_PLATFORMS),
@@ -442,17 +456,24 @@ def _generate_fields(config: Any) -> dict[str, Any]:
 
 
 def _check_generate(where: str, fields: Mapping[str, Any], *, evaluated: bool, allow_batch: bool,
-                    max_tokens_pin: int | None, provider_default: bool = False) -> None:
+                    max_tokens_pin: int | None, provider_default: bool = False,
+                    grader: bool = False) -> None:
     """Raise RunConfigError on the first field of one GenerateConfig off the pins.
 
-    evaluated: True for plan.config and the evaluated model's events, which must carry
-    reasoning_effort == REASONING_EFFORT (and max_tokens equal to a given pin).
+    evaluated: True for plan.config, the evaluated model's events and the grader's
+    events, which must carry the effort pin (and max_tokens equal to a given pin).
     provider_default: True for a ModelEvent of the evaluated model, where Inspect records
-    the max_tokens it sent; with no pin, DEFAULT_MAX_TOKENS is the one accepted value."""
-    if evaluated and fields.get("reasoning_effort") != REASONING_EFFORT:
+    the max_tokens it sent; with no pin, DEFAULT_MAX_TOKENS is the one accepted value.
+    grader: True for a ModelEvent of the grader role, whose effort pin is
+    GRADER_REASONING_EFFORT; the caller passes max_tokens_pin None, since no grader
+    max_tokens is pinned and the OpenAI provider sends none by default."""
+    effort_pin = GRADER_REASONING_EFFORT if grader else REASONING_EFFORT
+    if evaluated and fields.get("reasoning_effort") != effort_pin:
+        hint = ("the grader call passes grader_generate_config_args (owner decision D-R12)" if grader
+                else "a --reasoning-effort flag replaces the Task config")
         raise RunConfigError(
             f"run config: {where} has reasoning_effort={fields.get('reasoning_effort')!r}, "
-            f"not the pin {REASONING_EFFORT!r} (a --reasoning-effort flag replaces the Task config)"
+            f"not the pin {effort_pin!r} ({hint})"
         )
     other = sorted(set(fields) - set(RUN_CONFIG_OPERATIONAL) - set(_RUN_CONFIG_RULED))
     if other:
@@ -468,6 +489,8 @@ def _check_generate(where: str, fields: Mapping[str, Any], *, evaluated: bool, a
                 raise RunConfigError(
                     f"run config: {where} sets max_tokens={value!r}; the max_tokens pin is {max_tokens_pin!r}"
                 )
+        elif grader:
+            raise RunConfigError(f"run config: {where} sets max_tokens={value!r}; no grader max_tokens is pinned")
         elif not (provider_default and value == DEFAULT_MAX_TOKENS):
             raise RunConfigError(
                 f"run config: {where} sets max_tokens={value!r}; the max_tokens pin is None and "
@@ -508,7 +531,11 @@ def check_run_config(log: Any, *, expected_samples: int | None = None, expected_
     REASONING_EFFORT; max_tokens per the pin; batch per allow_batch; extra_headers
     empty on every ModelEvent; any other set GenerateConfig field outside
     RUN_CONFIG_OPERATIONAL refuses (every sampling parameter, reasoning_tokens, seed). EvalConfig
-    fields such as retry_on_error and fail_on_error are not checked.
+    fields such as retry_on_error and fail_on_error are not checked. Every ModelEvent of
+    the grader role, when the log holds any, gets the same field rules with
+    reasoning_effort == GRADER_REASONING_EFFORT (owner decisions D-T1 and D-R12) and
+    max_tokens unset; a log with no grader event passes this part, since no Phase 1
+    scorer calls the grader yet. Calibrator events are checked for extra_headers only.
 
     Returns a summary of the effective values (never a header value)."""
     status = getattr(log, "status", None)
@@ -543,6 +570,7 @@ def check_run_config(log: Any, *, expected_samples: int | None = None, expected_
     if samples is None:
         raise RunConfigError("run config: the log has no samples; read it in full, not header_only")
     evaluated_events = 0
+    grader_events = 0
     effective_max_tokens: set[int | None] = set()
     for sample in samples:
         for event in sample.events or ():
@@ -556,6 +584,10 @@ def check_run_config(log: Any, *, expected_samples: int | None = None, expected_
                 _check_generate(where, fields, evaluated=True, allow_batch=allow_batch,
                                 max_tokens_pin=max_tokens_pin, provider_default=True)
                 effective_max_tokens.add(fields.get("max_tokens"))
+            elif role == GRADER_ROLE:
+                grader_events += 1
+                _check_generate(where, fields, evaluated=True, allow_batch=allow_batch,
+                                max_tokens_pin=None, grader=True)
             elif fields.get("extra_headers"):
                 raise RunConfigError(f"run config: {where} sets extra_headers; no roster run sets them")
     if evaluated_events == 0:
@@ -582,6 +614,7 @@ def check_run_config(log: Any, *, expected_samples: int | None = None, expected_
         "samples": len({s.id for s in samples}),
         "scored_sample_epochs": len(scored),
         "evaluated_model_events": evaluated_events,
+        "grader_model_events": grader_events,
         "reasoning_effort": plan.get("reasoning_effort"),
         "max_tokens": plan.get("max_tokens"),
         "max_tokens_effective": next(iter(effective_max_tokens)),

@@ -109,20 +109,20 @@ def test_task_binds_no_model_and_sets_no_sampling_parameter(unit_dataset):
 def test_grader_step_two_records_the_terra_pin(unit_dataset):
     t = task_module.variance_commentary(split="dev", grader_step=2)
     assert t.metadata["roster"]["roles"]["grader"] == "openai/gpt-6.1-terra"
-    assert t.metadata["roster"]["grader_generate_config"] == {"batch": True}
+    assert t.metadata["roster"]["grader_generate_config"] == {"reasoning_effort": "high", "batch": True}
 
 
 def test_grader_step_three_records_the_sol_pin(unit_dataset):
     t = task_module.variance_commentary(split="dev", grader_step=3)
     assert t.metadata["roster"]["roles"]["grader"] == "openai/gpt-6.1-sol"
-    assert t.metadata["roster"]["grader_generate_config"] == {"batch": True}
+    assert t.metadata["roster"]["grader_generate_config"] == {"reasoning_effort": "high", "batch": True}
     assert t.config.batch is None  # the batch pin is the grader's, never the eval-wide config
 
 
 def test_grader_step_one_records_luna_without_batch(unit_dataset):
     t = task_module.variance_commentary(split="dev")
     assert t.metadata["roster"]["roles"]["grader"] == "openai/gpt-6-luna"
-    assert t.metadata["roster"]["grader_generate_config"] == {}
+    assert t.metadata["roster"]["grader_generate_config"] == {"reasoning_effort": "high"}
 
 
 def test_grader_step_four_is_refused(unit_dataset):
