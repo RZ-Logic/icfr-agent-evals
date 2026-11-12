@@ -85,6 +85,7 @@ def test_prices_reproduce_the_cost_row_worst_case():
     """Section 13 cost row: at 48,000 out, 3,482 in and list prices, 800 generations each."""
     text = (ROOT / "PRE-REGISTRATION-PHASE-1.md").read_text(encoding="utf-8")
     row = next(line for line in text.splitlines() if line.startswith("| Cost cap confirmed"))
+    row = row.split(" | ")[0]  # the item cell holds the worst case; the value cell holds the D-R12 expected figures
     stated = {name: float(v.replace(",", "")) for name, v in
               re.findall(r"(Sonnet 5\.5|Opus 5\.5|Sonnet 5|Haiku 5\.5) \$([\d,]+\.\d\d)", row)}
     total = float(re.search(r"\$([\d,]+\.\d\d) in all", row).group(1).replace(",", ""))
