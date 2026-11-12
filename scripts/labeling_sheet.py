@@ -24,7 +24,7 @@ the rater types and export as CSV.
 
 The code to case id key is written to its own file, never to the page:
 <key dir>/<sheet file name>.<sheet id>.key.json. The key dir defaults to a
-folder named _key next to the sheet and must not be the sheet's own folder.
+folder <sheet folder>-key beside the sheet's folder and must be outside the sheet's folder.
 The key is for the owner only; never send it to a rater. Each build draws new
 codes and a new sheet id, so keep the key of every sheet that went out: the
 sheet id in a rater's CSV names the key file that decodes it.
@@ -35,7 +35,7 @@ hand-written cases only (section 4) and is never used before the tag.
 
 Run:
   python scripts/labeling_sheet.py --cases ID [ID ...] --out sheet.html [--key-dir DIR] [--show-key]
-      --key-dir: where the key file goes (default: _key next to the sheet)
+      --key-dir: where the key file goes (default: <sheet folder>-key beside the sheet folder)
       --show-key: also print the key to the terminal (owner only)
 
 CSV columns: sheet_id, rater, case, item_ref, item_source, field, value,
@@ -253,7 +253,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", type=Path, help="HTML file to write")
     ap.add_argument("--title", default="Labeling sheet")
     ap.add_argument("--key-dir", type=Path,
-                    help="folder for the code to case id key file (default: _key next to the sheet); "
+                    help="folder for the code to case id key file (default: <sheet folder>-key beside the sheet folder); "
                          "must not be the sheet's own folder")
     ap.add_argument("--show-key", action="store_true", help="also print the code to case id key (owner only)")
     ap.add_argument("--allow-evaluation-split", action="store_true",
@@ -267,9 +267,10 @@ def main(argv: list[str] | None = None) -> int:
     if not args.out:
         print("nothing to do: give --out (the key file is written with each sheet built)", file=sys.stderr)
         return 2
-    key_dir = args.key_dir if args.key_dir is not None else args.out.parent / "_key"
-    if key_dir.resolve() == args.out.parent.resolve():
-        print("error: the key dir must not be the sheet's own folder", file=sys.stderr)
+    key_dir = args.key_dir if args.key_dir is not None else args.out.parent.parent / f"{args.out.parent.name}-key"
+    sheet_dir = args.out.parent.resolve()
+    if key_dir.resolve() == sheet_dir or sheet_dir in key_dir.resolve().parents:
+        print("error: the key dir must be outside the sheet's folder (the rater materials ship from it)", file=sys.stderr)
         return 2
     codes = new_codes([c for c, _ in cases])
     data = sheet_data(cases, args.title, codes)

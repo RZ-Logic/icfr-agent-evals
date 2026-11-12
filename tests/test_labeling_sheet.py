@@ -456,8 +456,8 @@ def test_cli_writes_the_sheet_and_the_key_outside_its_folder(tmp_path, capsys):
     html = out.read_text(encoding="utf-8")
     data = _data(html)
     assert len(data["cases"]) == 3
-    assert sorted(p.name for p in out.parent.iterdir()) == ["_key", "sheet.html"]
-    (key_path,) = (out.parent / "_key").iterdir()
+    assert sorted(p.name for p in out.parent.iterdir()) == ["sheet.html"]
+    (key_path,) = (out.parent.parent / "rater-key").iterdir()
     assert key_path.name == f"sheet.html.{data['sheet']['id']}.key.json"
     key = json.loads(key_path.read_text(encoding="utf-8"))
     assert key["sheet_id"] == data["sheet"]["id"]
@@ -496,3 +496,9 @@ def test_item_check_flags_contradictory_entries():
     res = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=60, check=True)
     got = json.loads(res.stdout)
     assert [bool(g) for g in got] == [w for _, w in cases]
+
+
+def test_cli_refuses_a_key_dir_inside_the_sheet_folder(tmp_path):
+    out = tmp_path / "rater" / "sheet.html"
+    for bad in (out.parent, out.parent / "_key"):
+        assert ls.main(["--cases", *TRIAL, "--out", str(out), "--key-dir", str(bad)]) == 2
