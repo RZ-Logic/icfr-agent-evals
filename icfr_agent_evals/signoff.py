@@ -194,6 +194,8 @@ def _row_errors(n: int, row: Mapping[str, str], pair: RunPair) -> list[str]:
         if not row[col].strip():
             errs.append(f"{where}: {col} is blank")
     try:
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", row["date"]):
+            raise ValueError("not YYYY-MM-DD")  # fromisoformat alone also takes 20261111 and 2026-W45-3
         datetime.date.fromisoformat(row["date"])
     except ValueError:
         errs.append(f"{where}: date {row['date']!r} is not a YYYY-MM-DD date")

@@ -345,3 +345,24 @@ def test_a_signoff_file_never_clears_an_automatic_block(runs, cli, tmp_path):
     code, out, _ = _cli(cli, _argv(runs, "--pr", "12", "--content-key", KEY, "--signoff", str(path),
                                    label="regression"))
     assert code == 1 and "RESULT: BLOCKED (automatic)" in out
+
+
+def test_a_stale_signoff_file_never_hides_an_automatic_block(runs, cli, tmp_path):
+    # verifier finding (round 2): a sign-off file for another candidate, read on a run
+    # pair that 10(a)/(b) already block, used to refuse with exit 3 and hide the block
+    rows = _rows(pair=_pair(runs, label="candidate"), cases=runs[4].signoff)
+    path = _write(tmp_path, rows=rows)
+    code, out, _ = _cli(cli, _argv(runs, "--pr", "12", "--content-key", KEY, "--signoff", str(path),
+                                   label="regression"))
+    assert code == 1
+    assert "RESULT: BLOCKED (automatic)" in out
+    assert "sign-off file rejected (automatic block stands)" in out
+
+
+@pytest.mark.parametrize("bad", ["20261111", "2026-W45-3", "2026-02-30", "2026-1-1"])
+def test_dates_must_be_written_yyyy_mm_dd(tmp_path, bad):
+    rows = _rows()
+    rows[0]["date"] = bad
+    path = _write(tmp_path, rows=rows)
+    with pytest.raises(GateError, match="not a YYYY-MM-DD date"):
+        so.check_signoff_file(path, PAIR, CASES)

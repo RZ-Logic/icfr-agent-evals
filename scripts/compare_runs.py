@@ -308,7 +308,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         if pair is not None:
             signoff_file = Path(args.signoff) if args.signoff else signoff_path(REPO_ROOT, pair.pr, pair.content_key)
             if signoff_file.exists():
-                record = check_signoff_file(signoff_file, pair, report.signoff)
+                try:
+                    record = check_signoff_file(signoff_file, pair, report.signoff)
+                except GateError as e:
+                    # A bad or stale sign-off file must never hide an automatic block:
+                    # when 10(a)/(b) already block, report the rejection and keep exit 1.
+                    if not report.blocked:
+                        raise
+                    signoff_note = f"sign-off file rejected (automatic block stands): {e}"
             else:
                 signoff_note = f"no sign-off file at {signoff_file}"
         run_headers = [("baseline", args.baseline, run_header(base_log))]
