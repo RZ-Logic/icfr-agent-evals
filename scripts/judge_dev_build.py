@@ -26,7 +26,8 @@ unsupported, overstated or adopted claim) edits words inside the output's own se
 by one of the G- rules in RULES. A grounding edit changes only words that state a
 case-file fact inside the grounding scope (what kind of item something is, what has
 happened to an item, how a note relates to an item, why an item is relied on or left
-out), so the error can be found only by checking the case file. It never changes an
+out), and is built to need the case file: a reason copy or swap that a reference's own
+type gives away is refused (reference_cue). It never changes an
 amount, reference, band, direction, asset, period, date, time or case entity name, and
 the build refuses an edit after which any code score of the output differs.
 
@@ -219,6 +220,27 @@ NEGATIONS = ((" do not ", " "), (" does not ", " "), (" did not ", " "), (" cann
 DIRECTION_BAND_ASSET = re.compile(
     r"\b(?:usd|surplus|shortfall|reportable|material-risk|floor|threshold|band|btc|eth|sol|usdc|usdt|xrp|ada)\b", re.I)
 STOPWORDS = frozenset({"a", "an", "the", "and", "of", "it", "is", "in", "on", "to", "from", "for", "this", "that", "with"})
+# A reference carries its type: DP deposit, WD withdrawal, TRF transfer, OI open item, JE
+# journal entry. A reason copy or swap that gives a movement reference a journal type, or a
+# journal entry a transfer state, can be caught from the reference alone, without the case
+# file, so the build refuses it (verifier note 2026-11-12). Status-only reasons (cleared,
+# open, dated after the cutoff) stay allowed.
+MOVEMENT_PREFIXES = ("DP-", "WD-", "TRF-", "OI-")
+JOURNAL_PREFIXES = ("JE-",)
+JOURNAL_TYPE_WORDS = re.compile(
+    r"\b(?:suspense|manual|adjustments?|adj|ppa|prior-period|true-up|journal|reversal|accrual)\b", re.I)
+TRANSFER_STATE_WORDS = re.compile(
+    r"\b(?:both sides|in[- ]flight|broadcast|on[- ]chain|chain-only|received|arrived|sent|deposit|withdrawal|"
+    r"transfer|pending xfer)\b", re.I)
+
+
+def reference_cue(ref: str, reason: str) -> str | None:
+    """Why a reason given to ref would show its own error from the reference alone, or None."""
+    if ref.startswith(MOVEMENT_PREFIXES) and JOURNAL_TYPE_WORDS.search(reason):
+        return f"{ref} is a movement reference, and the reason gives it a journal type"
+    if ref.startswith(JOURNAL_PREFIXES) and TRANSFER_STATE_WORDS.search(reason):
+        return f"{ref} is a journal entry, and the reason gives it a transfer state"
+    return None
 
 
 @dataclass(frozen=True)
@@ -363,6 +385,7 @@ def selection_problems(picks: Sequence[Pick]) -> list[str]:
 # --- Narrative edits ------------------------------------------------------------------
 
 _SENT_SPLIT = re.compile(r"(?<=[.!?])(?<![ (][A-Z]\.)(?<!\bvs\.)\s+(?=[A-Z$(])")
+_SENTENCE_END = r"(?<!\bvs)[.!?](?:\s|$)"
 _CLAUSE = r"(?:[^.;]|\.(?=\d))"   # a full stop inside an amount does not end a clause
 _UNEXPLAINED = re.compile(r"\bunexplained\b", re.I)
 _REMAINDER_WORDS = re.compile(r"\bunexplained\b|\bremaining\b|\bleaving\b|\bleaves\b|\bin full\b|\bwhole\b|\ball of it\b", re.I)
@@ -556,6 +579,9 @@ def _check_rule(rule: str, edits: Sequence[tuple[str, str]], narrative: str, ref
         others = [r for r in _named_refs(narrative, refs) if r != ref]
         if not any(rep.replace(ref, r, 1) in narrative for r in others):
             raise SeedError("G-REASON-COPY must copy a reason the narrative gives for another item, in its words")
+        cue = reference_cue(ref, rep[len(ref):])
+        if cue:
+            raise SeedError(f"the reference gives the copy away: {cue}")
         return f"{ref}: reason replaced"
     if rule == "G-REASON-SWAP":
         (f1, r1), (f2, r2) = edits
@@ -564,6 +590,10 @@ def _check_rule(rule: str, edits: Sequence[tuple[str, str]], narrative: str, ref
             raise SeedError("G-REASON-SWAP spans start with two different item references")
         if r1.replace(a, b, 1) != f2 or r2.replace(b, a, 1) != f1 or f1[len(a):] == f2[len(b):]:
             raise SeedError("G-REASON-SWAP must exchange two different reasons word for word")
+        for ref, rep in ((a, r1), (b, r2)):
+            cue = reference_cue(ref, rep[len(ref):])
+            if cue:
+                raise SeedError(f"the reference gives the swap away: {cue}")
         return f"{a} and {b}: reasons exchanged"
     if rule == "G-HEDGE-TYPE":
         (find, rep), = edits
@@ -631,7 +661,8 @@ def apply_edits(pick: Pick, narrative: str, metadata: Mapping[str, Any], case_te
             raise SeedError(f"the span is not found exactly once in the narrative: {find!r}")
         if find == rep:
             raise SeedError("an edit changes nothing")
-        if re.search(r"[.!?](?:\s|$)", find) or re.search(r"[.!?](?:\s|$)", rep):
+        # The full stop of "vs." does not end a sentence, as in split_sentences.
+        if re.search(_SENTENCE_END, find) or re.search(_SENTENCE_END, rep):
             raise SeedError("an edit stays inside one sentence")
         if protected_tokens(find, names) != protected_tokens(rep, names):
             raise SeedError(f"the edit changes a protected token (amount, reference, band, direction, asset, "

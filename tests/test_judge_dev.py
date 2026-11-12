@@ -178,9 +178,14 @@ def test_natural_records_carry_no_rule_and_seeds_use_the_minimum(sealed):
             assert p.grounding not in natural_levels[GROUNDING]
         else:
             assert p.coverage not in natural_levels[COVERAGE]
-    # Three records per level reached only by seeds: no more seeds than that.
+    # Seeds fill only the levels no natural record reaches: the section 7 minimum of three,
+    # plus at most one more per level as margin.
     missing = sum(1 for d in natural_levels for lv in (0, 1, 2, 3) if lv not in natural_levels[d])
-    assert len(seeded) == 3 * missing
+    assert 3 * missing <= len(seeded) <= 4 * missing
+    for d in (GROUNDING, COVERAGE):
+        for lv in (0, 1, 2, 3):
+            if lv not in natural_levels[d]:
+                assert 3 <= sum(1 for p in seeded if p.stratum[d] == lv) <= 4, (d, lv)
 
 
 def test_every_grounding_seed_is_an_edit_and_its_target_follows_from_its_rule(sealed):
@@ -402,6 +407,47 @@ def test_g_reason_swap_exchanges_two_reasons_word_for_word():
     half = [edits[0], ("DP-2601-05521 (dated after the cutoff)", "DP-2601-05521 (dated after the cutoff) too")]
     with pytest.raises(B.SeedError):
         _applied(_g("G-REASON-SWAP", half))
+
+
+@pytest.mark.parametrize("rule, je, dp, edits, message", [
+    # a movement reference given a journal type
+    ("G-REASON-COPY", "suspense entry", "dated after the cutoff",
+     [("DP-2601-05521 (dated after the cutoff)", "DP-2601-05521 (suspense entry)")], "journal type"),
+    ("G-REASON-SWAP", "manual adjustment", "dated after the cutoff",
+     [("JE-25-12-0193 (manual adjustment)", "JE-25-12-0193 (dated after the cutoff)"),
+      ("DP-2601-05521 (dated after the cutoff)", "DP-2601-05521 (manual adjustment)")], "journal type"),
+    # a journal entry given a transfer state
+    ("G-REASON-COPY", "manual adjustment", "cleared on both sides",
+     [("JE-25-12-0193 (manual adjustment)", "JE-25-12-0193 (cleared on both sides)")], "transfer state"),
+    ("G-REASON-SWAP", "manual adjustment", "in flight",
+     [("JE-25-12-0193 (manual adjustment)", "JE-25-12-0193 (in flight)"),
+      ("DP-2601-05521 (in flight)", "DP-2601-05521 (manual adjustment)")], "transfer state"),
+])
+def test_reason_seeds_refuse_a_reason_the_reference_type_gives_away(rule, je, dp, edits, message):
+    narr = G_NARR.replace("JE-25-12-0193 (cleared)", f"JE-25-12-0193 ({je})").replace(
+        "DP-2601-05521 (dated after the cutoff)", f"DP-2601-05521 ({dp})")
+    with pytest.raises(B.SeedError, match=message):
+        _applied(_g(rule, edits), narr=narr)
+
+
+def test_reason_seeds_keep_status_reasons_on_any_reference():
+    assert B.reference_cue("JE-25-12-0193", " (cleared)") is None
+    assert B.reference_cue("DP-2601-05521", " (dated after the cutoff)") is None
+    assert B.reference_cue("WD-2512-04417", " (out-of-scope wallet)") is None
+    assert B.reference_cue("DP-2601-05521", " (suspense entry)")
+    assert B.reference_cue("TRF-2512-00001", " (a prior-period adjustment)")
+    assert B.reference_cue("JE-25-12-0193", " was cleared on both sides")
+    assert B.reference_cue("JE-25-12-0193", " (broadcast after the cutoff)")
+
+
+def test_an_edit_may_cross_the_full_stop_of_vs():
+    narr = G_NARR.replace("(cleared) and DP-2601-05521", "(cleared, ledger vs. chain) and DP-2601-05521")
+    edits = [("JE-25-12-0193 (cleared, ledger vs. chain)", "JE-25-12-0193 (dated after the cutoff, ledger vs. chain)")]
+    with pytest.raises(B.SeedError, match="another item"):   # past the sentence check, refused by the rule
+        _applied(_g("G-REASON-COPY", edits), narr=narr)
+    with pytest.raises(B.SeedError, match="one sentence"):
+        _applied(_g("G-REASON-COPY", [("chain) and DP-2601-05521 (dated after the cutoff).",
+                                       "chain) and DP-2601-05521 (cleared).")]), narr=narr)
 
 
 def test_g_hedge_type_states_a_hedged_note_type_as_fact():
