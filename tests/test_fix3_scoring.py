@@ -21,7 +21,8 @@ route.
        stays, because P12 uses fixture_wallet_labels.
   P12  a sweep hit equal to a fixture reference number or wallet label that
        entities_cited leaves out is a citation omission: details
-       citation_omissions, anchor 0, no route, never FM-005 (owner ruling).
+       citation_omissions, no route, never FM-005 (owner ruling). Since owner
+       decision D-R9 (2026-11-11) it lowers nothing: the anchor scores 3.
 
 Keyless: pure functions on dev-split truths, no model, no key, no network.
 """
@@ -96,17 +97,17 @@ S118 = "OI-251231-441 ($15.24) is an unbooked chain-only network fee on the HOT0
 ], ids=["S077-S079-references", "S027-wallet-label", "S118-wallet-label"])
 def test_p12_real_sentence_is_a_citation_omission(row, case_id, text, entities, omitted):
     r = S.check_fabrication(output(case_id, text, entities=entities), truth(case_id))
-    assert r.points == 0
+    assert r.points == S.SCORE_MAX  # D-R9: counted, not a content failure
     assert r.failure_modes == ()
     assert r.review_reasons == ()  # no route on that ground
     assert sorted(r.details["citation_omissions"]) == sorted(omitted)
 
 
-def test_p12_faithfulness_anchor_scores_0_and_carries_the_list():
+def test_p12_faithfulness_anchor_scores_3_and_carries_the_list():
     t = truth(STD013)
     out = output(STD013, S077, entities=STD013_ENTITIES, items=STD013_ITEMS)
     r = S.check_faithfulness(out, t)
-    assert r.points == 0 and "FM-005" not in r.failure_modes
+    assert r.points == S.SCORE_MAX and "FM-005" not in r.failure_modes
     assert sorted(r.details["citation_omissions"]) == ["DP-2510-831633", "JE-25-10-9025", "WD-2511-221933"]
 
 

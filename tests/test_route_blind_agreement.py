@@ -164,3 +164,4 @@ def test_known_outcomes_follow_the_rule(truth):
     assert reg["clean"] and reg["sweep_route"] and reg["off_both"] and reg["type_label_route"]
     assert not reg["fm_with_route"] and not reg["errored"] and not reg["no_items_no_route"]
     assert not reg["hand_sweep_homoglyph"] and not reg["hand_too_long"]
+    assert reg["hand_sweep_omission"]  # D-R9: the omission no longer holds the anchor at 0

@@ -56,7 +56,8 @@ of that check's scope; a template candidate is refused by the task match above.
 
 Exit codes (ratified 2026-11-03):
   0  pass: no automatic block, and no sign-off case or every one signed in a valid sign-off file
-  1  automatic block: a Holm rejection in 10(a) or a fabrication rejection in 10(b)
+  1  automatic block: a Holm rejection in 10(a), or a fabrication or citation rejection in 10(b)
+     (the citation rule: owner decision D-R9, 2026-11-11)
   2  no automatic block, sign-off cases pending under 10(c) (no sign-off file for the run pair)
   3  refused: a --ladder that disagrees with the recorded rung, a ladder record
      that cannot be read, an evaluation-split log, a truncated run (--limit, --sample-id, or
@@ -79,6 +80,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from icfr_agent_evals.regression import (
+    CITATION_OMISSION_TRIGGER,
     FABRICATION_CODES,
     LADDER_RECORD_RELPATH,
     LADDERS,
@@ -230,6 +232,13 @@ def render(report: GateReport, ladder: str, instances: Sequence[FabricationInsta
         t = report.fabrication[code]
         verdict = "BLOCK" if t.rejected else "pass"
         lines.append(f"  {code:<15} p={_fmt_p(t.p):<10} n={t.n:<4} {verdict:<5} worse={t.detail['worse']:g} better={t.detail['better']:g}")
+    cite = report.citation
+    if cite is not None:  # section 10(b) citation rule (owner decision D-R9, 2026-11-11)
+        verdict = "BLOCK" if cite.rejected else "pass"
+        lines.append(f"Section 10(b) citation rule (exact McNemar on any epoch holding a citation omission, "
+                     f"alpha {cite.alpha}, outside the Holm family)")
+        lines.append(f"  {cite.name:<15} p={_fmt_p(cite.p):<10} n={cite.n:<4} {verdict:<5} "
+                     f"worse={cite.detail['worse']:g} better={cite.detail['better']:g}")
     lines.append(f"Section 10(b) fabrication instances in the candidate run(s): {len(instances)}")
     for f in instances:
         lines.append(f"  run {f.run}  {f.sample_id}  epoch {f.epoch}  {f.code}")
@@ -239,6 +248,8 @@ def render(report: GateReport, ladder: str, instances: Sequence[FabricationInsta
         if c.trigger == "FM-002":  # by direction beside the total (ratified 2026-11-04)
             row += (f"  by direction: baseline ({_fmt_directions(c.baseline_by_direction)})"
                     f" -> candidate ({_fmt_directions(c.candidate_by_direction)})")
+        if c.trigger == CITATION_OMISSION_TRIGGER:  # omitted tokens beside the epoch counts (D-R9)
+            row += f"  omitted tokens: baseline {c.baseline_tokens} -> candidate {c.candidate_tokens}"
         if record is not None:
             row += f"  signed: {record.outcomes[(c.sample_id, c.trigger)]}"
         lines.append(row)

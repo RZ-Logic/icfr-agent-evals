@@ -17,7 +17,11 @@ difficulty-bearing cases also gets a narrative-only unit: one per distinct narra
 a whole-narrative row and no findings. Narrative units and narrative members say what
 they are in the route_class column of packet.csv and members.csv: routed, fm_coded or
 narrative_only (review_schema.NARRATIVE_CLASSES). The scope routed keeps routed and
-FM-coded epochs only; all adds every epoch of every case.
+FM-coded epochs only; all adds every epoch of every case. On every scope, every epoch
+holding a code-found (P12) citation omission is read whole too, as a narrative-only
+unit where it is not routed (owner decision D-R9, 2026-11-11). Each sweep finding's
+looked-up facts show whether the case file holds the flagged name exactly as written
+(the scorer's `in_case_file` flag, D-R9).
 
 What this script never does: it never sets, suggests or pre-selects a verdict; it
 never shows a comparison between a worker claim and the case file (facts come from
@@ -453,6 +457,17 @@ def _audit_evidence(sample: Any, code: str) -> tuple[str, ...]:
     return tuple(out) if out else (STRUCTURED_LINE,)
 
 
+def _p12_omissions(sample: Any) -> list[str]:
+    """The P12 citation omissions code found on one epoch (owner decision D-R9)."""
+    return rel.code_found_omissions(getattr(sample, "scores", None))["p12"]
+
+
+def _sweep_hits(sample: Any) -> list[Mapping[str, Any]]:
+    score = (getattr(sample, "scores", None) or {}).get("fabrication_anchor")
+    details = ((getattr(score, "metadata", None) or {}) if score is not None else {}).get("details") or {}
+    return [h for h in details.get("sweep_hits") or () if isinstance(h, Mapping)]
+
+
 def _is_hard_case(sample: Any) -> bool:
     kind = casefile.truth_of(sample.metadata).case_kind
     return consistency.SUBSET_OF_KIND.get(kind) == consistency.DIFFICULTY_BEARING
@@ -528,7 +543,8 @@ def build_packet(runs: Sequence[RunInput], *, run_id: str, seed: int,
                 for ident, e in epochs.items()}
     in_scope: list[tuple[str, str, int]] = []
     for ident, e in epochs.items():
-        if scope == "all" or ident in routed or e.fm_codes or (scope == "hard" and hard_case[e.case_id]):
+        if (scope == "all" or ident in routed or e.fm_codes or (scope == "hard" and hard_case[e.case_id])
+                or _p12_omissions(e.sample)):  # D-R9: every epoch with a code-found citation omission
             in_scope.append(ident)
 
     # Narrative units.
@@ -611,7 +627,8 @@ def build_packet(runs: Sequence[RunInput], *, run_id: str, seed: int,
             reasons=m.reasons, routed_sentences=g["located"], highlight=g["highlight"],
             allowed_verdicts=tuple(settlement.allowed_verdicts(m.route_key, m.reasons)),
             correct_means=tuple(r.correct_means for r in rows),
-            facts=tuple(rf.finding_facts(case_meta[e.case_id], e.parsed, family, m.reasons, g["located"])),
+            facts=(*rf.finding_facts(case_meta[e.case_id], e.parsed, family, m.reasons, g["located"]),
+                   *((rf.case_file_exact_block(m.reasons, _sweep_hits(e.sample)),) if family == "sweep" else ())),
             _narratives=g["narratives"],
         )
 
@@ -884,7 +901,8 @@ UI_EXEMPT: dict[str, str] = {
 # takes the settlement row's own text instead.
 FINDING_ANSWER_MEANS: dict[str, str] = {
     "wrong": "wrong: the routed sentence misstates the case file.",
-    "citation_omission": "citation_omission: the narrative names a case-file entity that entities_cited leaves out.",
+    "citation_omission": ("citation_omission: the flagged name is in the case file exactly as written, and "
+                          "entities_cited leaves it out."),
     "cannot_settle": "cannot_settle: you cannot decide from the case file.",
     "not_reviewed": "not_reviewed: nobody gave an answer.",
 }
@@ -896,7 +914,8 @@ INTRO: tuple[str, ...] = (
     "the case file as the worker saw it. The facts are not a reading of any sentence.",
     "Give each finding one answer. correct: the routed sentence is true against the case file, so the route "
     "was a false alarm. wrong: the sentence misstates the case file. citation_omission (sweep routes only): "
-    "the narrative names a case-file entity that entities_cited leaves out. cannot_settle: you cannot decide "
+    "the flagged name is in the case file exactly as written, and entities_cited leaves it out. cannot_settle: "
+    "you cannot decide "
     "from the case file. not_reviewed: nobody gave an answer. A note is needed for wrong and cannot_settle. "
     "A finding shown once stands for every identical finding on that case, and its answer applies to each.",
     "For each narrative, record none_wrong, or wrong with one row per misstated sentence (the sentence number "

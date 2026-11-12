@@ -42,7 +42,19 @@ scripts/review_freeze.py check_record_files (the check second-look-draw runs too
 manifest must be this packet's review_freeze manifest and list every packet and record
 file, and every file it lists must hash to it. The manifest is --review-manifest, by
 default docs/evidence/reviews/<run-id>-manifest.json in this repo. The freeze commit
-itself (its age, trailer and ancestry) is not checked here.
+itself (its age, trailer and ancestry) is not checked here. The package-hash check of
+pre-registration section 8 (Review record and freeze) is: the package code this report
+runs (icfr_agent_evals in this tree, the settlement code) must hash the same, file by
+file as git blob ids, as at the manifest's run commit (the commit that scored the logs);
+any difference, or a run commit git cannot read here, refuses the record
+(package_code_gaps; owner decision D-R9, choice 6).
+
+Citation-pass^4 (owner decision D-R9, 2026-11-11): every run prints it beside the
+content-pass^4 figures, computed by code from the log alone (trials.citation_omission_figures),
+with its interval, the epoch and token counts, the wallet-label matcher's added tokens,
+the epochs not assessable and, with a record, the review-found count. Every figure is also
+printed under the rule before D-R9, and the fabrication and faithfulness means by subset
+are printed under both rules (H1 and H3).
 
 Every worker log (Sonnet, Haiku and both regression logs) must pass the run
 configuration check (contract C2): roster.check_run_config with 20 samples, epochs 4
@@ -102,7 +114,9 @@ import io
 import json
 import math
 import os
+import re
 import statistics
+import subprocess
 from functools import lru_cache
 import sys
 import tempfile
@@ -176,6 +190,8 @@ FIGURE_ROLES: dict[str, str] = {
 }
 NEEDS_RECORD = "needs a frozen review record (pass --review-record PACKET_DIR)"
 MAX_GAPS_SHOWN = 10
+PACKAGE_DIR = "icfr_agent_evals"  # the package code section 8's package-hash check compares
+_COMMIT_RE = re.compile(r"^[0-9a-f]{7,40}$")
 
 
 class Refused(Exception):
@@ -291,15 +307,76 @@ def load_review_record(packet_dir: str, manifest: str | None = None) -> tuple[An
     except rf.Refused as e:
         raise Refused(f"review record {packet_dir} unreadable: {e}") from e
     try:
-        _man, mbytes, mpath, gaps = rf.check_record_files(str(packet_dir), repo=str(REPO_ROOT), manifest=manifest)
+        man, mbytes, mpath, gaps = rf.check_record_files(str(packet_dir), repo=str(REPO_ROOT), manifest=manifest)
     except rf.Refused as e:
         raise Refused(f"review record {packet_dir} fails the frozen-record check: {e}") from e
+    gaps = [*gaps, *running_package_gap(REPO_ROOT), *package_code_gaps(REPO_ROOT, str(man.get("run_commit", "")))]
     if gaps:
         shown = "; ".join(gaps[:MAX_GAPS_SHOWN])
         more = f"; and {len(gaps) - MAX_GAPS_SHOWN} more" if len(gaps) > MAX_GAPS_SHOWN else ""
         raise Refused(f"review record {packet_dir} fails the frozen-record check against {mpath} "
                       f"({len(gaps)} gap(s)): {shown}{more}")
     return record, {"path": str(mpath), "sha256": hashlib.sha256(mbytes).hexdigest()}
+
+
+def _git(repo: Path, *args: str, stdin: str | None = None) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", "-C", str(repo), *args], input=None if stdin is None else stdin.encode("utf-8"),
+                          capture_output=True, check=False, timeout=120)
+
+
+def running_package_gap(repo: Path) -> list[str]:
+    """The package-hash check hashes repo/icfr_agent_evals; it is only meaningful when
+    that is the package this process imported (verifier finding, 2026-11-11: without
+    PYTHONPATH the venv's editable install of another checkout runs instead)."""
+    import icfr_agent_evals as running
+    ran = Path(running.__file__).resolve().parent
+    root = (Path(repo) / PACKAGE_DIR).resolve()
+    if ran != root:
+        return [f"the package that runs is {ran}, not the repository's {root}; "
+                f"set PYTHONPATH to the repository so the hashed code is the code that settles"]
+    return []
+
+
+def package_code_gaps(repo: Path, run_commit: str) -> list[str]:
+    """Pre-registration section 8 (Review record and freeze): the package code at the
+    settlement commit must hash the same as at the run commit. The settlement code is
+    the package this report runs, the working tree's icfr_agent_evals; the run commit is
+    the manifest's run_commit. Each file's git blob id is compared: `git ls-tree` at the
+    run commit, `git hash-object` (with the repository's own filters) on the working
+    tree, so a line-ending checkout difference is no difference. Every file missing on
+    one side or with another blob id is a gap, and so is a run commit git cannot read.
+    Runs git ls-tree and git hash-object and nothing else (owner decision D-R9, choice 6)."""
+    commit = str(run_commit or "")
+    if not _COMMIT_RE.match(commit):
+        return [f"the manifest's run commit {commit!r} is not a hex commit hash"]
+    listed = _git(repo, "ls-tree", "-r", "--full-tree", f"{commit}^{{commit}}", "--", PACKAGE_DIR)
+    if listed.returncode != 0:
+        return [f"run commit {commit} cannot be read in {repo}; the package-hash check needs it"]
+    at_run: dict[str, str] = {}
+    for line in listed.stdout.decode("utf-8", errors="replace").splitlines():
+        meta, _, path = line.partition("\t")
+        parts = meta.split()
+        if len(parts) == 3 and parts[1] == "blob":
+            at_run[path] = parts[2]
+    root = Path(repo) / PACKAGE_DIR
+    paths = sorted(f.relative_to(repo).as_posix() for f in root.rglob("*")
+                   if f.is_file() and "__pycache__" not in f.parts and f.suffix != ".pyc")
+    here: dict[str, str] = {}
+    if paths:
+        hashed = _git(repo, "hash-object", "--stdin-paths", stdin="\n".join(paths) + "\n")
+        blobs = hashed.stdout.decode("ascii", errors="replace").split()
+        if hashed.returncode != 0 or len(blobs) != len(paths):
+            return [f"git hash-object could not hash the package files in {repo}"]
+        here = dict(zip(paths, blobs))
+    gaps = []
+    for path in sorted(set(at_run) | set(here)):
+        if path not in here:
+            gaps.append(f"package file {path} is at the run commit {commit} but not in the settlement code")
+        elif path not in at_run:
+            gaps.append(f"package file {path} is in the settlement code but not at the run commit {commit}")
+        elif here[path] != at_run[path]:
+            gaps.append(f"package file {path} differs between the run commit {commit} and the settlement code")
+    return gaps
 
 
 def record_run_id(record: Any, log: Any) -> str | None:
@@ -694,6 +771,7 @@ def figures_block(res: Mapping[str, Any], *, record_dir: str | None = None, run_
         lines.append(f"  review-found (counted apart from code-found): codes {codes}; citation omissions "
                      f"{found['citation_omissions']}; whole-narrative wrong {found['whole_narrative_wrong']}")
     lines.append(f"  FM-008 on the code-only trial (extractor health only, not the FM-008 count): {len(code_fm008)}")
+    lines.extend(citation_lines(res))
     payload: dict[str, Any] = {
         "record": {"packet_dir": record_dir, "run_id": run_id} if has_record else None,
         "score_of_record": trials.REVIEW_SETTLED if has_record else None,
@@ -706,8 +784,43 @@ def figures_block(res: Mapping[str, Any], *, record_dir: str | None = None, run_
         "fm008_code_only_extractor_health": list(code_fm008),
         "anchor_means": res.get("anchor_means"),
         "review_found": res.get("review_found"),
+        "citation_pass4": res.get("citation_pass4"),
+        "content_pass4_before_d_r9": res.get("before_d_r9"),
+        "h1_h3_means": res.get("h1_h3_means"),
     }
     return lines, payload
+
+
+def citation_lines(res: Mapping[str, Any]) -> list[str]:
+    """Citation-pass^4 beside the content figures, every figure under the rule before
+    D-R9, and the fabrication and faithfulness means by subset under both rules (owner
+    decision D-R9, 2026-11-11)."""
+    lines: list[str] = []
+    cite = res.get("citation_pass4")
+    if cite is not None:
+        lo, hi = cite["ci95"]
+        found = ("needs a frozen review record" if cite["review_found"] is None else str(cite["review_found"]))
+        subsets = ", ".join(f"{name} {v['passed']}/{v['n']}" for name, v in cite["per_subset"].items())
+        lines.append(f"  {cite['label']} {cite['passed']}/{cite['n']} = {cite['rate']:.3f} "
+                     f"(Clopper-Pearson 95% [{lo:.3f}, {hi:.3f}]); epochs with an omission "
+                     f"{cite['epochs_with_omission']} ({cite['omitted_tokens']} tokens, of them wallet-label matcher "
+                     f"{cite['wallet_label_tokens']}), not assessable {cite['epochs_not_assessable']}, review-found "
+                     f"{found}; {subsets}")
+    for kind, old in (res.get("before_d_r9") or {}).items():
+        lo, hi = old["ci95"]
+        lines.append(f"  {old['label']}, {FIGURE_NAMES[kind]}: {old['passed']}/{old['n']} "
+                     f"(Clopper-Pearson 95% [{lo:.3f}, {hi:.3f}])")
+    for kind, both in (res.get("h1_h3_means") or {}).items():
+        for rule, label in (("d_r9", "D-R9"), ("before_d_r9", "rule before D-R9")):
+            parts = []
+            for subset in ("overall", "synthetic", "difficulty_bearing"):
+                m = both[rule].get(subset) or {}
+                if m.get("fabrication_anchor") is None:
+                    continue
+                parts.append(f"{subset} fabrication {m['fabrication_anchor']:.3f}, "
+                             f"faithfulness {m['faithfulness_anchor']:.3f}")
+            lines.append(f"  means, {FIGURE_NAMES[kind]}, {label} (H1, H3): " + "; ".join(parts))
+    return lines
 
 
 def run_block(role: str, log: Any, path: str = "", record: Any = None, run_id: str | None = None,

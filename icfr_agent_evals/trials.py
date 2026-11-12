@@ -33,12 +33,22 @@ load_frozen_record or load_record return it. The member map (members.csv) is rea
 here and nowhere else in the package: it ties a unit id to a worker run, sample and
 epoch. This module never sets, suggests or edits a verdict.
 
+Owner decision D-R9 (2026-11-11): a citation omission no longer fails any trial or
+zeroes the fabrication anchor. It is counted by code from the log alone and reported as
+its own measure, citation-pass^4 (citation_omission_figures), beside every content-pass^4
+figure, and every figure is also given under the rule before D-R9 (before_d_r9_figures).
+A `citation_omission` verdict passes its finding only when code confirms the flagged name
+is in the case file exactly (`in_case_file` on its sweep hit); otherwise it keeps the
+effect it had before. Every epoch holding a code-found (P12) citation omission needs the
+whole-narrative read. A log scored before D-R9 is refused (reliability.scored_before_d_r9).
+
 Imports of settlement and regression are made inside functions, so regression.py may
 import this module at load time without an import cycle.
 """
 
 from __future__ import annotations
 
+import ast
 import json
 import math
 from collections import Counter, defaultdict
@@ -129,8 +139,14 @@ class EpochResult:
     failure_modes: tuple[str, ...]        # per-epoch codes this figure counts
     removed_codes: tuple[str, ...] = ()   # audit-adjusted only: codes ruled extractor_error
     review_found: tuple[str, ...] = ()    # codes a `wrong` finding records (reported apart)
-    review_found_omissions: int = 0       # findings ruled citation_omission
+    review_found_omissions: int = 0       # findings ruled citation_omission (confirmed or not)
     narrative_errors: tuple[str, ...] = ()  # error types of a whole-narrative `wrong`
+    # D-R9: citation omissions code found on the epoch, read from the log on every figure
+    code_found_omissions: int = 0         # omitted tokens: P12, other exact case-file names, wallet labels
+    p12_omissions: int = 0                # of them, the P12 tokens (the rule before D-R9 zeroed these)
+    wallet_label_omissions: int = 0       # of them, the wallet-label matcher's added tokens (choice 5)
+    citation_assessable: bool = True      # False on a sample error or FM-000: no parsed output to check
+    case_kind: str | None = None
 
 
 @dataclass(frozen=True)
@@ -251,7 +267,9 @@ class _Facts:
     unsettleable: tuple[tuple[str, tuple[str, ...]], ...]
     code_trial: Any                                      # reliability.Trial
     structured_points: float | None
-    citation_omissions: int
+    citation_omissions: int                              # P12 tokens (details.citation_omissions)
+    omitted: Mapping[str, tuple[str, ...]]               # reliability.code_found_omissions, by source
+    sweep_in_case_file: Mapping[str, bool]               # sweep token -> in_case_file (D-R9, B1)
     completeness_period_withheld: bool
     extractions: tuple[Mapping[str, Any], ...]
     case_kind: str | None
@@ -259,6 +277,14 @@ class _Facts:
     @property
     def routed(self) -> bool:
         return bool(self.findings or self.unsettleable)
+
+    @property
+    def code_found_tokens(self) -> int:
+        return sum(len(v) for v in self.omitted.values())
+
+    @property
+    def citation_assessable(self) -> bool:
+        return not self.error and FORMAT_BREAK_CODE not in self.codes
 
 
 def _numeric(value: Any) -> float | None:
@@ -316,6 +342,10 @@ def _collect(samples: Iterable[Any], k: int) -> tuple[rel.ReliabilityReport, dic
     from . import settlement
 
     samples = list(samples)
+    stale = [f"{s.id} epoch {s.epoch}" for s in samples if rel.scored_before_d_r9(getattr(s, "scores", None))]
+    if stale:
+        raise rel.GateError(f"{len(stale)} (sample, epoch) score(s) were written before owner decision D-R9 "
+                            f"(first: {', '.join(stale[:3])}); {rel.D_R9_RESCORE_HINT}")
     report = rel.reliability_report(samples, k)
     by_ident = {(str(s.id), int(s.epoch)): s for s in samples}
     merged: dict[tuple[str, int], dict[str, list[str]]] = defaultdict(dict)
@@ -338,7 +368,9 @@ def _collect(samples: Iterable[Any], k: int) -> tuple[rel.ReliabilityReport, dic
             (findings if settlement.is_settleable(key, reasons) else unsettleable).append((key, reasons))
         cdet = _details(scores.get(CORRECTNESS))
         comp_reasons = [str(r) for r in _meta(scores.get(COMPLETENESS)).get("review_reasons") or []]
-        omissions = _details(scores.get(FABRICATION)).get("citation_omissions") or []
+        fdet = _details(scores.get(FABRICATION))
+        omissions = fdet.get("citation_omissions") or []
+        hits = [h for h in fdet.get("sweep_hits") or () if isinstance(h, Mapping) and "token" in h]
         extractions = cdet.get("narrative_extractions") or []
         facts[ident] = _Facts(
             sample_id=t.sample_id, epoch=t.epoch, sample=s, error=getattr(s, "error", None) is not None,
@@ -346,6 +378,8 @@ def _collect(samples: Iterable[Any], k: int) -> tuple[rel.ReliabilityReport, dic
             unsettleable=tuple(unsettleable), code_trial=t,
             structured_points=_numeric(cdet.get("structured_points")),
             citation_omissions=len(omissions) if isinstance(omissions, (list, tuple)) else 0,
+            omitted={src: tuple(v) for src, v in rel.code_found_omissions(scores).items()},
+            sweep_in_case_file={str(h["token"]): h.get("in_case_file") is True for h in hits},
             completeness_period_withheld=OFF_CONTRACT_PERIOD in _off_contract_fields(comp_reasons),
             extractions=tuple(e for e in extractions if isinstance(e, Mapping)),
             case_kind=_case_kind(s),
@@ -485,7 +519,7 @@ def _record_gaps(view: _RecordView, record: Any, facts: Mapping[tuple[str, int],
                 gaps.append(f"{sid} epoch {ep}: finding {got.unit_id} has no verdict")
             elif got.verdict not in settlement.allowed_verdicts(key, reasons):
                 gaps.append(f"{sid} epoch {ep}: verdict {got.verdict!r} is not allowed for {key!r}")
-        if f.routed or f.codes or _is_hard(f.case_kind):
+        if _narrative_required(f):
             n = view.narratives.get(ident, "absent")
             if n == "absent":
                 gaps.append(f"{sid} epoch {ep}: no whole-narrative member")
@@ -514,6 +548,34 @@ def _record_gaps(view: _RecordView, record: Any, facts: Mapping[tuple[str, int],
 
 
 # --- Settlement of one epoch ------------------------------------------------------------------
+
+def _narrative_required(f: _Facts) -> bool:
+    """The epochs whose whole narrative the record must read: every routed or FM-coded
+    epoch, every epoch of a difficulty-bearing case (D-J), and every epoch holding a
+    code-found (P12) citation omission (owner decision D-R9, 2026-11-11)."""
+    return f.routed or bool(f.codes) or _is_hard(f.case_kind) or bool(f.citation_omissions)
+
+
+def _sweep_token(reason: str) -> str | None:
+    from .regression import SWEEP_REASON_PREFIXES
+
+    for prefix in SWEEP_REASON_PREFIXES:
+        if prefix and reason.startswith(prefix) and len(reason) > len(prefix):
+            try:
+                value = ast.literal_eval(reason[len(prefix):])
+            except (ValueError, SyntaxError, MemoryError, RecursionError):
+                return None
+            return value if isinstance(value, str) else None
+    return None
+
+
+def _omission_confirmed(f: _Facts, reasons: Sequence[str]) -> bool:
+    """D-R9, red-team B1: a `citation_omission` verdict passes its finding only when
+    every token the finding's reasons flag is a sweep hit whose `in_case_file` is
+    true, the test FM-005 applies to a cited entity. A missing flag counts as false."""
+    tokens = [_sweep_token(str(r)) for r in reasons]
+    return bool(tokens) and all(t is not None and f.sweep_in_case_file.get(t) is True for t in tokens)
+
 
 def _review_found_code(row: Any, key: str, f: _Facts) -> str:
     """The code a `wrong` verdict records: the row's code, or for S69 the code the
@@ -607,7 +669,7 @@ def _settle(f: _Facts, *, finding_verdict: Callable[[str], str], narrative: tupl
             structured = float(FULL_MARKS - withheld_points)
             anchors[CORRECTNESS] = 0.0 if OFF_CONTRACT_PERIOD in corr_withheld else structured
         if "FM-005" in removed_set and anchors[FABRICATION] is not None:
-            anchors[FABRICATION] = 0.0 if (fab_routed or f.citation_omissions) else float(FULL_MARKS)
+            anchors[FABRICATION] = 0.0 if fab_routed else float(FULL_MARKS)
         if "FM-015" in removed_set and anchors[RECONCILING] is not None:
             redo = _reconciling_without_fm015(f.sample)
             if redo is None:
@@ -631,6 +693,9 @@ def _settle(f: _Facts, *, finding_verdict: Callable[[str], str], narrative: tupl
         if verdict == CORRECT:
             restore |= {r.key for r in rows if r.match == "off_contract_field"}
             continue
+        if verdict == CITATION_OMISSION and _omission_confirmed(f, rs_):
+            omissions_found += 1  # D-R9: settles as passed, counted as review-found
+            continue
         if on_fab:
             fab_all_correct = False
         reasons.append(f"finding {key!r}: {verdict}")
@@ -653,7 +718,7 @@ def _settle(f: _Facts, *, finding_verdict: Callable[[str], str], narrative: tupl
         anchors[COMPLETENESS] = min(float(FULL_MARKS), anchors[COMPLETENESS] + 1)
     fab_unsettleable = any(FABRICATION in ROW_ANCHORS[r.anchor] for key, rs_ in f.unsettleable
                            for r in settlement.rows_for(key, rs_))
-    if (fab_findings and fab_all_correct and "FM-005" not in remaining and not f.citation_omissions
+    if (fab_findings and fab_all_correct and "FM-005" not in remaining
             and not fab_unsettleable and anchors[FABRICATION] is not None):
         anchors[FABRICATION] = float(FULL_MARKS)
 
@@ -679,7 +744,14 @@ def _settle(f: _Facts, *, finding_verdict: Callable[[str], str], narrative: tupl
         sample_id=f.sample_id, epoch=f.epoch, success=not reasons, reasons=tuple(reasons), anchors=anchors,
         failure_modes=tuple(dict.fromkeys(remaining)), removed_codes=removed_codes,
         review_found=tuple(review_found), review_found_omissions=omissions_found, narrative_errors=narrative_errors,
+        **_citation_fields(f),
     )
+
+
+def _citation_fields(f: _Facts) -> dict[str, Any]:
+    return {"code_found_omissions": f.code_found_tokens, "p12_omissions": len(f.omitted.get("p12", ())),
+            "wallet_label_omissions": len(f.omitted.get("wallet_label", ())),
+            "citation_assessable": f.citation_assessable, "case_kind": f.case_kind}
 
 
 def _report(kind: str, k: int, results: Iterable[EpochResult]) -> TrialReport:
@@ -706,7 +778,7 @@ def code_only_trial(log_or_samples: Any, *, k: int | None = None) -> TrialReport
     k = _k_of(log_or_samples, k)
     _, facts = _collect(_samples_of(log_or_samples), k)
     results = [EpochResult(f.sample_id, f.epoch, f.code_trial.success, tuple(f.code_trial.failed_because),
-                           dict(f.anchors), tuple(f.codes)) for f in facts.values()]
+                           dict(f.anchors), tuple(f.codes), **_citation_fields(f)) for f in facts.values()]
     return _report(CODE_ONLY, k, results)
 
 
@@ -748,7 +820,7 @@ def _reviewed(kind: str, log_or_samples: Any, record: Any, *, k: int | None, run
             return got.verdict if got is not None and got.verdict else NOT_REVIEWED  # unreviewed fails (D-K)
 
         narrative = view.narratives.get(ident)
-        required = f.routed or bool(f.codes) or _is_hard(f.case_kind)
+        required = _narrative_required(f)
         removed: frozenset[str] = frozenset()
         if kind == AUDIT_ADJUSTED:
             removed = audit_removed_codes(f.codes, lambda c, sid=sid, ep=ep: view.audits.get((sid, ep, c)))
@@ -810,7 +882,120 @@ def figures(log_or_samples: Any, record: Any = None, *, k: int | None = None, ru
             "citation_omissions": sum(e.review_found_omissions for e in found),
             "whole_narrative_wrong": sum(1 for e in found if e.narrative_errors),
         }
+    out["citation_pass4"] = citation_omission_figures(reports[ROUTE_BLIND], reports.get(REVIEW_SETTLED))
+    out["before_d_r9"] = before_d_r9_figures(reports)
+    out["h1_h3_means"] = {
+        kind: {"d_r9": subset_anchor_means(reports[kind]), "before_d_r9": subset_anchor_means(reports[kind], True)}
+        for kind in ((REVIEW_SETTLED, AUDIT_ADJUSTED) if record is not None else (ROUTE_BLIND,))
+    }
     out["reports"] = reports
+    return out
+
+
+# --- Citation-pass^4 (owner decision D-R9, 2026-11-11) ---------------------------------------
+
+CITATION_PASS4 = "citation_pass4"
+SUBSET_ORDER: tuple[str, ...] = ("synthetic", "difficulty_bearing", "edge", "adversarial")
+CITATION_LABEL = "citation-pass^4 (D-R9: its own measure, never a content failure)"
+BEFORE_D_R9_LABEL = "content-pass^4 under the rule before D-R9"
+
+
+def _subsets_of(case_kind: str | None) -> tuple[str, ...]:
+    from .consistency import DIFFICULTY_BEARING, SUBSET_OF_KIND
+
+    subset = SUBSET_OF_KIND.get(case_kind or "")
+    if subset is None:
+        return ()
+    return (subset,) if subset != DIFFICULTY_BEARING else (subset, str(case_kind))
+
+
+def _sample_kind(r: SampleResult) -> str | None:
+    return next((e.case_kind for e in r.epochs if e.case_kind), None)
+
+
+def citation_omission_figures(report: TrialReport, settled: TrialReport | None = None) -> dict[str, Any]:
+    """Citation-pass^4 (section 8, owner decision D-R9): a sample passes when each of its
+    k = 4 epochs is present, has parsed output (no sample error, no FM-000) and holds no
+    citation omission code found (a P12 token, any other sweep token the case file
+    holds exactly, or a wallet label the add-only matcher finds). Computed from the log
+    alone, so it is the same on every trial kind; `report` is any of them, usually the
+    route-blind one. Clopper-Pearson interval; per subset (synthetic, difficulty_bearing,
+    and edge and adversarial by case kind); epoch and token counts beside it without an
+    interval; the review-found count from the review-settled report when given."""
+    if report.k != rel.PREREGISTERED_K:
+        raise rel.GateError(f"citation-pass^4 needs k = {rel.PREREGISTERED_K}, got k = {report.k}")
+    k = report.k
+    per_sample: dict[str, int] = {}
+    by_subset: dict[str, list[int]] = defaultdict(list)
+    missing = 0
+    for sid, r in report.samples.items():
+        seen = tuple(e.epoch for e in r.epochs)
+        missing += k - len(set(seen) & set(range(1, k + 1)))
+        ok = seen == tuple(range(1, k + 1)) and all(e.citation_assessable and not e.code_found_omissions
+                                                    for e in r.epochs)
+        per_sample[sid] = int(ok)
+        for name in _subsets_of(_sample_kind(r)):
+            by_subset[name].append(int(ok))
+    passed, n = sum(per_sample.values()), len(per_sample)
+    lo, hi = clopper_pearson(passed, n)
+    eps = report.epochs
+    return {
+        "label": CITATION_LABEL, "basis": "log", "passed": passed, "n": n, "rate": passed / n if n else 0.0,
+        "ci95": [lo, hi], "per_sample": per_sample,
+        "per_subset": {name: {"passed": sum(by_subset[name]), "n": len(by_subset[name])}
+                       for name in sorted(by_subset, key=lambda x: (SUBSET_ORDER.index(x) if x in SUBSET_ORDER
+                                                                    else len(SUBSET_ORDER), x))},
+        "epochs_with_omission": sum(1 for e in eps if e.code_found_omissions),
+        "omitted_tokens": sum(e.code_found_omissions for e in eps),
+        "p12_tokens": sum(e.p12_omissions for e in eps),
+        "wallet_label_tokens": sum(e.wallet_label_omissions for e in eps),
+        "epochs_not_assessable": sum(1 for e in eps if not e.citation_assessable) + missing,
+        "review_found": None if settled is None else sum(e.review_found_omissions for e in settled.epochs),
+    }
+
+
+def _fails_before_d_r9(e: EpochResult) -> bool:
+    """The rule before D-R9 also failed an epoch on a P12 omission (fabrication 0 by
+    code) and on any `citation_omission` verdict (fabrication 0 by review)."""
+    return not e.success or bool(e.p12_omissions) or bool(e.review_found_omissions)
+
+
+def before_d_r9_figures(reports: Mapping[str, TrialReport]) -> dict[str, dict[str, Any]]:
+    """Each figure's content-pass^4 under the rule before D-R9 (section 8, owner decision
+    D-R9: printed beside every content-pass^4 figure, labeled so)."""
+    out: dict[str, dict[str, Any]] = {}
+    for kind, report in reports.items():
+        per = {sid: int(r.passed and not any(_fails_before_d_r9(e) for e in r.epochs))
+               for sid, r in report.samples.items()}
+        passed, n = sum(per.values()), len(per)
+        lo, hi = clopper_pearson(passed, n)
+        out[kind] = {"label": BEFORE_D_R9_LABEL, "passed": passed, "n": n, "ci95": [lo, hi], "per_sample": per}
+    return out
+
+
+def subset_anchor_means(report: TrialReport, before_d_r9: bool = False) -> dict[str, dict[str, float | None]]:
+    """The fabrication anchor mean and the faithfulness mean (min of the fabrication and
+    reconciling-items anchors) over every (sample, epoch), overall and per subset, as the
+    trial settles them; with before_d_r9, an epoch holding a P12 omission or a
+    `citation_omission` verdict scores 0 on both, the rule before D-R9 (H1 and H3,
+    section 2). An unscored anchor counts as 0."""
+    groups: dict[str, list[EpochResult]] = defaultdict(list)
+    for r in report.samples.values():
+        for e in r.epochs:
+            groups["overall"].append(e)
+            for name in _subsets_of(e.case_kind)[:1]:
+                groups[name].append(e)
+    out: dict[str, dict[str, float | None]] = {}
+    for name in ("overall", "synthetic", "difficulty_bearing"):
+        fab, faith = [], []
+        for e in groups.get(name, ()):
+            f = float(e.anchors.get(FABRICATION) or 0.0)
+            if before_d_r9 and (e.p12_omissions or e.review_found_omissions):
+                f = 0.0
+            fab.append(f)
+            faith.append(min(f, float(e.anchors.get(RECONCILING) or 0.0)))
+        out[name] = {"fabrication_anchor": sum(fab) / len(fab) if fab else None,
+                     "faithfulness_anchor": sum(faith) / len(faith) if faith else None, "epochs": len(fab)}
     return out
 
 
@@ -823,6 +1008,15 @@ def format_figures(result: Mapping[str, Any]) -> str:
             continue
         lo, hi = row["ci95"]
         lines.append(f"{row['label']}: {row['passed']}/{row['n']} = {row['rate']:.3f} "
+                     f"(Clopper-Pearson 95% [{lo:.3f}, {hi:.3f}])")
+    for kind in FIGURES:
+        old = (result.get("before_d_r9") or {}).get(kind)
+        if old is not None:
+            lines.append(f"  {kind} {old['label']}: {old['passed']}/{old['n']}")
+    cite = result.get("citation_pass4")
+    if cite is not None:
+        lo, hi = cite["ci95"]
+        lines.append(f"{cite['label']}: {cite['passed']}/{cite['n']} = {cite['rate']:.3f} "
                      f"(Clopper-Pearson 95% [{lo:.3f}, {hi:.3f}])")
     for anchor, both in (result.get("anchor_means") or {}).items():
         s, a = both[REVIEW_SETTLED]["mean"], both[AUDIT_ADJUSTED]["mean"]

@@ -129,7 +129,7 @@ Form (ii), keyed: step 3's pre-flight, then a second Sonnet leg on a weakened-pr
 - Caught means `compare_runs.py` exits 1 on the pair (pilot Sonnet baseline, regressed candidate), with the rejecting test named in its output. Exit 0 is not caught, and exit 2 is not caught; `pilot_report.py` prints those two as `MISSED (no automatic block)` and prints `caught` only on exit 1.
 - Size the regression from the baseline's own per-case results. The exact one-sided McNemar test on content-pass^4 under Holm with m = 6 blocks only from 7 one-way discordant cases with no reversal, 10 with one; a regression that turns fewer passing cases can be caught only by the paired t-tests, at the floor `pilot_report.py` prints.
 - A baseline passing pass^4 on fewer than 7 of 20 cases is recorded as "only the t-tests can catch it".
-- A regression confined to reconciling-item omission or citation omission fires no FM code and no review route, so at n = 20 it can pass the gates with no sign-off case. It is a declared blind spot of the regression at pilot size.
+- A regression confined to reconciling-item omission fires no FM code and no review route, so at n = 20 it can pass the gates with no sign-off case. A citation-omission regression makes a sign-off case per case under §10(c) and can block under §10(b) once 6 or more cases are discordant (D-R9). It is a declared blind spot of the regression at pilot size.
 - Exit 2 on a no-change pair or a pooled pair is a measurement of review volume, not a gate failure. At a 2 percent per-epoch route rate, a no-change pair of real runs exits 2 with probability about 0.78 on 20 cases [inferred]; pooling identical runs makes exit 2 certain whenever a code fires.
 
 **9. Pilot report (keyless).**

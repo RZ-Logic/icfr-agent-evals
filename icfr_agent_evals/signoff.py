@@ -21,9 +21,12 @@ pair. One row per triggered case, that is per (sample_id, trigger):
   sample_id             the case id
   epoch                 blank (a sign-off is per case, not per epoch)
   scorers               blank
-  route_key             the trigger: an FM code from regression.SIGNOFF_CODES, or one
-                        route key, exactly as compare_runs.py prints it
-  route_class           "fm_code" for an FM code, else regression.route_class(route_key)
+  route_key             the trigger: an FM code from regression.SIGNOFF_CODES, the
+                        citation-omission count "citation_omission" (regression.SIGNOFF_COUNTS,
+                        owner decision D-R9), or one route key, exactly as compare_runs.py
+                        prints it
+  route_class           "fm_code" for an FM code, "citation_omission" for the citation-omission
+                        count, else regression.route_class(route_key)
   reason, sentence      blank
   verdict               one of OUTCOMES
   note                  required for every outcome
@@ -56,7 +59,7 @@ from pathlib import Path
 from typing import Mapping, Sequence
 
 from . import review_schema as rs
-from .regression import FABRICATION_CODES, SIGNOFF_CODES, SignoffCase, route_class
+from .regression import FABRICATION_CODES, SIGNOFF_CODES, SIGNOFF_COUNTS, SignoffCase, route_class
 from .reliability import GateError
 
 SIGNOFF_ROW_KIND = "signoff"
@@ -64,6 +67,7 @@ PURPOSE = "regression_signoff"
 # The purposes of the shared format: the section 6 code audit and the section 10(c) sign-off.
 PURPOSES: tuple[str, ...] = ("code_audit", PURPOSE)
 FM_CODE_CLASS = "fm_code"
+CITATION_CLASS = "citation_omission"  # owner decision D-R9: the class of a SIGNOFF_COUNTS trigger
 # The four section 10(c) outcomes: (a1) fixed, (a2) noise, (a3) accepted trade-off, (b) false positive.
 OUTCOMES: tuple[str, ...] = ("a1_fixed", "a2_noise", "a3_accepted_trade_off", "b_false_positive")
 NOISE, TRADE_OFF = OUTCOMES[1], OUTCOMES[2]
@@ -133,8 +137,13 @@ def signoff_path(root: str | Path, pr: int, content_key: str) -> Path:
 
 
 def trigger_class(trigger: str) -> str:
-    """route_class column value: fm_code for an FM code, else the route key's class."""
-    return FM_CODE_CLASS if trigger in SIGNOFF_CODES else route_class(trigger)
+    """route_class column value: fm_code for an FM code, citation_omission for the
+    citation-omission count (D-R9), else the route key's class."""
+    if trigger in SIGNOFF_CODES:
+        return FM_CODE_CLASS
+    if trigger in SIGNOFF_COUNTS:
+        return CITATION_CLASS
+    return route_class(trigger)
 
 
 def template_rows(pair: RunPair, cases: Sequence[SignoffCase]) -> list[dict[str, str]]:

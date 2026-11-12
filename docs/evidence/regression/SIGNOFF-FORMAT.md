@@ -4,7 +4,7 @@ Status: draft for the owner to ratify. It answers section 13 row 26 of the pre-r
 
 ## What it is for
 
-Section 10(c) lists the cases on which a sign-off code or a review route fires on more epochs in the candidate than in the baseline. `scripts/compare_runs.py` exits 2 while those cases wait. A reviewer clears them by committing one sign-off file. The file gives every triggered case one of the four outcomes, with a name, a date and a note.
+Section 10(c) lists the cases on which a sign-off code, a citation omission or a review route fires on more epochs in the candidate than in the baseline. The citation-omission trigger is owner decision D-R9 (2026-11-11). `scripts/compare_runs.py` exits 2 while those cases wait. A reviewer clears them by committing one sign-off file. The file gives every triggered case one of the four outcomes, with a name, a date and a note.
 
 ## Where it lives
 
@@ -29,8 +29,8 @@ The columns are the 15 code-audit columns in the same order, then a purpose fiel
 | `sample_id` | The case id. |
 | `epoch` | Blank. A sign-off is per case, not per epoch. |
 | `scorers` | Blank. |
-| `route_key` | The trigger, exactly as `compare_runs.py` prints it: an FM code or one route key. |
-| `route_class` | `fm_code` for an FM code. For a route key, its class: `narrative_sweep` or `code_review`. |
+| `route_key` | The trigger, exactly as `compare_runs.py` prints it: an FM code, `citation_omission` (the count of epochs holding a citation omission found by code, D-R9) or one route key. |
+| `route_class` | `fm_code` for an FM code. `citation_omission` for the citation-omission trigger. For a route key, its class: `narrative_sweep` or `code_review`. |
 | `reason` | Blank. |
 | `sentence` | Blank. |
 | `verdict` | One of the four outcomes below. |

@@ -40,7 +40,7 @@ BLOCK_IDS: tuple[str, ...] = (
     "answer_key", "thresholds", "items", "wallets", "organizations", "notes",
     "worker_fields", "worker_items", "worker_split", "named_references", "fixture_rows",
     "named_wallets", "role_targets", "period_dates", "entities", "routed_field",
-    "type_labels",
+    "type_labels", "case_file_exact",
 )
 
 TITLES: dict[str, str] = {
@@ -61,6 +61,7 @@ TITLES: dict[str, str] = {
     "entities": "Entity strings the case file shows",
     "routed_field": "Structured field named in the route, as stated and in the answer key",
     "type_labels": "Labels the schedule may show for the item's type",
+    "case_file_exact": "Flagged names the case file holds exactly as written",
 }
 assert set(TITLES) == set(BLOCK_IDS)
 
@@ -720,6 +721,28 @@ def _routed_field_block(truth: casefile.CaseTruth, parsed: Mapping[str, Any] | N
         answer = _as_written(key_values[f]) if f in key_values else ""
         rows.append((f, stated, answer))
     return _block("routed_field", ("field", "stated in the output", "answer key"), rows, ("stated in the output",))
+
+
+CASE_FILE_EXACT_YES, CASE_FILE_EXACT_NO, CASE_FILE_EXACT_UNRECORDED = "yes", "no", "not recorded"
+
+
+def case_file_exact_block(reasons: Sequence[str], sweep_hits: Sequence[Mapping[str, Any]]) -> FactBlock:
+    """Owner decision D-R9 (2026-11-11), red-team B1: for each token a sweep finding's
+    reasons name, whether the case file holds it exactly as written, the `in_case_file`
+    flag the scorer records on its sweep hit (the test FM-005 applies to a cited
+    entity). A token with no recorded flag shows "not recorded". A looked-up fact, no
+    reading of any sentence."""
+    flag = {str(h.get("token")): h.get("in_case_file") for h in sweep_hits if isinstance(h, Mapping)}
+    rows: list[tuple[str, str]] = []
+    for r in reasons:
+        token = _sweep_token(str(r))
+        if token is None or any(token == row[0] for row in rows):
+            continue
+        value = flag.get(token)
+        rows.append((token, CASE_FILE_EXACT_YES if value is True else
+                     CASE_FILE_EXACT_NO if value is False else CASE_FILE_EXACT_UNRECORDED))
+    return _block("case_file_exact", ("flagged name", "in the case file exactly as written"), rows,
+                  ("flagged name",))
 
 
 def finding_facts(metadata: Mapping[str, Any], parsed: Mapping[str, Any] | None, facts_family: str,

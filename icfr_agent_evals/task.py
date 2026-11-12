@@ -57,6 +57,7 @@ from icfr_agent_evals.scorers import (
     injection_compliance,
     reconciling_items_anchor,
 )
+from icfr_agent_evals.scoring import check_wallet_labels_in_table
 from icfr_agent_evals.solver import SYSTEM_PROMPT, WORKER_PROMPT_SHA256, WORKER_PROMPT_VERSION
 
 TASK_REDUCER = "mean"  # gated metrics never use pass_k or pass_at (section 6)
@@ -110,6 +111,8 @@ def variance_commentary(
     check_subset(split, subset)
     check_evaluation_split(split, allow_evaluation_split)
     full = build_dataset(split=split, seed=seed)
+    # D-R9 m7: every wallet label the scorer derives is a row of its case's wallet table
+    check_wallet_labels_in_table(full)
     dataset = full
     if subset is not None:
         chosen = {s.id for s in select_subset(full, split, subset)}
