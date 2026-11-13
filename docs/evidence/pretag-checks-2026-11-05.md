@@ -2,7 +2,7 @@
 
 Five pre-tag items checked and decided on 2026-11-05. This file supersedes the matching passages of `docs/evidence/pretag-checks-2026-11-04.md`, which stay as the record of that day. Each check below is run again on the commit to be tagged. Sources were read, not written to: no form, capture or upload on any service, no model call, no eval or scan against a real provider, and no evaluation-split case sent to a model or scored.
 
-Labels: measured (run or read on this machine), sourced (a page or repository read on the date given), inferred (reasoned from the measured and sourced facts).
+Labels: measured (run or read locally on the date given), sourced (a page or repository read on the date given), inferred (reasoned from the measured and sourced facts).
 
 ## Python and uv
 
@@ -32,7 +32,7 @@ Decision: the pre-registered interpreter moves from CPython 3.14.7 to 3.14.10, a
 
 Windows truststore note. On Windows, the anthropic 1.12.1 and openai 3.27.0 SDKs use httpx2, and httpcore2 builds its default TLS context with `truststore.SSLContext`. truststore runs the OpenSSL handshake with `CERT_NONE` and then checks the chain through Windows CryptoAPI. CPython's eMudhra denylist applies only when verification is on (`CERT_OPTIONAL` or `CERT_REQUIRED`), so it probably does not fire on this path. Protection for the API calls on Windows rests on Microsoft's Disallowed Certificate Trust List update of 2026-10-20 and the out-of-band root removal of 2026-10-26. On Linux, and on Windows when `SSL_CERT_FILE` or `SSL_CERT_DIR` is set, httpcore2 uses a stdlib ssl context with `CERT_REQUIRED`, so the denylist does fire. The stdlib default context on Windows does not read the Disallowed store, so a dependency that uses stdlib ssl gets the denylist only from 3.14.10. (Measured: `httpcore2/_ssl.py`, `truststore/_windows.py`, `truststore/_api.py` in the pinned venv. Sourced: https://github.com/python/cpython/issues/160040 ; https://www.microsoft.com/en-us/msrc/blog/2026/10/microsoft-response-to-compromised-emudhra-certificate-authority-keys . The Windows conclusion is inferred.)
 
-Full keyless suite, 2026-11-05, on the working tree of this change (measured): 5,921 passed on Python 3.14.10 and 5,921 passed on 3.12.16 (after the review fixes; 5,901 before them), with provider keys unset and .env loading off. The three mock scripts (`smoke_mock.py`, `rehearse_regression.py`, `consistency_mock.py`) print the same results on 3.14.10 as on 3.14.7. Section 13 still requires the suite on the commit to be tagged.
+Full keyless suite, 2026-11-05, on the working tree of this change (measured): 5,921 passed on Python 3.14.10 and 5,921 passed on 3.12.16 (5,901 on an earlier state of the same working tree), with provider keys unset and .env loading off. The three mock scripts (`smoke_mock.py`, `rehearse_regression.py`, `consistency_mock.py`) print the same results on 3.14.10 as on 3.14.7. Section 13 still requires the suite on the commit to be tagged.
 
 ## Scout backport
 
