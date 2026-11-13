@@ -32,4 +32,4 @@ That is the behavior FM-015 targets (citing an item that does not belong to the 
 
 ## Recorded in section 13
 
-Section 13 records this existing capture. A new capture at the tag would need a public capture request and is the owner's call; none was requested here.
+Section 13 records this existing capture. A new capture at the tag would need a public capture request; none has been made.

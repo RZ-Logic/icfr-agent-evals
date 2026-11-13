@@ -6,4 +6,4 @@ You may share and adapt them for any purpose, including commercially, if you giv
 
 The code in this repository is licensed separately under the Apache License 2.0 (see `LICENSE` at the repository root).
 
-Owner decision D-R14, 2026-11-12. From dataset version 0.1.0, every dataset file carries a canary GUID so that model trainers can filter these files out of training data; the GUID is published in the README when that dataset version is built.
+From dataset version 0.1.0, every dataset file carries a canary GUID so that model trainers can filter these files out of training data; the GUID is published in the README when that dataset version is built (decision D-R14, 2026-11-12, §13 of the pre-registration).
