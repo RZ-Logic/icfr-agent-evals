@@ -14,7 +14,11 @@ logs/
 !runs/baseline-phase-1.eval
 !runs/baseline-phase-2.eval
 !runs/pilot-*/
+runs/pilot-*/**
+!runs/pilot-*/**/
 !runs/pilot-*/**/*.eval
+runs/reviews/
+**/_sealed/
 
 # --- Python -----------------------------------------------------------------------
 __pycache__/
@@ -26,6 +30,12 @@ dist/
 .venv/
 venv/
 .env
+.env.*
+.envrc
+*.pem
+*.key
+id_rsa*
+secrets*.json
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
