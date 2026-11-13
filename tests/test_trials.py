@@ -726,6 +726,17 @@ def test_h2_counts_only_codes_the_audit_rules_real_error():
     assert every["real_error"] == {"FM-001": 1, "FM-005": 1}
 
 
+def test_h2_counts_fm000_by_its_audit_verdict_like_every_code():
+    # Owner decision D-R15 (2026-11-13): D-R5 keeps FM-000 in the audit-adjusted figure,
+    # but H2 follows D-N for FM-000 too: it supports H2 only when the audit rules it
+    # real_error; an extractor_error FM-000 (a parser fault) is reported beside.
+    adv = [sample("v", e, kind="adversarial", correctness=_score(0, ["FM-000"], ["format break: not one JSON object"]))
+           for e in (1, 2)] + [sample("v", e, kind="adversarial") for e in (3, 4)]
+    rec = record_for(adv, overrides={("v", 2, "FM-000"): "extractor_error"})
+    counts = trials.audited_code_counts(adv, rec, k=4)
+    assert counts == {"real_error": {"FM-000": 1}, "extractor_error": {"FM-000": 1}}
+
+
 def test_no_dash_characters_in_the_module():
     text = (Path(trials.__file__)).read_text(encoding="utf-8")
     assert "\u2014" not in text and "\u2013" not in text

@@ -192,6 +192,14 @@ def grader_generate_config_args(grader_step: int = 1) -> dict[str, Any]:
     return args
 
 
+def calibrator_generate_config_args() -> dict[str, Any]:
+    """GenerateConfig fields pinned for the calibrator role (Opus 5.5): reasoning_effort
+    REASONING_EFFORT, as in every role (section 5; owner decision D-R15, 2026-11-13). A
+    role model does not pick up the eval-wide reasoning_effort in the pinned inspect-ai,
+    so the calibrator call passes these itself. Pure (no Inspect import)."""
+    return {"reasoning_effort": REASONING_EFFORT}
+
+
 def calibrator_may_sample(evaluated_model: str) -> bool:
     """The calibrator never samples Opus 5.5 baseline generations (section 5)."""
     return evaluated_model != CALIBRATOR
@@ -535,7 +543,8 @@ def check_run_config(log: Any, *, expected_samples: int | None = None, expected_
     the grader role, when the log holds any, gets the same field rules with
     reasoning_effort == GRADER_REASONING_EFFORT (owner decisions D-T1 and D-R12) and
     max_tokens unset; a log with no grader event passes this part, since no Phase 1
-    scorer calls the grader yet. Calibrator events are checked for extra_headers only.
+    scorer calls the grader yet. Every ModelEvent of the calibrator role gets the evaluated
+    model's rules, reasoning_effort == REASONING_EFFORT included (owner decision D-R15).
 
     Returns a summary of the effective values (never a header value)."""
     status = getattr(log, "status", None)
@@ -571,6 +580,7 @@ def check_run_config(log: Any, *, expected_samples: int | None = None, expected_
         raise RunConfigError("run config: the log has no samples; read it in full, not header_only")
     evaluated_events = 0
     grader_events = 0
+    calibrator_events = 0
     effective_max_tokens: set[int | None] = set()
     for sample in samples:
         for event in sample.events or ():
@@ -588,6 +598,12 @@ def check_run_config(log: Any, *, expected_samples: int | None = None, expected_
                 grader_events += 1
                 _check_generate(where, fields, evaluated=True, allow_batch=allow_batch,
                                 max_tokens_pin=None, grader=True)
+            elif role == CALIBRATOR_ROLE:
+                # Owner decision D-R15 (2026-11-13): the calibrator carries the same effort
+                # pin and the same field rules as the evaluated model.
+                calibrator_events += 1
+                _check_generate(where, fields, evaluated=True, allow_batch=allow_batch,
+                                max_tokens_pin=max_tokens_pin, provider_default=True)
             elif fields.get("extra_headers"):
                 raise RunConfigError(f"run config: {where} sets extra_headers; no roster run sets them")
     if evaluated_events == 0:
@@ -615,6 +631,7 @@ def check_run_config(log: Any, *, expected_samples: int | None = None, expected_
         "scored_sample_epochs": len(scored),
         "evaluated_model_events": evaluated_events,
         "grader_model_events": grader_events,
+        "calibrator_model_events": calibrator_events,
         "reasoning_effort": plan.get("reasoning_effort"),
         "max_tokens": plan.get("max_tokens"),
         "max_tokens_effective": next(iter(effective_max_tokens)),

@@ -19,6 +19,7 @@ from icfr_agent_evals.roster import (
     GRADER_REASONING_EFFORT,
     REASONING_EFFORT,
     RunConfigError,
+    calibrator_generate_config_args,
     check_run_config,
     grader_generate_config_args,
 )
@@ -249,7 +250,7 @@ def _with_role_event(log, role, config, sample_index=0):
 
 
 @pytest.mark.parametrize("role, config", [
-    ("calibrator", GenerateConfig(extra_headers={"X": "y"})),
+    ("calibrator", GenerateConfig(reasoning_effort=REASONING_EFFORT, extra_headers={"X": "y"})),
     ("grader", GenerateConfig(reasoning_effort=GRADER_REASONING_EFFORT, extra_headers={"X": "y"})),
 ])
 def test_a_role_event_with_extra_headers_is_refused(clean_run, role, config):
@@ -308,10 +309,12 @@ def test_a_grader_batch_event_follows_allow_batch(clean_run):
         check_run_config(log, allow_batch=False)
 
 
-def test_the_calibrator_role_is_not_held_to_the_grader_effort_pin(clean_run):
-    # The calibrator is an Anthropic model; this check reads only its extra_headers.
-    log = _with_role_event(clean_run, "calibrator", GenerateConfig())
-    assert check_run_config(log)["grader_model_events"] == 0
+def test_the_calibrator_role_is_held_to_the_worker_effort_pin_not_the_grader_pin(clean_run):
+    # D-R15 (2026-11-13): the calibrator (an Anthropic model) carries REASONING_EFFORT and
+    # counts as a calibrator event, never as a grader event.
+    log = _with_role_event(clean_run, "calibrator", GenerateConfig(reasoning_effort=REASONING_EFFORT))
+    out = check_run_config(log)
+    assert out["grader_model_events"] == 0 and out["calibrator_model_events"] == 1
 
 
 def test_a_log_with_no_evaluated_model_event_is_refused(clean_run):
@@ -335,3 +338,33 @@ def test_allowlist_names_only_transport_fields():
         "max_retries", "timeout", "attempt_timeout", "stream_idle_timeout", "max_connections", "adaptive_connections",
     }
     assert not hasattr(roster, "RUN_CONFIG_FORBIDDEN")  # every field off the allowlist refuses
+
+
+# --- Calibrator reasoning_effort (section 13 effort row; owner decision D-R15) -----------
+
+
+def test_a_log_without_calibrator_events_counts_none(clean_run):
+    assert check_run_config(clean_run, expected_samples=PILOT_CASES)["calibrator_model_events"] == 0
+
+
+def test_a_calibrator_event_with_the_pinned_config_passes(clean_run):
+    log = _with_role_event(clean_run, "calibrator", GenerateConfig(**calibrator_generate_config_args()))
+    assert check_run_config(log, expected_samples=PILOT_CASES)["calibrator_model_events"] == 1
+
+
+@pytest.mark.parametrize("effort", [None, "low", "medium", "max"])
+def test_a_calibrator_event_off_the_effort_pin_is_refused(clean_run, effort):
+    log = _with_role_event(clean_run, "calibrator", GenerateConfig(reasoning_effort=effort))
+    with pytest.raises(RunConfigError, match=f"role 'calibrator' has reasoning_effort={effort!r}, not the pin 'high'"):
+        check_run_config(log, expected_samples=PILOT_CASES)
+
+
+def test_a_calibrator_event_with_a_sampling_field_is_refused(clean_run):
+    log = _with_role_event(clean_run, "calibrator",
+                           GenerateConfig(**calibrator_generate_config_args(), temperature=0.0))
+    with pytest.raises(RunConfigError, match="temperature"):
+        check_run_config(log, expected_samples=PILOT_CASES)
+
+
+def test_calibrator_args_carry_the_worker_effort_pin():
+    assert calibrator_generate_config_args() == {"reasoning_effort": REASONING_EFFORT}
