@@ -1,0 +1,20 @@
+{
+  "sample_id": "dev-std-002-BTC-M1",
+  "epoch": 3,
+  "log_eval_id": "JPZf3MBBpQVNR9UseNDS2Q",
+  "worker_prompt_sha256": "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d",
+  "worker_output": "{\"asset\":\"BTC\",\"period\":\"2025-10\",\"variance_amount_usd\":11643.52,\"variance_direction\":\"surplus\",\"materiality_band\":\"M1\",\"entities_cited\":[\"WD-2510-164297\",\"Hot 2\",\"JE-25-10-9681\",\"WD-2511-807457\"],\"reconciling_items\":[{\"reference\":\"WD-2510-164297\",\"amount_usd\":11643.52,\"type\":\"pending transfer\"}],\"narrative\":\"On-chain reserves of $3,764,488,859.05 exceed ledger liabilities of $3,764,477,215.53 by $11,643.52, a surplus in band M1. The full amount is explained by customer withdrawal WD-2510-164297 from in-scope wallet Hot 2, which was booked in the ledger at 23:22 on 31-Oct but not broadcast on chain until 00:23 on 1-Nov, so it was open at cutoff and is worth $11,643.52. It does not appear on the open items schedule and should be added. The unexplained remainder is $0.00. I excluded JE-25-10-9681 because it is a manual adjustment and WD-2511-807457 because it is dated after cutoff.\"}",
+  "source": "natural",
+  "seed_note": null,
+  "stratum": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 2
+  },
+  "grades": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 2
+  },
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "graded_by": "RA",
+  "graded_on": "2026-11-12"
+}

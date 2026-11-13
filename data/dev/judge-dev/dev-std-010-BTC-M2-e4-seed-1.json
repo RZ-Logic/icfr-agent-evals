@@ -1,0 +1,20 @@
+{
+  "sample_id": "dev-std-010-BTC-M2",
+  "epoch": 4,
+  "log_eval_id": "JPZf3MBBpQVNR9UseNDS2Q",
+  "worker_prompt_sha256": "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d",
+  "worker_output": "{\"asset\":\"BTC\",\"period\":\"2025-12\",\"variance_amount_usd\":66311.24,\"variance_direction\":\"shortfall\",\"materiality_band\":\"M2\",\"entities_cited\":[\"DP-2512-574449\",\"OI-251231-441\",\"HOT01\",\"HOT02\",\"DP-2512-039821\"],\"reconciling_items\":[{\"reference\":\"DP-2512-574449\",\"amount_usd\":66296.00,\"type\":\"pending transfer\"},{\"reference\":\"OI-251231-441\",\"amount_usd\":15.24,\"type\":\"fee\"}],\"narrative\":\"On-chain reserves of $4,710,661,082.13 are $66,311.24 below ledger liabilities of $4,710,727,393.37, a shortfall in the M2 (reportable) band. Two open items dated 31-Dec-2025 on in-scope wallets explain the full amount: DP-2512-574449 ($66,296.00), a HOT01 deposit credited in the ledger before the funds arrived on chain, and OI-251231-441 ($15.24), a HOT02 sweep network fee that appears in the ledger but is not on chain. Together they explain $66,311.24, leaving $0.00 unexplained. DP-2512-039821 is excluded because it is cleared.\"}",
+  "source": "seeded_addition",
+  "seed_note": "Rule G-SIDE. Grounding, one claim made unsupported: what has happened to one item. In one span that names the item by its reference, say the item is held on the other side: words of the ledger (ledger, booked, posted, credited, debited) and of the chain (chain, broadcast) trade places, so the first side the span names changes, and a span that names one side only names the other side only. Target grounding 1, so the item must not be the only item that explains the variance. Edits, in order: \"OI-251231-441 ($15.24), a HOT02 sweep network fee that appears on chain but is not booked in the ledger\" became \"OI-251231-441 ($15.24), a HOT02 sweep network fee that appears in the ledger but is not on chain\". Claim: OI-251231-441: the side it is held on. Target grounding 1; coverage unchanged from the base. Nothing else was added or deleted. Only the narrative field changed; the rest of the output is verbatim.",
+  "stratum": {
+    "faithfulness.narrative_grounding": 1,
+    "completeness.narrative_coverage": 3
+  },
+  "grades": {
+    "faithfulness.narrative_grounding": 1,
+    "completeness.narrative_coverage": 3
+  },
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "graded_by": "RA",
+  "graded_on": "2026-11-12"
+}

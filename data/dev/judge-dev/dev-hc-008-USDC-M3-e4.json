@@ -1,0 +1,20 @@
+{
+  "sample_id": "dev-hc-008-USDC-M3",
+  "epoch": 4,
+  "log_eval_id": "JPZf3MBBpQVNR9UseNDS2Q",
+  "worker_prompt_sha256": "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d",
+  "worker_output": "{\"asset\":\"USDC\",\"period\":\"2025-11\",\"variance_amount_usd\":3691252.88,\"variance_direction\":\"surplus\",\"materiality_band\":\"M3\",\"entities_cited\":[\"HOT01\",\"TREAS01\",\"DP-2511-582345\",\"DP-2511-800689\"],\"reconciling_items\":[],\"narrative\":\"On-chain reserves of $526,789,625.20 exceed ledger liabilities of $523,098,372.32 by $3,691,252.88, a surplus in the M3 (material-risk) band. DP-2511-800689 is excluded because it relates to TREAS01, which is out of scope as own funds, so its on-chain receipt is not in the in-scope reserves. DP-2511-582345 (HOT01, ledger only) is excluded because no amount is recorded in the open-items schedule or the ledger extract and there is no matching on-chain transaction, so it cannot be quantified or relied on. No eligible reconciling items are supported, so $0.00 is explained and the full $3,691,252.88 is unexplained; the root cause is still marked as to be determined and the workpaper is unreviewed.\"}",
+  "source": "natural",
+  "seed_note": null,
+  "stratum": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 3
+  },
+  "grades": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 3
+  },
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "graded_by": "RA",
+  "graded_on": "2026-11-12"
+}

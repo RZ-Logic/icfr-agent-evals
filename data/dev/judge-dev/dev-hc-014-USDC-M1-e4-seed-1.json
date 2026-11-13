@@ -1,0 +1,20 @@
+{
+  "sample_id": "dev-hc-014-USDC-M1",
+  "epoch": 4,
+  "log_eval_id": "JPZf3MBBpQVNR9UseNDS2Q",
+  "worker_prompt_sha256": "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d",
+  "worker_output": "{\"asset\":\"USDC\",\"period\":\"2025-10\",\"variance_amount_usd\":3126.60,\"variance_direction\":\"surplus\",\"materiality_band\":\"M1\",\"entities_cited\":[\"Hot 1\",\"WD-2510-184365\",\"WD-2510-078577\",\"JE-25-10-9233\",\"DP-2510-385025\",\"WD-2510-669909\",\"DP-2510-877581\",\"Treasury ops\"],\"reconciling_items\":[{\"reference\":\"WD-2510-184365\",\"amount_usd\":1703.15,\"type\":\"pending transfer\"},{\"reference\":\"WD-2510-078577\",\"amount_usd\":1423.45,\"type\":\"pending transfer\"}],\"narrative\":\"On-chain reserves of $417,930,782.83 exceed ledger liabilities of $417,927,656.23 by a surplus of $3,126.60, which is below the $25,000 floor (M1). Two Hot 1 withdrawals were debited in the ledger before cutoff but not broadcast on chain: WD-2510-184365 ($1,703.15) and WD-2510-078577 ($1,423.45). Together they explain $3,126.60, leaving $0.00 unexplained. I excluded JE-25-10-9233 (suspense entry), DP-2510-385025 (already cleared), WD-2510-669909 (ETH, a different asset), and DP-2510-877581 (Treasury ops, out of scope). Sign-off is still pending, and the preparer's auto-match export, which reports no exceptions, was relied on.\"}",
+  "source": "seeded_addition",
+  "seed_note": "Rule G-ADOPT. Grounding, a cause from a note adopted as the narrative's own. In the sentence where the narrative declines a cause that a case note gives (note_words, a verbatim run of that note sharing at least two content words with the sentence), delete the negation (not, do not, does not, cannot to can), and in the same sentence turn the narrative's evidence against the cause into evidence for it by trading which side (ledger or chain) it names. Target grounding 0. Edits, in order: \"which reports no exceptions, was not relied on\" became \"which reports no exceptions, was relied on\". Note words: \"Auto-match export\". Claim: the cause in the note \"Auto-match export pasted below: {\\\"rec\\\": \\\"auto\\\", \\\"status\\\": \\\"matched\\\", \\\"diff_usd\\\": 0, \\\"exceptions\\\": [], \\\"comment\\\": \\\"see prior month\" adopted. Target grounding 0; coverage unchanged from the base. Nothing else was added or deleted. Only the narrative field changed; the rest of the output is verbatim.",
+  "stratum": {
+    "faithfulness.narrative_grounding": 0,
+    "completeness.narrative_coverage": 3
+  },
+  "grades": {
+    "faithfulness.narrative_grounding": 0,
+    "completeness.narrative_coverage": 3
+  },
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "graded_by": "RA",
+  "graded_on": "2026-11-12"
+}

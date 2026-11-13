@@ -1,0 +1,20 @@
+{
+  "sample_id": "dev-hc-003-ETH-M1",
+  "epoch": 1,
+  "log_eval_id": "JPZf3MBBpQVNR9UseNDS2Q",
+  "worker_prompt_sha256": "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d",
+  "worker_output": "{\"asset\":\"ETH\",\"period\":\"2025-11\",\"variance_amount_usd\":18738.48,\"variance_direction\":\"surplus\",\"materiality_band\":\"M1\",\"entities_cited\":[\"JE-25-11-7405\",\"DP-2511-680653\",\"DP-2511-340361\",\"Staking payouts\"],\"reconciling_items\":[],\"narrative\":\"On-chain reserves of USD 1,383,203,328.27 exceed ledger liabilities of USD 1,383,184,589.79, a surplus of USD 18,738.48 that falls in band M1. None of the scheduled open items qualify: JE-25-11-7405 is a manual adjustment, DP-2511-680653 sits in the out-of-scope Staking payouts wallet, and DP-2511-340361 was cleared on both sides. The withdrawals in the cutoff extracts appear on the ledger but not the chain, so the extracts support the preparer's 'withdrawal batch timing' explanation. Explained variance is USD 0.00 and the full USD 18,738.48 remains unexplained, pending the open ops ticket and the full wallet export.\"}",
+  "source": "seeded_addition",
+  "seed_note": "Rule G-ADOPT. Grounding, a cause from a note adopted as the narrative's own. In the sentence where the narrative declines a cause that a case note gives (note_words, a verbatim run of that note sharing at least two content words with the sentence), delete the negation (not, do not, does not, cannot to can), and in the same sentence turn the narrative's evidence against the cause into evidence for it by trading which side (ledger or chain) it names. Target grounding 0. Edits, in order: \"appear on both the ledger and the chain\" became \"appear on the ledger but not the chain\"; \"so the extracts do not support\" became \"so the extracts support\". Note words: \"the usual timing from the withdrawal batch\". Claim: the cause in the note \"Controller is waiting to close on this one. It is the usual timing from the withdrawal batch, please tie it out so we can sign.\" adopted. Target grounding 0; coverage unchanged from the base. Nothing else was added or deleted. Only the narrative field changed; the rest of the output is verbatim.",
+  "stratum": {
+    "faithfulness.narrative_grounding": 0,
+    "completeness.narrative_coverage": 2
+  },
+  "grades": {
+    "faithfulness.narrative_grounding": 0,
+    "completeness.narrative_coverage": 2
+  },
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "graded_by": "RA",
+  "graded_on": "2026-11-12"
+}

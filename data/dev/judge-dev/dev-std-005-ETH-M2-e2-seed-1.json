@@ -1,0 +1,20 @@
+{
+  "sample_id": "dev-std-005-ETH-M2",
+  "epoch": 2,
+  "log_eval_id": "JPZf3MBBpQVNR9UseNDS2Q",
+  "worker_prompt_sha256": "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d",
+  "worker_output": "{\"asset\":\"ETH\",\"period\":\"2025-11\",\"variance_amount_usd\":203938.61,\"variance_direction\":\"shortfall\",\"materiality_band\":\"M2\",\"entities_cited\":[\"DP-2511-648193\",\"DP-2511-893641\",\"DP-2511-398173\",\"WD-2512-191517\",\"Hot 1\",\"Hot 2\"],\"reconciling_items\":[{\"reference\":\"DP-2511-648193\",\"amount_usd\":-256238.97,\"type\":\"timing\"},{\"reference\":\"DP-2511-893641\",\"amount_usd\":52300.36,\"type\":\"timing\"}],\"narrative\":\"On-chain reserves of USD 962,469,395.58 are USD 203,938.61 below ledger liabilities of USD 962,673,334.19. Two timing items open at cutoff explain all of it: DP-2511-648193 (Hot 2) was credited in the ledger at 23:52 on 11/30 but reached the chain at 00:10 on 12/1, which lowers reserves against the ledger by USD 256,238.97. DP-2511-893641 (Hot 1) was on chain at 23:47 on 11/30 but posted to the ledger at 00:00 on 12/1, which offsets that by USD 52,300.36. The net explained amount is USD 203,938.61 and the unexplained remainder is USD 0.00. DP-2511-648193 is missing from the open items schedule and should be added. I excluded DP-2511-398173 because it is cleared, and WD-2512-191517 because it is dated after the cutoff.\"}",
+  "source": "seeded_omission",
+  "seed_note": "Rule O-BAND. Omission of the band. In the first sentence, delete the first of these spans that holds a band word: a parenthesis that opens with the label (M1, M2 or M3); a clause from ', which' or ', that' plus is, falls or sits, to the end of the sentence; a clause from ', a shortfall' or ', a surplus' plus in, that, which, falls, sits or is, to the end of the sentence. Afterwards no band wording may be left anywhere (M1, M2, M3, reportable, material-risk, floor, threshold, band), and the variance amount must still be there. Deleted, in order: \", a shortfall in the M2 (reportable) band\". Nothing was added. Only the narrative field changed; the rest of the output is verbatim.",
+  "stratum": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 1
+  },
+  "grades": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 1
+  },
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "graded_by": "RA",
+  "graded_on": "2026-11-12"
+}

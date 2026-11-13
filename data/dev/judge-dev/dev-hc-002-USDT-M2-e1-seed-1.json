@@ -1,0 +1,20 @@
+{
+  "sample_id": "dev-hc-002-USDT-M2",
+  "epoch": 1,
+  "log_eval_id": "JPZf3MBBpQVNR9UseNDS2Q",
+  "worker_prompt_sha256": "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d",
+  "worker_output": "{\"asset\":\"USDT\",\"period\":\"2025-10\",\"variance_amount_usd\":62878.92,\"variance_direction\":\"shortfall\",\"materiality_band\":\"M2\",\"entities_cited\":[\"DP-2510-735617\",\"WD-2511-499925\",\"DP-2510-935085\",\"Hot 1\"],\"reconciling_items\":[{\"reference\":\"DP-2510-735617\",\"amount_usd\":44160.53,\"type\":\"timing difference\"}],\"narrative\":\"On-chain reserves of $453,842,929.67 are $62,878.92 below ledger liabilities of $453,905,808.59. Only DP-2510-735617 ($44,160.53, a Hot 1 deposit booked in the ledger on 10/31 but on chain on 11/01) qualifies as a cutoff timing item. WD-2511-499925 is dated after the cutoff and DP-2510-935085 is a USDC item, so neither is relied on.\"}",
+  "source": "seeded_omission",
+  "seed_note": "Rule O-BAND+O-REM. O-BAND, then O-REM, on the same narrative. Deleted, in order: \", a shortfall in the M2 (reportable) band\"; \", which leaves $18,718.39 unexplained\"; \"The whole difference cannot be written off as timing, and the unexplained portion should stay open pending the ops ticket.\". Nothing was added. Only the narrative field changed; the rest of the output is verbatim.",
+  "stratum": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 0
+  },
+  "grades": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 0
+  },
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "graded_by": "RA",
+  "graded_on": "2026-11-12"
+}

@@ -1,0 +1,20 @@
+{
+  "sample_id": "dev-std-013-USDC-M2",
+  "epoch": 4,
+  "log_eval_id": "JPZf3MBBpQVNR9UseNDS2Q",
+  "worker_prompt_sha256": "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d",
+  "worker_output": "{\"asset\":\"USDC\",\"period\":\"2025-10\",\"variance_amount_usd\":34349.43,\"variance_direction\":\"surplus\",\"materiality_band\":\"M2\",\"entities_cited\":[\"WD-2510-799057\",\"HOT01\",\"JE-25-10-9025\",\"DP-2510-831633\",\"WD-2511-221933\",\"DP-2510-645053\",\"TREAS01\"],\"reconciling_items\":[{\"reference\":\"WD-2510-799057\",\"amount_usd\":34349.43,\"type\":\"timing difference\"}],\"narrative\":\"On-chain reserves of $2,326,821,457.75 exceed ledger liabilities of $2,326,787,108.32 by $34,349.43, a surplus in the M2 (reportable) band. The surplus is fully explained by timing difference WD-2510-799057 on HOT01: the withdrawal was posted to the ledger at 23:47:56 UTC on 31-Oct but did not go on chain until 00:11:18 UTC on 01-Nov. That leaves $0.00 unexplained. I excluded JE-25-10-9025 (cleared), DP-2510-831633 (cleared) and WD-2511-221933 (dated after the cutoff). I also excluded DP-2510-645053, an ETH deposit rather than USDC, and TREAS01, which is out of scope.\"}",
+  "source": "seeded_addition",
+  "seed_note": "Rule G-REASON-COPY. Grounding, one claim made unsupported: why one item is left out. In one span that names an item by its reference followed by the reason the narrative gives for it, replace that reason with the reason the narrative gives, in the same words, for another item it names. Target grounding 1. Edits, in order: \"JE-25-10-9025 (a manual adjustment)\" became \"JE-25-10-9025 (cleared)\". Claim: JE-25-10-9025: reason replaced. Target grounding 1; coverage unchanged from the base. Nothing else was added or deleted. Only the narrative field changed; the rest of the output is verbatim.",
+  "stratum": {
+    "faithfulness.narrative_grounding": 1,
+    "completeness.narrative_coverage": 3
+  },
+  "grades": {
+    "faithfulness.narrative_grounding": 1,
+    "completeness.narrative_coverage": 3
+  },
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "graded_by": "RA",
+  "graded_on": "2026-11-12"
+}

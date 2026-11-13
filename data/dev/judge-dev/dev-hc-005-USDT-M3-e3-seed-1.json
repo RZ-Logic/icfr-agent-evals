@@ -1,0 +1,20 @@
+{
+  "sample_id": "dev-hc-005-USDT-M3",
+  "epoch": 3,
+  "log_eval_id": "JPZf3MBBpQVNR9UseNDS2Q",
+  "worker_prompt_sha256": "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d",
+  "worker_output": "{\"asset\":\"USDT\",\"period\":\"2025-11\",\"variance_amount_usd\":250000.01,\"variance_direction\":\"shortfall\",\"materiality_band\":\"M3\",\"entities_cited\":[\"Hot 1\",\"Hot 2\",\"Treasury ops\",\"WD-2511-218501\",\"WD-2511-545901\",\"WD-2511-928269\",\"JE-25-11-6337\",\"DP-2512-849265\",\"DP-2511-854129\"],\"reconciling_items\":[{\"reference\":\"WD-2511-218501\",\"amount_usd\":113434.40,\"type\":\"timing difference\"},{\"reference\":\"WD-2511-545901\",\"amount_usd\":66215.11,\"type\":\"timing difference\"}],\"narrative\":\"On-chain reserves of $2,383,761,360.60 are $250,000.01 below ledger liabilities of $2,384,011,360.61, a shortfall that is just over the $250,000 threshold and so M3 (the preparer's rounding to 250,000.00 does not change the band). Two open Hot 1 withdrawals, WD-2511-218501 ($113,434.40) and WD-2511-545901 ($66,215.11), went out on chain before cutoff but were booked in the ledger after it, which explains $179,649.51, leaving $70,350.50 unexplained. I excluded WD-2511-928269 (out-of-scope wallet), JE-25-11-6337 (manual adjustment), DP-2512-849265 (dated after cutoff) and the Treasury ops deposit DP-2511-854129 (cleared); the unexplained remainder should stay open on the ops ticket rather than be forced into a reconciling item.\"}",
+  "source": "seeded_addition",
+  "seed_note": "Rule G-REASON-SWAP. Grounding, two claims made unsupported: why two items are left out. Two spans, each an item reference followed by the reason the narrative gives for it, exchange their reasons word for word. Target grounding 0. Edits, in order: \"WD-2511-928269 (cleared)\" became \"WD-2511-928269 (out-of-scope wallet)\"; \"DP-2511-854129 (out-of-scope wallet)\" became \"DP-2511-854129 (cleared)\". Claim: WD-2511-928269 and DP-2511-854129: reasons exchanged. Target grounding 0; coverage unchanged from the base. Nothing else was added or deleted. Only the narrative field changed; the rest of the output is verbatim.",
+  "stratum": {
+    "faithfulness.narrative_grounding": 0,
+    "completeness.narrative_coverage": 3
+  },
+  "grades": {
+    "faithfulness.narrative_grounding": 0,
+    "completeness.narrative_coverage": 3
+  },
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "graded_by": "RA",
+  "graded_on": "2026-11-12"
+}
