@@ -1,10 +1,10 @@
 # Regression sign-off file format
 
-Status: ratified 2026-11-11 (owner decision D-R11). It answers section 13 row 26 of the pre-registration: the sign-off file format, how it records one of the four sign-off outcomes, and the repository path.
+Status: ratified 2026-11-11 (decision D-R11). It answers section 13 row 26 of the pre-registration: the sign-off file format, how it records one of the four sign-off outcomes, and the repository path.
 
 ## What it is for
 
-Section 10(c) lists the cases on which a sign-off code, a citation omission or a review route fires on more epochs in the candidate than in the baseline. The citation-omission trigger is owner decision D-R9 (2026-11-11). `scripts/compare_runs.py` exits 2 while those cases wait. A reviewer clears them by committing one sign-off file. The file gives every triggered case one of the four outcomes, with a name, a date and a note.
+Section 10(c) lists the cases on which a sign-off code, a citation omission or a review route fires on more epochs in the candidate than in the baseline. The citation-omission trigger is decision D-R9 (2026-11-11). `scripts/compare_runs.py` exits 2 while those cases wait. A reviewer clears them by committing one sign-off file. The file gives every triggered case one of the four outcomes, with a name, a date and a note.
 
 ## Where it lives
 
@@ -73,5 +73,5 @@ Run `compare_runs.py` with `--json`. Write one row per sign-off case listed ther
 
 ## Not checked by code
 
-- The gated-content key is taken from `--content-key` as given. No log records it yet. The Actions workflow (week 3) computes it.
+- The gated-content key is taken from `--content-key` as given. No log records it yet. A planned GitHub Actions job will compute it.
 - Whether the note is true: that the fix exists, that the change is unrelated, or that the defect is filed.

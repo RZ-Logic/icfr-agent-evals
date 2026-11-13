@@ -6,7 +6,7 @@ Dev split only. An evaluation-split output never enters this directory.
 
 ## Source of the outputs
 
-Set by D12 in [`docs/evidence/PILOT-RUNBOOK.md`](../../../docs/evidence/PILOT-RUNBOOK.md) (sequence, step 8): if the locked worker prompt's `worker_prompt_sha256` equals the pilot logs', the outputs come from the pilot logs; otherwise the 20 are regenerated under the locked prompt at one epoch before grading. Every record carries the prompt hash, so the rule can be checked file by file.
+Set by decision D12 in the pilot runbook ([`docs/evidence/PILOT-RUNBOOK.md`](../../../docs/evidence/PILOT-RUNBOOK.md)): if the locked worker prompt's `worker_prompt_sha256` equals the pilot logs', the outputs come from the pilot logs; otherwise the 20 are regenerated under the locked prompt at one epoch before grading. Every record carries the prompt hash, so the rule can be checked file by file.
 
 ## Stratification
 
@@ -52,6 +52,6 @@ Example (shape only):
 
 ## Rules
 
-- The 0 to 3 anchors for both sub-dimensions are written and committed, with their SHA-256, before the first grade (runbook sequence, step 7).
+- The 0 to 3 anchors for both sub-dimensions are written and committed, with their SHA-256, before the first grade (decision D13 in the pilot runbook).
 - All 20 grades are committed in one commit before the first grader round. A committed grade is not edited; a rubric revision under the judge remedy order (§7) is logged with its statistics.
 - Grades are made without access to any grader score of the same output.

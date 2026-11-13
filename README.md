@@ -14,8 +14,8 @@
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.14.10_(pre--registered)-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.14.10, pre-registered"/></a>
   <a href="https://inspect.aisi.org.uk/"><img src="https://img.shields.io/badge/Built_with-Inspect_AI_0.3.278-7C3AED?style=for-the-badge" alt="Built with Inspect AI 0.3.278"/></a>
   <img src="https://img.shields.io/badge/Consequential_checks-Deterministic-2A9D4A?style=for-the-badge" alt="Consequential checks: deterministic"/>
-  <img src="https://img.shields.io/badge/Model_results-None_yet-D97706?style=for-the-badge" alt="Model results: none yet"/>
-  <img src="https://img.shields.io/badge/Status-Pre--registration%2C_pre--pilot-orange?style=for-the-badge" alt="Status: pre-registration, pre-pilot"/>
+  <img src="https://img.shields.io/badge/Evaluation_results-None_yet-D97706?style=for-the-badge" alt="Evaluation results: none yet"/>
+  <img src="https://img.shields.io/badge/Status-Pre--registration%2C_evaluation_pending-orange?style=for-the-badge" alt="Status: pre-registration, evaluation pending"/>
 </p>
 
 <p align="center">
@@ -96,7 +96,7 @@ Eight deterministic stages, two stochastic stages (one of them not yet wired) an
 
 ## 🧱 What Ships in v0.0.1
 
-**Status, 2026-11-05.** The Phase 1 pre-registration is written and committed, not yet tagged; the §13 checklist still has pending rows. The pilot has not run, no real-model generation has run, and there are no model results. Everything below runs today on Inspect's `mockllm` and `none` providers with no API key.
+**Status.** The Phase 1 pre-registration is written and committed, and it becomes binding at the tag `prereg-phase1-v1.0`; until then the §13 checklist still has pending rows. The dev-split pilot has run, and its record is [`docs/evidence/pilot-2026-11-11.md`](docs/evidence/pilot-2026-11-11.md). Dev-split figures are never reported as findings, and there are no evaluation-split results. Everything below runs today on Inspect's `mockllm` and `none` providers with no API key.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -134,7 +134,7 @@ Eight deterministic stages, two stochastic stages (one of them not yet wired) an
 |-----------|-----------|:-:|
 | **Case-file contract** ([`casefile.py`](icfr_agent_evals/casefile.py)) | `CaseTruth`, `ReconcilingItem`, the eligibility predicate, the output schema, split seeds, entity formats. | None |
 | **Generators** ([`generator.py`](icfr_agent_evals/generator.py), [`chainformats.py`](icfr_agent_evals/chainformats.py), [`hardcases.py`](icfr_agent_evals/hardcases.py)) | Standard cases on seven assets with wallet identifiers in each chain's address format; band-boundary, ambiguous-narrative, incomplete-data and AC-1 to AC-6 templates, each with generation-time truth. | None |
-| **Worker task** ([`task.py`](icfr_agent_evals/task.py), [`solver.py`](icfr_agent_evals/solver.py), [`roster.py`](icfr_agent_evals/roster.py)) | The Inspect task, the worker prompt `v0.0.3-draft` (brace-free, hashed into Task metadata) and the frozen roster with its setup check. | Writes the commentary |
+| **Worker task** ([`task.py`](icfr_agent_evals/task.py), [`solver.py`](icfr_agent_evals/solver.py), [`roster.py`](icfr_agent_evals/roster.py)) | The Inspect task, the locked worker prompt `v0.0.4` (brace-free, hashed into Task metadata) and the frozen roster with its setup check. | Writes the commentary |
 | **Deterministic anchors** ([`scoring.py`](icfr_agent_evals/scoring.py), [`scorers.py`](icfr_agent_evals/scorers.py), [`narrative.py`](icfr_agent_evals/narrative.py), [`narrative_vocab.py`](icfr_agent_evals/narrative_vocab.py)) | Strict parser, canonicalization, narrative sweep, extractor with a hashed vocabulary, and thin Inspect adapters. | None |
 | **Template baseline** ([`baseline.py`](icfr_agent_evals/baseline.py)) | Structured fields computed by code from the visible balances, wallet scope and schedule rows alone, on Inspect's `none` provider, scored by the same scorers. | None |
 | **Reliability and consistency** ([`reliability.py`](icfr_agent_evals/reliability.py), [`consistency.py`](icfr_agent_evals/consistency.py)) | content-pass^4, FM counts by code and FM-002 by direction, the review queue, Sample Consistency, FM-007, H4. | None |
@@ -156,7 +156,7 @@ Eight deterministic stages, two stochastic stages (one of them not yet wired) an
 
 ## 📊 Does it work?
 
-**There are no model results.** Results are published only from the tagged, pre-registered runs, scored exactly as §6 to §10 state, for every pre-registered model and subset. The pilot that precedes the tag has not run. Dev-split results are never reported as findings (§4).
+**There are no model results.** Results are published only from the tagged, pre-registered runs, scored exactly as §6 to §10 state, for every pre-registered model and subset. The dev-split pilot that precedes the tag has run, and its record is in [`docs/evidence/pilot-2026-11-11.md`](docs/evidence/pilot-2026-11-11.md). Dev-split results are never reported as findings (§4).
 
 ### What the harness measures
 
@@ -172,7 +172,7 @@ Eight deterministic stages, two stochastic stages (one of them not yet wired) an
 
 ### Mock-run proofs I reproduced (dev split, no API key)
 
-Run on 2026-11-05 on Python 3.14.10 (and first on 2026-11-04 on 3.14.7, with the same output), with the commands in [Reproduction](#-reproduction). The outputs are scripted, so they show that the graph runs and the gates fire. They are not findings.
+Run on 2026-11-05 on Python 3.14.10, with the commands in [Reproduction](#-reproduction). The outputs are scripted, so they show that the graph runs and the gates fire. They are not findings.
 
 | Run | What it does | What it printed |
 |---|---|---|
@@ -192,7 +192,7 @@ A deterministic mock proves the plumbing and the gate arithmetic, not statistica
 | Transcript scanning | [Inspect Scout](https://github.com/meridianlabs-ai/inspect_scout) 0.5.5 | Pinned beside Inspect for the exploratory scanners of §8, vendored from its release commit with upstream PR #679 backported to the awareness rubric; the scan jobs refuse evaluation-split logs before the tag |
 | Model SDKs | `anthropic` 1.12.1, `openai` 3.27.0 | The grader of record is cross-vendor and scores every generation; the sampled calibrator shares the worker's vendor, as §5 states, and never scores Opus 5.5 baseline outputs |
 | Statistics | Python stdlib (`math`, `decimal`) | Paired t, exact McNemar, Holm and DeLong written out where they can be read and tested |
-| Tests | `pytest` 9.0.3 | Every test runs keyless, against `mockllm` and `none` |
+| Tests | `pytest` 9.0.3 | Every test runs keyless, against `mockllm` and `none`. Keyless means run with no API key set, so no model can be called |
 | Runtime | Python 3.14.10 (pre-registered, uv-managed), `pydantic` 2.13.4 | Re-verified at the tag (§13), with a cross-check leg on 3.12.16; `requires-python >=3.11` |
 
 **No infrastructure novelty.** Everything here is an off-the-shelf eval framework, two vendor SDKs and the standard library. The contribution is the method: a pre-registration written before any evaluation-split generation, consequential failures scored in code against an answer key the generator records, and regression gates whose alpha, family and re-run rule are fixed before the first PR.
@@ -206,9 +206,9 @@ A deterministic mock proves the plumbing and the gate arithmetic, not statistica
 3. **[`icfr_agent_evals/scoring.py`](icfr_agent_evals/scoring.py)**: the module docstring and `check_reconciling_items`. ~5 minutes. The error direction in code.
 4. **[`icfr_agent_evals/casefile.py`](icfr_agent_evals/casefile.py)**: `item_eligibility`. ~3 minutes. The one predicate the generator, the anchor and the baseline share.
 5. **[`icfr_agent_evals/regression.py`](icfr_agent_evals/regression.py)** docstring beside the exit codes in [`scripts/compare_runs.py`](scripts/compare_runs.py). ~5 minutes. The §10 gates as they run.
-6. **[`docs/build-notes/WEEK-1-CLOUD-REPORT.md`](docs/build-notes/WEEK-1-CLOUD-REPORT.md)**. ~8 minutes. What the first build measured, what review found, and the decisions put to ratification.
+6. **[`PRE-REGISTRATION-PHASE-1.md`](PRE-REGISTRATION-PHASE-1.md), §13**, beside [`docs/DECISIONS.md`](docs/DECISIONS.md). ~8 minutes. Every decision ratified before the tag, with its date.
 
-Total: ~35 minutes. The raw review records are in [`docs/build-notes/review/`](docs/build-notes/review/).
+Total: ~35 minutes.
 
 ---
 
@@ -253,7 +253,7 @@ Evaluation-split runs follow the tag; the dev-split pilot precedes it, and its s
 
 ## 🛠️ Build Decisions & Lessons Learned
 
-Eight non-obvious choices, in short, each with the alternative rejected. The full rationale for the build-time ones is in [`WEEK-1-CLOUD-REPORT.md`](docs/build-notes/WEEK-1-CLOUD-REPORT.md), section 6.
+Eight non-obvious choices, in short, each with the alternative rejected. The ratified ones are recorded, with their dates, in §13 of the pre-registration and in [`docs/DECISIONS.md`](docs/DECISIONS.md).
 
 **1. The answer key holds no narrative.** The generator records structured truth only: variance, direction, band, eligible items, valid entities. Rejected: a generated reference narrative, which would let the LLM-graded sub-dimensions score a model against the generator's own prose.
 > **The principle:** A grader must never compare an output with text produced by the same process that defined the right answer.
@@ -261,7 +261,7 @@ Eight non-obvious choices, in short, each with the alternative rejected. The ful
 **2. An omitted item scores 2 or 1, with no FM code.** With every cited item valid, the reconciling-items anchor scores 3 only when the code-computed explained amount matches truth within $1. Otherwise an omission scores 2 if some explaining item was cited and 1 if none was. An absent, ineligible or decoy item scores 0 with FM-015. Rejected: stretching FM-015 or FM-004 to cover omission (ratified 2026-11-03).
 > **The principle:** Omitting a supported item and relying on an unsupported one are different misstatements. Score them differently, and keep the code for the one that fabricates.
 
-**3. A memo-only item is a full reconciling item that the schedule leaves out.** Its reference appears on an extract line and in a notes sentence saying it was open at the cutoff; it is never a schedule row. Measured by the generator's build agent: a reader of structured fields alone misses the explained amount by more than $1 on every memo-only case and by $0.00 on every other. Rejected: a schedule row marked unconfirmed, which a structured reader would still find.
+**3. A memo-only item is a full reconciling item that the schedule leaves out.** Its reference appears on an extract line and in a notes sentence saying it was open at the cutoff; it is never a schedule row. Measured on the generated cases: a reader of structured fields alone misses the explained amount by more than $1 on every memo-only case and by $0.00 on every other. Rejected: a schedule row marked unconfirmed, which a structured reader would still find.
 > **The principle:** A difficulty check has to fail ordinary code for a reason a person can name. Here the reason is that the explanation sits in prose.
 
 **4. One fenced block is formatting; anything around it is a format break.** An output that is entirely one fenced code block is unwrapped and parsed strictly; prose before or after it is FM-000. Rejected: rejecting fences too, which adds false fails and removes no false-pass risk.
@@ -276,7 +276,7 @@ Eight non-obvious choices, in short, each with the alternative rejected. The ful
 **7. Re-runs pool and never replace.** `compare_runs.py` pools every candidate run it is given. Under §10(d), the Actions gate keys each gated run by a gated-content hash in which code files enter as parsed syntax trees, so a comment edit or an empty commit buys no fresh draw; that key is built with the workflow. Rejected: re-running until green. At the 80 percent power point, three attempts let a real regression through 1 - 0.8^3 = 0.488 of the time (§10(d)).
 > **The principle:** A gate that can be re-rolled is a gate with a retry budget. Make the evidence accumulate.
 
-**8. Every extractor fix ships with a test that fails on the old code.** The first build's six-finder review confirmed 21 defect entries, 11 of them false passes on code-detected failure modes. Each fix came with regression tests run against the pre-fix code: 534 of 765 narrative tests and 163 of 289 scoring tests fail there. A follow-up measurement of 20 hand-written correct narratives on all seven assets (140 checks) found a false FM-001 on "reserves were lower than ledger liabilities by $120,000", fixed in 6adc737.
+**8. Every extractor fix ships with a test that fails on the old code.** A code review of the first build confirmed 21 defect entries, 11 of them false passes on code-detected failure modes. Each fix came with regression tests run against the pre-fix code: 534 of 765 narrative tests and 163 of 289 scoring tests fail there. A follow-up measurement of 20 hand-written correct narratives on all seven assets (140 checks) found a false FM-001 on "reserves were lower than ledger liabilities by $120,000", fixed in 6adc737.
 > **The principle:** A fix without a test that fails before it is a claim. And a checker built to catch false passes will produce false fails, so measure it against correct answers as well.
 
 ---
@@ -287,11 +287,10 @@ The ones that change how this build should be read. The pre-registration lists t
 
 ### Not yet built or not yet run
 
-- **The LLM-graded sub-dimensions are specified, not wired.** `rubric.py` lists `faithfulness.narrative_grounding` and `completeness.narrative_coverage`; `task.py` registers deterministic scorers only. The judge-development set and the judge-trust gates have nothing to run on yet.
+- **The LLM-graded sub-dimensions are specified, not wired.** `rubric.py` lists `faithfulness.narrative_grounding` and `completeness.narrative_coverage`; `task.py` registers deterministic scorers only. The judge-development set is graded (20 records in [`data/dev/judge-dev/`](data/dev/judge-dev/)), but no grader has run on it, and the judge-trust gates have not run.
 - **Robustness is pending.** The structured-field diff across input perturbations is not built, so the dimension enters the gates at p = 1.
-- **The worker prompt is a draft.** `v0.0.3-draft` has not been through dev-set elicitation and is not locked.
-- **The pilot has not run.** Its local paired tests and selector are built; its difficulty check, which needs Haiku 5.5 at its roster configuration to fail a hard case on a deterministic anchor, needs real generations. Most §13 rows read pending, and the tag is invalid while any does.
-- **The extractor's review and false-fail rates on real outputs are unmeasured.** The vocabulary is a fixed, hashed list, and its residual is declared in §6; the pilot is planned to record both rates.
+- **The pilot's §13 row is still open.** The dev-split pilot has run and its difficulty check passed (record in [`docs/evidence/pilot-2026-11-11.md`](docs/evidence/pilot-2026-11-11.md)); the row closes after the last transcript reads. Some §13 rows still read pending, and the tag is invalid while any does.
+- **The extractor's review and false-fail rates are measured on the dev pilot only.** The vocabulary is a fixed, hashed list, and its residual is declared in §6; the pilot record holds both rates for the dev split, and evaluation-split rates come only from the tagged runs.
 - **The calibration subset is not built.** `build_dataset("calibration")` raises.
 
 ### Deliberately deferred
@@ -315,8 +314,8 @@ Each item in the first two groups has a roadmap entry below.
 
 ## 🗺️ Roadmap
 
-- [ ] **Pre-tag: pilot.** 20 dev cases on the primary worker at epochs = 4, every transcript read, the template baseline and the small baseline beside it, one deliberate regression caught end to end, the extractor's review-routing and false-fail rate recorded per run, and the difficulty check passed.
-- [ ] **Pre-tag: prompt lock and judge-development set.** Dev-set elicitation, the locked prompt hash in §13, the 0 to 3 anchors for the two LLM-graded sub-dimensions written and committed with their SHA-256 after the prompt lock and before judge-development grading, and 20 graded dev outputs committed before any grader iteration.
+- [ ] **Pre-tag: pilot.** 20 dev cases on the primary worker at epochs = 4, every transcript read, the template baseline and the small baseline beside it, one deliberate regression caught end to end, the extractor's review-routing and false-fail rate recorded per run, and the difficulty check passed. Run and recorded; the row closes after the last transcript reads.
+- [x] **Pre-tag: prompt lock and judge-development set.** Dev-set elicitation, the locked prompt hash in §13, the 0 to 3 anchors for the two LLM-graded sub-dimensions written and committed with their SHA-256 after the prompt lock and before judge-development grading, and 20 graded dev outputs committed before any grader iteration.
 - [ ] **Pre-tag: public remote and the `prereg-phase1-v1.0` tag.** Every §13 row filled, roster and retirement floors re-verified, one live single-sample call per roster model on a dev case.
 - [ ] **v0.1.0: evaluation dataset.** The 54 hand-written cases, labeled under Branch A with kappa and its bootstrap CI, frozen under a dataset SemVer.
 - [ ] **v0.1.0: calibrated grading.** The calibration subset, the LLM-graded sub-dimensions behind the §7 gates, grader test-retest and the bias audit.
@@ -342,6 +341,8 @@ The dataset and the repository are versioned independently: dataset version 0.1.
 - **SWE-bench Verified** (OpenAI and Princeton): precedent for independent annotators on a verified subset.
 - **[PCAOB AS 2201](https://pcaobus.org/oversight/standards/auditing-standards/details/AS2201)** and COSO's *[Achieving Effective Internal Control Over Generative AI](https://www.coso.org/generative-ai)* (February 2026): the severity hierarchy and the reliance distinction the two phases are built on.
 - **[FinAgent OS](https://github.com/RZ-Logic/finagent-os)**: the *"Where is the AI?"* table, itself adapted from ATLAS.
+
+Code and documents were drafted with AI assistance (Claude models); every design decision and every label in this repository was made by the author.
 
 ---
 
