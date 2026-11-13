@@ -1,0 +1,62 @@
+# Review load per full run of four workers
+
+Basis: measured.
+
+## The dev packet
+
+Packet pilot-2026-11-11, whole-narrative scope hard, 1 worker run(s), 20 cases with units (dev cases given: standard 8, hard 12).
+
+| Unit kind | Standard | Hard | All |
+|---|---:|---:|---:|
+| Finding units | 43 | 60 | 103 |
+| Narrative units, routed or FM-coded | 27 | 31 | 58 |
+| Narrative units, narrative-only (D-J) | 0 | 17 | 17 |
+| Audit units | 1 | 0 | 1 |
+| Cases | 8 | 12 | 20 |
+
+106 findings sit in 103 finding units. Mean words per narrative: 96.5 routed, 100.9 narrative-only.
+
+## Rates
+
+Measured: 2 sitting(s), 2.58 hours in all. The D-G model gives 2.69 hours (low) to 6.26 hours (high) for this packet, so the measured time is 0.96 times the low model and 0.41 times the high model.
+
+Blended: 0.87 minutes per unit over every finding, narrative and audit unit, case facts included.
+
+| Minutes per unit | Low split | High split |
+|---|---:|---:|
+| Finding unit (verdict) | 0.48 | 0.62 |
+| Narrative unit, routed (whole read) | 1.01 | 0.87 |
+| Narrative unit, narrative-only (D-J) | 1.05 | 0.90 |
+| Audit unit | 0.48 | 0.82 |
+| Case facts, per case | 1.44 | 1.24 |
+
+The measured total is shared out by the D-G weights; the two splits add up to the same measured time. Per-kind minutes are apportioned, not timed one by one.
+
+Fit by date not possible: 1 dated sittings for 3 unit kinds; a fit needs more dates than kinds.
+
+## Scaled to a full run (four workers, 200 cases, 4 epochs)
+
+Per worker run, at the dev worker's routing: 1,055 finding units, 632 routed narratives, 76 narrative-only narratives, 18 audit rows, 200 cases with units.
+
+| Worker | Low hours | High hours |
+|---|---:|---:|
+| Sonnet 5.5 | 23.5 | 28.4 |
+| Haiku 5.5 | 23.5 | 31.2 |
+| Sonnet 5 | 23.5 | 33.4 |
+| Opus 5.5 | 23.5 | 33.4 |
+| Four workers | 94.1 | 126.4 |
+
+| Part, four workers | Low hours | High hours |
+|---|---:|---:|
+| narrative read | 42.6 | 41.7 |
+| finding verdicts | 33.7 | 49.5 |
+| case facts | 4.8 | 16.5 |
+| audit | 0.6 | 5.6 |
+| second look | 12.4 | 13.1 |
+
+Re-derived range: about 94 to 126 hours per full run, against the stated 78 to 259 (D-G).
+Beside it (D-J): the narrative-only read of about 306 narratives per full run, 4.6 to 5.3 hours, against the stated 5 to 11.
+
+Assumptions: each stratum scaled from its dev cases to 146 standard and 54 hard evaluation cases; route volume 1.00 for every worker (low) or 1.00, 1.05, 1.25 and 1.25 for Sonnet 5.5, Haiku 5.5, Sonnet 5 and Opus 5.5 (high); case facts once per case for all four workers (low) or per worker (high); audit rows as scaled (low) or at least 70, 200, 70 and 70 (high); second look max(100, 10 percent) routed narrative units per worker run, each with its findings; narrative-only reads not scaled by route volume. Not included: transcript reading, breaks, the review tool's code work.
+
+Author's confirmation (2026-11-11): no review work was done outside the two timed sittings, so 2.58 hours is the full review time for the D-G re-derivation.

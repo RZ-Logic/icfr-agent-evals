@@ -1,0 +1,10 @@
+case_epoch,verdict,note,answered_at
+dev-hc-001-BTC-M2|e1,not_real,M2 is correct.,2026-11-13T20:43:20.076Z
+dev-hc-001-BTC-M2|e2,not_real,M2 is correct.,2026-11-13T20:43:34.405Z
+dev-hc-001-BTC-M2|e3,not_real,M2 is correct.,2026-11-13T20:44:01.013Z
+dev-hc-001-BTC-M2|e4,not_real,M2 is correct.,2026-11-13T20:44:03.663Z
+dev-hc-007-SOL-M2|e4,not_real,"26,889.20 would have been more correct but is well within the tolerance.",2026-11-13T20:47:10.146Z
+dev-hc-014-USDC-M1|e2,real,"left out WD-2510-078577 - 1,423.45 USD which explains the variance",2026-11-13T20:51:17.761Z
+dev-hc-014-USDC-M1|e3,real,"left out WD-2510-078577 - 1,423.45 USD which explains the variance",2026-11-13T20:51:45.166Z
+dev-hc-014-USDC-M1|e4,real,"left out WD-2510-078577 - 1,423.45 USD which explains the variance",2026-11-13T20:51:46.916Z
+dev-hc-015-SOL-M1|e3,not_real,no issue at all!,2026-11-13T20:50:46.802Z

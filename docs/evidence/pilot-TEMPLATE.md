@@ -84,7 +84,7 @@ The Haiku log's `worker_prompt_sha256` equals the Sonnet log's (a weakened promp
 - Scan jobs run, scanner model and its calls, input and output tokens:
 - Calibrator cost: measured / inferred (D16), figure and basis:
 
-## Owner decisions in force
+## Decisions in force
 
 | ID | Choice | Date set |
 |---|---|---|
