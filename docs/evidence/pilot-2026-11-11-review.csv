@@ -1,0 +1,25 @@
+run_label,log_eval_id,level,route_class,settlement_row,match,route_key,epochs_in_run,routed_epochs,routing_rate,findings,settleable_findings,correct,wrong,citation_omission,cannot_settle,not_reviewed,false_alarm_rate
+sonnet55,JPZf3MBBpQVNR9UseNDS2Q,route_key,code_review,S10,pattern,"code_review:\ entities_cited\ names\ (?:'.+'|"".+""),\ the\ asset\ of\ a\ schedule\ item,\ not\ the\ case's\ asset\ or\ a\ counterparty",80,1,0.0125,1,1,1,0,0,0,0,1.0000
+sonnet55,JPZf3MBBpQVNR9UseNDS2Q,route_key,code_review,S14,pattern,code_review:\ reconciling\ item\ type\ differs\ from\ .+,80,4,0.0500,4,4,4,0,0,0,0,1.0000
+sonnet55,JPZf3MBBpQVNR9UseNDS2Q,route_key,code_review,S15,pattern,code_review:\ narrative\ names\ ineligible\ item\ .+\ without\ stating\ whether\ it\ explains\ the\ variance,80,12,0.1500,31,31,31,0,0,0,0,1.0000
+sonnet55,JPZf3MBBpQVNR9UseNDS2Q,route_key,code_review,S21,exact,code_review: amount_role_unresolved,80,6,0.0750,6,6,6,0,0,0,0,1.0000
+sonnet55,JPZf3MBBpQVNR9UseNDS2Q,route_key,code_review,S24,exact,code_review: aggregate_total_role_cue_follows,80,5,0.0625,5,5,5,0,0,0,0,1.0000
+sonnet55,JPZf3MBBpQVNR9UseNDS2Q,route_key,code_review,S25,exact,code_review: aggregate_total_unconfirmed,80,2,0.0250,2,2,2,0,0,0,0,1.0000
+sonnet55,JPZf3MBBpQVNR9UseNDS2Q,route_key,code_review,S29,exact,code_review: item_effect_sum_unverified,80,2,0.0250,2,2,2,0,0,0,0,1.0000
+sonnet55,JPZf3MBBpQVNR9UseNDS2Q,route_key,code_review,S31,exact,code_review: item_effect_unverified,80,7,0.0875,7,7,7,0,0,0,0,1.0000
+sonnet55,JPZf3MBBpQVNR9UseNDS2Q,route_key,code_review,S32,exact,code_review: parenthetical_item_amount,80,1,0.0125,1,1,1,0,0,0,0,1.0000
+sonnet55,JPZf3MBBpQVNR9UseNDS2Q,route_key,code_review,S33,exact,code_review: role_amount_fits_competing_cue,80,2,0.0250,2,2,2,0,0,0,0,1.0000
+sonnet55,JPZf3MBBpQVNR9UseNDS2Q,route_key,code_review,S34,exact,code_review: variance_amount_fits_other_role,80,2,0.0250,2,2,2,0,0,0,0,1.0000
+sonnet55,JPZf3MBBpQVNR9UseNDS2Q,route_key,code_review,S42,exact,code_review: split_attribution_with_remainder,80,1,0.0125,1,1,1,0,0,0,0,1.0000
+sonnet55,JPZf3MBBpQVNR9UseNDS2Q,route_key,code_review,S45,exact,code_review: split_claim_subject_unresolved,80,1,0.0125,1,1,1,0,0,0,0,1.0000
+sonnet55,JPZf3MBBpQVNR9UseNDS2Q,route_key,code_review,S47,exact,code_review: direction_negated,80,1,0.0125,1,1,1,0,0,0,0,1.0000
+sonnet55,JPZf3MBBpQVNR9UseNDS2Q,route_key,code_review,S49,exact,code_review: band_negated,80,2,0.0250,2,2,2,0,0,0,0,1.0000
+sonnet55,JPZf3MBBpQVNR9UseNDS2Q,route_key,code_review,S55,exact,code_review: asset_negated,80,16,0.2000,16,16,16,0,0,0,0,1.0000
+sonnet55,JPZf3MBBpQVNR9UseNDS2Q,route_key,code_review,S56,exact,code_review: gas_asset_named,80,4,0.0500,4,4,4,0,0,0,0,1.0000
+sonnet55,JPZf3MBBpQVNR9UseNDS2Q,route_key,code_review,S68,exact,code_review: lane_f_amount_is_preceding_item_amount,80,3,0.0375,3,3,3,0,0,0,0,1.0000
+sonnet55,JPZf3MBBpQVNR9UseNDS2Q,route_key,code_review,S69,exact,code_review: lane_f_refused_request_object,80,2,0.0250,2,2,2,0,0,0,0,1.0000
+sonnet55,JPZf3MBBpQVNR9UseNDS2Q,route_key,code_review,S70,exact,code_review: lane_f_exclusion_context,80,1,0.0125,1,1,1,0,0,0,0,1.0000
+sonnet55,JPZf3MBBpQVNR9UseNDS2Q,route_key,narrative_sweep,S01,prefix,narrative_sweep: narrative capitalized_run not in the structured citations:,80,12,0.1500,12,12,11,0,1,0,0,0.9167
+sonnet55,JPZf3MBBpQVNR9UseNDS2Q,route_class,code_review,,,,80,52,0.6500,94,94,94,0,0,0,0,1.0000
+sonnet55,JPZf3MBBpQVNR9UseNDS2Q,route_class,narrative_sweep,,,,80,12,0.1500,12,12,11,0,1,0,0,0.9167
+sonnet55,JPZf3MBBpQVNR9UseNDS2Q,all_routes,,,,,80,57,0.7125,106,106,105,0,1,0,0,0.9906
