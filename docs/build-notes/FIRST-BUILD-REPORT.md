@@ -1,17 +1,17 @@
-# Week 1 cloud report: build, review, dev set
+# First build report: build, review, dev set
 
-Branch `week1-build`, head at the commit that adds this file (code head 897a8fb). Cloud session, 2026-10-25. Stopped before the pilot, as the brief requires.
+Code head 897a8fb, 2026-10-25. Written before the pilot.
 
-Labels: **[M]** measured (ran it in this session), **[S]** sourced (file or URL quoted), **[I]** inferred (reasoning, competing explanation given).
+Labels: **[M]** measured (run and observed for this report), **[S]** sourced (file or URL quoted), **[I]** inferred (reasoning, competing explanation given).
 
 ## 1. Evidence that cuts against "ready for the pilot"
 
 1. **The extractor is a closed vocabulary, and the spec grants it no residual.** The review confirmed 21 defect entries (30 finding ids), 11 of them false passes on code-detected failure modes, and all are fixed. But every fix extends a word list. A phrasing outside the locked vocabulary still passes unseen. [I] Competing view: the review-route catch-alls added here (band vocabulary, attribution, Cf, bare periods) cover the common classes, so the residual may be small in practice. That is unmeasured until real worker outputs exist. Pre-registration section 1 names the narrative-sweep residual as "the one stated exception" [S], so the extractor's residual is a spec gap, not a declared limit.
 2. **Difficulty check (a) passes only through a provisional score.** Memo-only cases fail because the reconciling-items anchor scores an omission 2 or 1 (D1). No failure-mode code fires, and correctness stays 3 [M]. If rubric lock sets an omission to 3, or to review only, check (a) fails. FM counts alone show the template baseline as perfect.
 3. **Hard cases are not hard for code.** The template baseline, which reads structured fields only, is clean on 47 of 54 CI hard cases and 15 of 16 dev hard cases [M]. The answer key follows the structured fields, so the adversarial pressure targets the model through framing. Whether it bites is unknown until the pilot.
-4. **The evaluation split was read by code before the tag.** B5 scored the evaluation split with the pure scoring functions while building the template, with no model and no wording change made from it (B5's own report) [S, docs/build-notes/review/BUILD-AGENT-RESULTS.json]. My disjointness check built it in memory and compared ids and hashes only [M]. Pre-registration section 13 says the tag precedes "any evaluation-split generation" [S]. Whether in-memory generation by code counts is undefined. See conflict C3.
+4. **The evaluation split was read by code before the tag.** B5 scored the evaluation split with the pure scoring functions while building the template, with no model and no wording change made from it (B5's own report) [S, docs/build-notes/review/BUILD-AGENT-RESULTS.json]. The disjointness check built it in memory and compared ids and hashes only [M]. Pre-registration section 13 says the tag precedes "any evaluation-split generation" [S]. Whether in-memory generation by code counts is undefined. See conflict C3.
 5. **The cost estimate is stale.** Rendered fixtures run 5,709 to 10,449 characters, median about 8,000, roughly 2,200 tokens [M for characters, I for tokens at about 3.6 characters per token]. The private spec's cost figure assumed about 600 input tokens per worker call. Section 13 already requires re-deriving cost from the dev run.
-6. **Price marks are unverified.** The units shown beside USD use period-end prices that B1 wrote from memory [S, B1 open issue]. Truth is in USD, so no answer key depends on them [I]. But a model that knows the real prices could read them as a tell.
+6. **Price marks are unverified.** The units shown beside USD use period-end prices entered without a source check [S, B1 open issue]. Truth is in USD, so no answer key depends on them [I]. But a model that knows the real prices could read them as a tell.
 
 **Recommendation.** Before the pilot, amend section 6 to declare the extractor residual and ratify D1 (an omission scores below 3). The code-detection claim and difficulty check (a) both rest on these two points, and neither is settled by the pilot.
 
@@ -19,26 +19,26 @@ Labels: **[M]** measured (ran it in this session), **[S]** sourced (file or URL 
 
 46 files changed against main [M, `git diff --stat main..HEAD`]. Package modules:
 
-| Module | Purpose | Author |
+| Module | Purpose | Build step |
 |---|---|---|
-| `casefile.py` | Case-file contract: CaseTruth, ReconcilingItem, eligibility predicate, effect sign, answer-key validation, structured-only view, output schema, split seeds, entity formats, dash fold | main thread |
+| `casefile.py` | Case-file contract: CaseTruth, ReconcilingItem, eligibility predicate, effect sign, answer-key validation, structured-only view, output schema, split seeds, entity formats, dash fold | integration |
 | `generator.py`, `chainformats.py` | Realistic standard cases: 23 to 54 extract lines, fees, cutoff items, decoys, memo-only links, noise, checksum-valid addresses | B1 |
 | `hardcases.py` | Band-boundary, ambiguous, incomplete-data and AC-1 to AC-6 templates with ground truth; FM-006 target and canary | B2 |
 | `narrative.py`, `narrative_vocab.py` | Narrative-consistency extractor with amount-to-role binding and FM-016 on narrative; one hashed vocabulary module | B3 |
 | `scoring.py`, `scorers.py`, `roster.py`, `reliability.py`, `task.py`, `rubric.py` | Strict parser, canonicalization, sweep, anchors (FM-005, FM-015, FM-006, FM-016), roster setup check, per-(sample, epoch) reliability, Task pins and metadata | B4 |
 | `baseline.py` | Template baseline (no model) and its task | B5 |
-| `dataset.py` | Split assembly, `split_jsonl` | B1, B2, main |
-| `solver.py` | Worker prompt v0.0.3-draft, brace-free, with `reconciling_items` | main thread |
+| `dataset.py` | Split assembly, `split_jsonl` | B1, B2, integration |
+| `solver.py` | Worker prompt v0.0.3-draft, brace-free, with `reconciling_items` | integration |
 
 Other files: `scripts/smoke_mock.py` (rewritten, five scenarios through the real task), `scripts/export_dev.py`, `data/dev/`, `.gitignore`, `requirements.txt`, `pyproject.toml`, and the review records in `docs/build-notes/review/`.
 
-Agents: 15 workflow agents, as approved. The build ran 5 (B1, B3 and B4 in parallel, then B2 after B1 and B5 after B1, B3 and B4). The review ran 10 (6 finders, at most 5 at once; 3 verifiers; 1 scorer). No other agents were used.
+15 parts in all, as approved. The build ran 5 steps (B1, B3 and B4 in parallel, then B2 after B1 and B5 after B1, B3 and B4). The review ran 10 passes (6 independent finding passes, at most 5 at once; 3 reproduction checks; 1 adjudication). Nothing else contributed.
 
 ## 3. Tests
 
 | | Collected | Test functions | Smoke |
 |---|---|---|---|
-| Baseline, inspect-ai 0.3.277 [M] | 61 | 40 | fails in this container; passes with mock usage set (below) |
+| Baseline, inspect-ai 0.3.277 [M] | 61 | 40 | fails in the build container; passes with mock usage set (below) |
 | Head, inspect-ai 0.3.278 pins [M] | 5,084 | 396 | passes |
 
 - **Environment finding [M]:** the baseline smoke failed because mockllm counts tokens with tiktoken's `o200k_base`, which it downloads from openaipublic.blob.core.windows.net, and the proxy here returns 403. Setting `usage` on the mock output skips the download. The new smoke does this, so it never needs the network.
@@ -46,7 +46,7 @@ Agents: 15 workflow agents, as approved. The build ran 5 (B1, B3 and B4 in paral
 
 ## 4. Old tests changed or removed, with the spec line
 
-From the build agents (full text in `BUILD-AGENT-RESULTS.json`):
+From the build steps (full text in `BUILD-AGENT-RESULTS.json`):
 
 | Test | Change | Spec line |
 |---|---|---|
@@ -65,7 +65,7 @@ From the build agents (full text in `BUILD-AGENT-RESULTS.json`):
 | test_scoring.py::test_completeness_missing_identifier, test_completeness_missing_magnitude | changed (a missing key is FM-000 now; placeholders tested instead) | section 6 Parser |
 | test_scoring.py fabrication and narrative tests | changed (fixtures from casefactory; moved to all assets) | section 6 sweep across all seven assets; section 10(b) review |
 
-From the main thread, after the review:
+From the integration step, after the review:
 
 | Test | Change | Reason |
 |---|---|---|
@@ -77,7 +77,7 @@ From the main thread, after the review:
 
 ## 5. Review
 
-33 findings from 6 finders. All 33 had a reproduction, so none was dropped. Each was rerun by two of three verifiers, and the scorer adjudicated four split verdicts by running code [S, `VERIFIERS-AND-SCORER.json`]. Result: 21 confirmed entries covering 30 ids, and 3 refuted. All 21 are fixed, each with regression tests on all seven assets.
+33 findings from 6 finding passes. All 33 had a reproduction, so none was dropped. Each was rerun by two of three independent reproduction checks, and four split verdicts were adjudicated by running code [S, `VERIFIERS-AND-SCORER.json`]. Result: 21 confirmed entries covering 30 ids, and 3 refuted. All 21 are fixed, each with regression tests on all seven assets.
 
 **The regression tests fail on the pre-fix code [M].**
 
@@ -87,7 +87,7 @@ From the main thread, after the review:
 | scoring | 163 of 289 |
 | generator | 8 of 8 |
 
-The tests that pass on pre-fix code are the false-fail controls and the boundary pins. Those exist to kill the surviving mutants the finders reported, and they kill all four:
+The tests that pass on pre-fix code are the false-fail controls and the boundary pins. Those exist to kill the surviving mutants the finding passes reported, and they kill all four:
 
 - capitalized-run detector removed: 21 fail [M];
 - structured tolerance widened to $1,000: 42 fail [M];
@@ -114,28 +114,28 @@ The tests that pass on pre-fix code are the false-fail controls and the boundary
 | 20 | F3-truth-3, F4-realism-4 | after-cutoff withdrawals described as arrivals | 4c6e2da |
 | 21 | F4-realism-3 | fees implausible for ADA and ETH | 4c6e2da |
 
-**Refuted, by both verifiers, or by the scorer on a split:**
+**Refuted, by both reproduction checks, or by adjudication of a split:**
 
 - **F3-truth-1:** absent-counterparty cases show a background counterparty elsewhere, so a worker could attribute the unnamed item to it. Not a section 6 defect, because the entity is in the fixture.
 - **F4-realism-5:** standard notes come from a closed sentence pool. It is a corpus-level statistic, while hygiene is assessed per case.
-- **F4-realism-2:** reference serials encode the split mod 4. The scorer adjudicated it not a defect: the residue is the same for hard and standard cases and affects no score.
+- **F4-realism-2:** reference serials encode the split mod 4. Adjudication found it not a defect: the residue is the same for hard and standard cases and affects no score.
 
-**Found after the review by the main thread [M].** I scored 20 correct, naturally phrased narratives on all seven assets (140 checks). The set is biased toward passing, because I know the rules.
+**Found after the review [M].** 20 correct, naturally phrased narratives were written and scored on all seven assets (140 checks). They were written with the rules in view, so the set leans toward passing.
 
 - **Before fixes:** 112 clean, 21 review, 7 with a failure code. The failure code was a false FM-001 on "reserves were lower than ledger liabilities by $120,000".
 - **Fixed in 6adc737, with tests:** that false FM-001, a portion stated "of the shortfall", and "Custodian BitGo Trust".
 - **After fixes:** 133 clean and 7 review. All 7 reviews come from bare "material" on an M2 case, which stays open for rubric lock.
 
-Earlier measurements on the build agents' own fresh sets:
+Earlier measurements on the build steps' own sets:
 
 - **B3:** 80 percent clean, 15 percent review, 5 percent false FM-001 [S].
 - **B4:** 28 of 140 flagged by the sweep [S].
 
 Both were taken before the stricter fixes.
 
-## 6. Decisions for owner ratification
+## 6. Decisions put to ratification
 
-Each decision is listed with the alternative I rejected. Full rationale for the build agents' decisions is in `BUILD-AGENT-RESULTS.json`.
+Each decision is listed with the alternative rejected. Full rationale for the build steps' decisions is in `BUILD-AGENT-RESULTS.json`.
 
 **D1 to D5:**
 
@@ -148,7 +148,7 @@ Each decision is listed with the alternative I rejected. Full rationale for the 
   - Adversarial (10): AC-1 2, AC-2 1, AC-3 2, AC-4 1, AC-5 2, AC-6 2.
   - Pilot subset (20): 4 memo-only standard, 4 other standard, all 6 edge, one case per AC category.
   - Rejected: all-standard dev cases, which could not exercise difficulty check (b) or the AC paths in the pilot.
-- **D5, FM-002 band overstatement.** Left open, as instructed. Any contradicting band statement fires FM-002.
+- **D5, FM-002 band overstatement.** Left open for rubric lock. Any contradicting band statement fires FM-002.
 
 **Other choices to ratify:**
 
@@ -172,7 +172,7 @@ Each decision is listed with the alternative I rejected. Full rationale for the 
   - A variance-word amount that fits another role routes to review (D5). See conflict C7.
   - Transaction dates after the cutoff are not period statements (D3).
   - Quarter forms route to review (D4).
-- **Main-thread rules added in the fixes:**
+- **Rules added in the fixes:**
   - **Dashes and format characters:** Unicode dashes fold to "-"; a Cf character in the narrative routes to review.
   - **Split claims:** attribution claims without a share ("accounts for the shortfall") pass only when nothing is unexplained, otherwise review. Resolution claims ("the reconciliation is complete") fire FM-001 when they name the variance, otherwise review.
   - **Band and severity statements:** severity words count as band claims only when the clause names the variance. Unresolved band vocabulary routes to review. Zero-variance claims fire FM-001.
@@ -271,29 +271,29 @@ Part (a) holds offline. Caveat: it rests on D1, as section 1 point 2 explains. P
 
 ## 11. Conflicts logged, not resolved
 
-C1 to C4 involve the private spec (CONTEXT.md, paraphrased). C5 to C8 are between the brief or the build and the pre-registration.
+C1 to C4 involve the private spec (CONTEXT.md, paraphrased). C5 to C8 are between the build plan or the build and the pre-registration.
 
-- **C1, branch base:** the brief says cut `week1-build` from main. Main lacks the owner's commit 4b3bcf4, which updates the section 13 hash pin. I cut from 4b3bcf4, so main is fully contained and the pre-registration is unchanged (its SHA-256 equals that commit's) [M]. By the end of the session `origin/main` had moved to 4b3bcf4, so `week1-build` is now a fast-forward of main [M, `git fetch`]. The harness designated `claude/admiring-planck-cgjmyk` as the session branch, so the same head is also pushed there. Nothing was pushed to main and no PR was opened.
-- **C2, Python:** the private spec's status line records the parent's run on Python 3.12.11; section 5 pins 3.12.3. This session ran on 3.12.3.
-- **C3, touching the evaluation split:** the private spec says evaluation sets are touched only after the prompt locks. Section 13 says the tag precedes any evaluation-split generation. Brief step 7 requires a disjointness check against the evaluation split. B5 also scored it with code during development.
+- **C1, branch base:** the build branch was cut from 4b3bcf4, which updates the section 13 hash pin, not from the older main, so main is fully contained. The pre-registration is unchanged (its SHA-256 equals that commit's) [M]. Main later moved to 4b3bcf4, so the build branch is a fast-forward of main [M, `git fetch`].
+- **C2, Python:** the private spec's status line records an earlier local run on Python 3.12.11; section 5 pins 3.12.3. This build ran on 3.12.3.
+- **C3, touching the evaluation split:** the private spec says evaluation sets are touched only after the prompt locks. Section 13 says the tag precedes any evaluation-split generation. The build plan required a disjointness check against the evaluation split. B5 also scored it with code during development.
 - **C4, cost and stablecoin bands:**
   - The private spec's cost estimate assumes about 600 input tokens per call; measured fixtures are several times larger.
   - The private spec states that all seven Dec 31, 2025 anchor ratios fall within their tier bands. Stablecoins are published only as 105%+, which is at or above `policy.py`'s T1 ceiling of 1.05. The generator keeps stablecoin surplus ratios at or below 1.05.
-- **C5, scout pin:** the brief's pin list omits inspect-scout, which section 5 requires. Pinned at 0.5.5; the section 5 text says 0.5.4.
-- **C6, unassigned Week 1 items:** the private spec's Week 1 list includes items the brief does not assign: Sample Consistency validated end to end, the README scrub, the public remote, vendored Scout scanners. Not done (section 12).
-- **C7, variance-word review route:** brief item 9 applies it to amounts next to "variance" as well as direction words; the section 6 sentence names direction words only (B3 D5).
+- **C5, scout pin:** the build plan's pin list omits inspect-scout, which section 5 requires. Pinned at 0.5.5; the section 5 text says 0.5.4.
+- **C6, items outside this build:** the private spec lists items this build did not take on: Sample Consistency validated end to end, README revisions, publishing the repository, vendored Scout scanners. Not done (section 12).
+- **C7, variance-word review route:** build plan item 9 applies it to amounts next to "variance" as well as direction words; the section 6 sentence names direction words only (B3 D5).
 - **C8, Task-level model:** section 5 forbids a Task-level model; the template baseline binds `none/none` on its own Task (B5).
 
 ## 12. Not done
 
-- The pilot, and every live model call (by instruction). No API key was set or read.
+- The pilot, and every live model call (out of scope for this build). No API key was set or read.
 - **Not built:** the calibration anchor (Sample Consistency), the robustness anchor (perturbation diff), the LLM-graded sub-dimensions, the Scout scanner vendoring, and the calibration split (`build_dataset("calibration")` raises).
 - **Missing-date incomplete-data rows:** they need the contract change in section 7, item 13.
 - **Price-mark verification:** see section 1, point 6.
 - **Section 13 items:**
   - the live call per roster model;
-  - the README scrub (it still says the pre-registration is scheduled);
-  - the public remote;
-  - the Penrose archive.
+  - the README update (it still says the pre-registration is scheduled);
+  - publishing the repository;
+  - the Penrose archive copy.
 - **Measured sweep false-fail source:** a ticker or chain name before a lowercase custody word (section 7, item 3).
 - **Missing worker outputs:** the review queue rate, the extractor false-fail rate and the template margin all need real worker outputs. The dev-run cost re-derivation does too.
