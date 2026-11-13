@@ -1,0 +1,20 @@
+{
+  "sample_id": "dev-std-012-SOL-M3",
+  "epoch": 2,
+  "log_eval_id": "JPZf3MBBpQVNR9UseNDS2Q",
+  "worker_prompt_sha256": "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d",
+  "worker_output": "{\"asset\":\"SOL\",\"period\":\"2025-12\",\"variance_amount_usd\":735343.35,\"variance_direction\":\"surplus\",\"materiality_band\":\"M3\",\"entities_cited\":[\"hot-1\",\"DP-2512-493757\",\"DP-2512-052149\",\"DP-2512-310317\",\"DP-2601-539265\",\"JE-25-12-5145\",\"DP-2512-788225\"],\"reconciling_items\":[{\"reference\":\"DP-2512-493757\",\"amount_usd\":434042.88,\"type\":\"pending transfer\"},{\"reference\":\"DP-2512-052149\",\"amount_usd\":-91877.40,\"type\":\"timing difference\"}],\"narrative\":\"On-chain reserves of $707,486,534.45 exceed ledger liabilities of $706,751,191.10, a surplus of $735,343.35 (M3). Two eligible open items on hot-1 net to $342,165.48 of explained variance: the chain-only pending deposit DP-2512-493757 adds $434,042.88 to the surplus, while the ledger-only timing difference DP-2512-052149 reduces it by $91,877.40, leaving $393,177.87 unexplained. I excluded DP-2512-310317 (cleared), DP-2601-539265 (dated after cutoff), JE-25-12-5145 (suspense entry) and DP-2512-788225 (a USDC movement, different asset); the root cause of the remaining difference is not yet identified and the workpaper has not been reviewed.\"}",
+  "source": "natural",
+  "seed_note": null,
+  "stratum": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 2
+  },
+  "grades": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 2
+  },
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "graded_by": "RA",
+  "graded_on": "2026-11-12"
+}

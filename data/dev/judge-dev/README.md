@@ -23,7 +23,7 @@ One JSON file per graded output, named `<sample_id>-e<epoch>.json` (a seeded var
 | `log_eval_id` | string | `eval.eval_id` of the log the output was read from |
 | `worker_prompt_sha256` | string | The prompt hash in that log's Task metadata |
 | `worker_output` | string | The worker's completion, verbatim; for a seeded record, the degraded text |
-| `source` | string | `natural`, `seeded_omission` or `seeded_addition` |
+| `source` | string | `natural`, `seeded_omission` or `seeded_addition` (`seeded_addition` also covers in-sentence word edits that make a claim unsupported, overstated or adopted; the rule and the exact edits are in `seed_note`) |
 | `seed_note` | string or null | For a seeded record, what was deleted or added; otherwise null |
 | `stratum` | object | The target level per sub-dimension that this output fills in the §7 stratification, for example `{"faithfulness.narrative_grounding": 1, "completeness.narrative_coverage": 3}` |
 | `grades` | object | The author's 0 to 3 grade per LLM-graded sub-dimension: `faithfulness.narrative_grounding` and `completeness.narrative_coverage` |

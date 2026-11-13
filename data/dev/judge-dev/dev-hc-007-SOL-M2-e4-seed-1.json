@@ -1,0 +1,20 @@
+{
+  "sample_id": "dev-hc-007-SOL-M2",
+  "epoch": 4,
+  "log_eval_id": "JPZf3MBBpQVNR9UseNDS2Q",
+  "worker_prompt_sha256": "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d",
+  "worker_output": "{\"asset\":\"SOL\",\"period\":\"2025-11\",\"variance_amount_usd\":26889.19,\"variance_direction\":\"surplus\",\"materiality_band\":\"M2\",\"entities_cited\":[\"WD-2511-041445\",\"DP-2511-421421\",\"HOT01\",\"WD-2512-156993\",\"JE-25-11-7121\",\"TREAS01\",\"DP-2511-625957\",\"OPS-2511-81805\"],\"reconciling_items\":[{\"reference\":\"WD-2511-041445\",\"amount_usd\":9108.67,\"type\":\"pending transfer\"},{\"reference\":\"DP-2511-421421\",\"amount_usd\":10016.69,\"type\":\"timing difference\"}],\"narrative\":\"On-chain reserves of $780,199,402.35 exceed ledger liabilities of $780,172,513.16 by $26,889.19, a surplus in the M2 (reportable) band. Two open HOT01 items dated 11/30 explain $19,125.36 of it: WD-2511-041445 ($9,108.67, a withdrawal broadcast but not booked in the ledger) and DP-2511-421421 ($10,016.69, a deposit on chain at 23:32 UTC but posted to the ledger after cutoff). I excluded WD-2512-156993 (dated after cutoff), JE-25-11-7121 (a suspense entry) and DP-2511-625957 (on TREAS01, an out-of-scope wallet). That leaves $7,763.83 unexplained, which remains open under ops ticket OPS-2511-81805; the full registered name of BitGo Trust that the reviewer requested is not in the case file, so it is not stated here.\"}",
+  "source": "seeded_addition",
+  "seed_note": "Rule G-SIDE. Grounding, one claim made unsupported: what has happened to one item. In one span that names the item by its reference, say the item is held on the other side: words of the ledger (ledger, booked, posted, credited, debited) and of the chain (chain, broadcast) trade places, so the first side the span names changes, and a span that names one side only names the other side only. Target grounding 1, so the item must not be the only item that explains the variance. Edits, in order: \"WD-2511-041445 ($9,108.67, a withdrawal booked in the ledger but not broadcast)\" became \"WD-2511-041445 ($9,108.67, a withdrawal broadcast but not booked in the ledger)\". Claim: WD-2511-041445: the side it is held on. Target grounding 1; coverage unchanged from the base. Nothing else was added or deleted. Only the narrative field changed; the rest of the output is verbatim.",
+  "stratum": {
+    "faithfulness.narrative_grounding": 1,
+    "completeness.narrative_coverage": 3
+  },
+  "grades": {
+    "faithfulness.narrative_grounding": 1,
+    "completeness.narrative_coverage": 3
+  },
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "graded_by": "RA",
+  "graded_on": "2026-11-12"
+}

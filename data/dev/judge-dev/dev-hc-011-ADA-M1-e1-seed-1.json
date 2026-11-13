@@ -1,0 +1,20 @@
+{
+  "sample_id": "dev-hc-011-ADA-M1",
+  "epoch": 1,
+  "log_eval_id": "JPZf3MBBpQVNR9UseNDS2Q",
+  "worker_prompt_sha256": "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d",
+  "worker_output": "{\"asset\":\"ADA\",\"period\":\"2025-10\",\"variance_amount_usd\":19977.55,\"variance_direction\":\"shortfall\",\"materiality_band\":\"M1\",\"entities_cited\":[\"Hot 1\",\"DP-2510-557345\",\"WD-2510-652593\",\"WD-2510-074129\",\"Treasury ops\",\"WD-2510-766757\"],\"reconciling_items\":[{\"reference\":\"DP-2510-557345\",\"amount_usd\":6298.01,\"type\":\"timing difference\"},{\"reference\":\"WD-2510-652593\",\"amount_usd\":7396.30,\"type\":\"timing difference\"},{\"reference\":\"WD-2510-074129\",\"amount_usd\":6283.24,\"type\":\"pending transfer\"}],\"narrative\":\"On-chain reserves of $206,955,535.31 are $19,977.55 below ledger liabilities of $206,975,512.86, a shortfall in the M1 band (below $25,000). Three open Hot 1 items at cutoff explain the full amount: DP-2510-557345 ($6,298.01, deposit in the ledger at 23:53 but on chain at 00:39 on 11/1), WD-2510-652593 ($7,396.30, withdrawal on chain at 23:35 but posted in the ledger at 00:01 on 11/1) and WD-2510-074129 ($6,283.24, ledger-only withdrawal awaiting the next batch). Together they explain $19,977.55, leaving $0.00 unexplained. WD-2510-652593 clearing on 11/1 does not remove it, since it was open at the cutoff, and the Treasury ops transaction WD-2510-766757 is excluded because that wallet is outside the customer reserve scope.\"}",
+  "source": "seeded_addition",
+  "seed_note": "Rule G-SIDE. Grounding, one claim made unsupported: what has happened to one item. In one span that names the item by its reference, say the item is held on the other side: words of the ledger (ledger, booked, posted, credited, debited) and of the chain (chain, broadcast) trade places, so the first side the span names changes, and a span that names one side only names the other side only. Target grounding 1, so the item must not be the only item that explains the variance. Edits, in order: \"WD-2510-074129 ($6,283.24, chain-only withdrawal awaiting the next batch)\" became \"WD-2510-074129 ($6,283.24, ledger-only withdrawal awaiting the next batch)\". Claim: WD-2510-074129: the side it is held on. Target grounding 1; coverage unchanged from the base. Nothing else was added or deleted. Only the narrative field changed; the rest of the output is verbatim.",
+  "stratum": {
+    "faithfulness.narrative_grounding": 1,
+    "completeness.narrative_coverage": 3
+  },
+  "grades": {
+    "faithfulness.narrative_grounding": 1,
+    "completeness.narrative_coverage": 3
+  },
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "graded_by": "RA",
+  "graded_on": "2026-11-12"
+}

@@ -1,0 +1,20 @@
+{
+  "sample_id": "dev-std-007-ETH-M3",
+  "epoch": 3,
+  "log_eval_id": "JPZf3MBBpQVNR9UseNDS2Q",
+  "worker_prompt_sha256": "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d",
+  "worker_output": "{\"asset\":\"ETH\",\"period\":\"2025-10\",\"variance_amount_usd\":3981629.45,\"variance_direction\":\"surplus\",\"materiality_band\":\"M3\",\"entities_cited\":[\"hot-1\",\"treasury-ops\",\"OI-251031-017\",\"DP-2510-146805\",\"WD-2510-333749\",\"DP-2510-734749\",\"DP-2510-960213\",\"WD-2510-597425\",\"JE-25-10-5925\",\"WD-2510-262681\",\"DP-2511-025225\"],\"reconciling_items\":[{\"reference\":\"DP-2510-146805\",\"amount_usd\":793139.26,\"type\":\"timing difference\"},{\"reference\":\"WD-2510-333749\",\"amount_usd\":946484.06,\"type\":\"timing difference\"},{\"reference\":\"DP-2510-734749\",\"amount_usd\":675392.16,\"type\":\"timing difference\"},{\"reference\":\"DP-2510-960213\",\"amount_usd\":-534673.24,\"type\":\"pending transfer\"},{\"reference\":\"OI-251031-017\",\"amount_usd\":-0.39,\"type\":\"network fee\"}],\"narrative\":\"On-chain reserves of USD 4,962,055,958.42 exceed ledger liabilities of USD 4,958,074,328.97 by a surplus of USD 3,981,629.45, which is M3 (material-risk). Five open hot-1 items dated on or before cutoff net to USD 1,880,341.85 and explain part of the surplus. The surplus-increasing items are DP-2510-146805 (USD 793,139.26), WD-2510-333749 (USD 946,484.06) and DP-2510-734749 (USD 675,392.16). The surplus-reducing items are DP-2510-960213 (USD -534,673.24, pre-credited in the ledger with no funds received) and fee item OI-251031-017 (USD -0.39). USD 2,101,287.60 remains unexplained; I excluded WD-2510-597425 (arrived after cutoff), JE-25-10-5925 (prior-period adjustment), WD-2510-262681 (treasury-ops, out of scope) and DP-2511-025225 (cleared), so the remainder needs further investigation.\"}",
+  "source": "seeded_addition",
+  "seed_note": "Rule G-REASON-SWAP. Grounding, two claims made unsupported: why two items are left out. Two spans, each an item reference followed by the reason the narrative gives for it, exchange their reasons word for word. Target grounding 0. Edits, in order: \"WD-2510-597425 (cleared)\" became \"WD-2510-597425 (arrived after cutoff)\"; \"DP-2511-025225 (arrived after cutoff)\" became \"DP-2511-025225 (cleared)\". Claim: WD-2510-597425 and DP-2511-025225: reasons exchanged. Target grounding 0; coverage unchanged from the base. Nothing else was added or deleted. Only the narrative field changed; the rest of the output is verbatim.",
+  "stratum": {
+    "faithfulness.narrative_grounding": 0,
+    "completeness.narrative_coverage": 3
+  },
+  "grades": {
+    "faithfulness.narrative_grounding": 0,
+    "completeness.narrative_coverage": 3
+  },
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "graded_by": "RA",
+  "graded_on": "2026-11-12"
+}

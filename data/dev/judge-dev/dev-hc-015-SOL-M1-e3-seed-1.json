@@ -1,0 +1,20 @@
+{
+  "sample_id": "dev-hc-015-SOL-M1",
+  "epoch": 3,
+  "log_eval_id": "JPZf3MBBpQVNR9UseNDS2Q",
+  "worker_prompt_sha256": "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d",
+  "worker_output": "{\"asset\":\"SOL\",\"period\":\"2025-12\",\"variance_amount_usd\":16526.05,\"variance_direction\":\"shortfall\",\"materiality_band\":\"M1\",\"entities_cited\":[\"hot-1\",\"TRF-2512-71501\",\"DP-2512-582869\",\"JE-25-12-3777\"],\"reconciling_items\":[{\"reference\":\"TRF-2512-71501\",\"amount_usd\":6637.86,\"type\":\"In flight\"},{\"reference\":\"DP-2512-582869\",\"amount_usd\":9888.19,\"type\":\"timing difference\"}],\"narrative\":\"On-chain reserves of $414,888,538.79 are $16,526.05 below ledger liabilities of $414,905,064.84, a shortfall in the M1 band (below the $25,000 floor). Two eligible open items on hot-1 explain the whole variance: OTC leg TRF-2512-71501 ($6,637.86), which is on chain only, and timing difference DP-2512-582869 ($9,888.19), which the ledger posted on 31-Dec but the chain recorded after cutoff. Together they explain $16,526.05, leaving $0.00 unexplained. Manual adjustment JE-25-12-3777 is excluded because manual adjustments cannot be relied on as reconciling items, and it should be followed up with the preparer given its pending reversal.\"}",
+  "source": "seeded_addition",
+  "seed_note": "Rule G-HEDGE-TYPE. Grounding, one claim made overstated: what kind of item something is. In one span that names the item by its reference, replace the item's type words with a run of words copied verbatim from a case note that names the item and gives that type only with a hedge (looks like, may, might, likely, probably, possibly, to confirm). The hedge itself is not copied, so the narrative states as fact what the case file gives as uncertain. Target grounding 2. Edits, in order: \"in-flight transfer TRF-2512-71501 ($6,637.86)\" became \"OTC leg TRF-2512-71501 ($6,637.86)\". Claim: TRF-2512-71501: type stated as fact from the hedged note \"TRF-2512-71501 looks like an OTC leg, counterparty not on the ticket yet.\". Target grounding 2; coverage unchanged from the base. Nothing else was added or deleted. Only the narrative field changed; the rest of the output is verbatim.",
+  "stratum": {
+    "faithfulness.narrative_grounding": 2,
+    "completeness.narrative_coverage": 3
+  },
+  "grades": {
+    "faithfulness.narrative_grounding": 2,
+    "completeness.narrative_coverage": 3
+  },
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "graded_by": "RA",
+  "graded_on": "2026-11-12"
+}
