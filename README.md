@@ -347,7 +347,7 @@ The dataset and the repository are versioned independently: dataset version 0.1.
 
 ## 📜 License
 
-Apache License 2.0: see [`LICENSE`](./LICENSE). Use it, fork it, take the method into your own evals. Redistributions keep the license text and mark the files they change, and the license carries an express patent grant from contributors. If you pre-register an eval with it, the acknowledgement is a link back; the value to me is pre-registration becoming normal for agent evals in regulated finance.
+Code: Apache License 2.0, see [`LICENSE`](./LICENSE). Datasets in `data/`: CC BY 4.0, see [`data/LICENSE-DATA.md`](./data/LICENSE-DATA.md); from dataset version 0.1.0 each dataset file carries a canary GUID so trainers can filter it out. Use it, fork it, take the method into your own evals. Redistributions keep the license text and mark the files they change, and the license carries an express patent grant from contributors. If you pre-register an eval with it, the acknowledgement is a link back; the value to me is pre-registration becoming normal for agent evals in regulated finance.
 
 ---
 
