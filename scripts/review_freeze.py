@@ -939,10 +939,11 @@ def git_commit_info(repo: str, sha: str, path: str) -> tuple[str, str, bytes | N
 
 
 def check_freeze_commit(manifest_bytes: bytes, manifest: Mapping[str, Any], *, repo: str, sha: str, rel_path: str,
-                        now: datetime) -> tuple[list[str], datetime | None]:
-    """The freeze commit is at least 48 hours old, its closing trailer block holds the trailer
-    for the manifest's reviewer and date (only Co-Authored-By lines beside it), and it holds
-    the manifest byte for byte."""
+                        now: datetime, min_gap: timedelta | None = MIN_GAP) -> tuple[list[str], datetime | None]:
+    """The freeze commit is at least `min_gap` old (48 hours for the second look; settlement
+    passes None, since it may run right after the freeze), its closing trailer block holds the
+    trailer for the manifest's reviewer and date (only Co-Authored-By lines beside it), and it
+    holds the manifest byte for byte."""
     gaps: list[str] = []
     try:
         committer, message, blob = git_commit_info(repo, sha, rel_path)
@@ -954,7 +955,7 @@ def check_freeze_commit(manifest_bytes: bytes, manifest: Mapping[str, Any], *, r
             freeze_time = freeze_time.replace(tzinfo=timezone.utc)
     except ValueError:
         return [f"freeze commit {sha}: committer time {committer!r} is not ISO"], None
-    if now - freeze_time < MIN_GAP:
+    if min_gap is not None and now - freeze_time < min_gap:
         gaps.append(f"freeze commit {sha} is less than 48 hours old")
     stated = _parse_date(str(manifest.get("freeze_date", "")))
     if stated is not None and stated > latest_local_date(freeze_time):
