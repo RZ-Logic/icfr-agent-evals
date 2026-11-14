@@ -92,6 +92,5 @@ Written on 2026-11-13 from the author's private decision record as it stood then
 
 ## Still open
 
-- The 3 remaining Sonnet 5.5 transcript reads, after the second look (§13 pilot row).
 - The external reviewer's confirmation (§13 labeling row).
 - The author's ratification of the §13 decision row.
