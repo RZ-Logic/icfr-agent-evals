@@ -833,8 +833,27 @@ def expanded_rows(rec: Record) -> list[dict[str, str]]:
 
 
 def trailer(reviewer: str, date: str) -> str:
-    """The last line of the freeze commit message."""
+    """The reviewer's line in the freeze commit message's closing trailer block."""
     return f"Reviewed-by: {reviewer}, {date}"
+
+
+_CO_AUTHOR = re.compile(r"Co-Authored-By: \S.* <[^<>\s]+>", re.IGNORECASE)
+
+
+def closing_block_holds_trailer(message: str, want: str) -> bool:
+    """The message's last paragraph (its closing trailer block) holds `want` exactly once and
+    every other line in it is a Co-Authored-By attribution. The reviewer's line may sit beside
+    an attribution trailer, never beside another reviewer's line, other text or another kind
+    of trailer (pre-registration section 8, amended 2026-11-13 after the pilot rehearsal)."""
+    lines = [line.rstrip("\r") for line in message.rstrip("\r\n").split("\n")]
+    block: list[str] = []
+    for line in reversed(lines):
+        if not line.strip():
+            break
+        block.append(line)
+    if block.count(want) != 1:
+        return False
+    return all(line == want or _CO_AUTHOR.fullmatch(line) for line in block)
 
 
 def _write_json(path: Path, payload: Any) -> None:
@@ -917,8 +936,9 @@ def git_commit_info(repo: str, sha: str, path: str) -> tuple[str, str, bytes | N
 
 def check_freeze_commit(manifest_bytes: bytes, manifest: Mapping[str, Any], *, repo: str, sha: str, rel_path: str,
                         now: datetime) -> tuple[list[str], datetime | None]:
-    """The freeze commit is at least 48 hours old, its message ends with the trailer for the
-    manifest's reviewer and date, and it holds the manifest byte for byte."""
+    """The freeze commit is at least 48 hours old, its closing trailer block holds the trailer
+    for the manifest's reviewer and date (only Co-Authored-By lines beside it), and it holds
+    the manifest byte for byte."""
     gaps: list[str] = []
     try:
         committer, message, blob = git_commit_info(repo, sha, rel_path)
@@ -935,10 +955,10 @@ def check_freeze_commit(manifest_bytes: bytes, manifest: Mapping[str, Any], *, r
     stated = _parse_date(str(manifest.get("freeze_date", "")))
     if stated is not None and stated > latest_local_date(freeze_time):
         gaps.append(f"freeze commit {sha}: the manifest's freeze date {stated.isoformat()} is after the commit")
-    lines = message.rstrip("\n").split("\n")
     want = trailer(str(manifest.get("reviewer", "")), str(manifest.get("freeze_date", "")))
-    if not lines or lines[-1].rstrip("\r") != want:
-        gaps.append(f"freeze commit {sha}: the message's last line is not {want!r}")
+    if not closing_block_holds_trailer(message, want):
+        gaps.append(f"freeze commit {sha}: the message's closing trailer block does not hold {want!r} "
+                    "with only Co-Authored-By lines beside it")
     if blob is None:
         gaps.append(f"freeze commit {sha} does not hold {rel_path}")
     elif blob != manifest_bytes:
