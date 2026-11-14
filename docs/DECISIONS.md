@@ -83,7 +83,7 @@ Written on 2026-11-13 from the author's private decision record as it stood then
 
 ## 11. Data, labeling and licences
 
-- **Labeling the 54 hand-written cases:** one rater (Branch B, the pre-registered fallback). No external reviewer is named, so the author labels the 54 cases and re-labels them after at least 48 hours; the statistic is intra-rater kappa and the subset is named Self-verified. Branch A (two raters) was the plan from 2026-10-09; the rulings that kept it with a reviewer whose commitment was not yet confirmed are superseded. [D-R7, 2026-11-11; D-R7a, 2026-11-12; D-R18, 2026-11-14]
+- **Labeling the 54 hand-written cases:** one rater (Branch B, the pre-registered fallback). No external reviewer is named, so the author labels the 54 cases and re-labels them after at least 48 hours; the statistic is intra-rater kappa and the subset can earn the name Self-verified (kappa at least 0.7). Branch A (two raters) was the plan from 2026-10-09; the rulings that kept it with a reviewer whose commitment was not yet confirmed are superseded. [D-R7, 2026-11-11; D-R7a, 2026-11-12; D-R18, 2026-11-14]
 - **"Hand-written" means the author writes each case's scenario;** balances, items and arithmetic may be built and checked by code. [D-R13, 2026-11-11]
 - **Licences:** code Apache 2.0, datasets CC BY 4.0, a canary GUID in the 0.1.0 dataset files, and a private held-out slice from v0.2. [D-R14, 2026-11-12]
 
@@ -93,5 +93,5 @@ Written on 2026-11-13 from the author's private decision record as it stood then
 
 ## Still open
 
-- The external reviewer's confirmation (§13 labeling row).
+- The CONTEXT.md edit for D-R18 (CONTEXT.md still states Branch A in force).
 - The author's ratification of the §13 decision row.
