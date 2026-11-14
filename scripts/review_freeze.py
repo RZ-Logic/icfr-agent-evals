@@ -119,7 +119,8 @@ RUN_RESULT_KEYS: tuple[str, ...] = (
     "N", "n", "strata", "first_class_counts", "second_class_counts", "sample_first_correct",
     "sample_first_not_correct", "run_first_not_correct", "kappa", "ci_lower", "ci_upper", "resamples",
     "degenerate_resamples", "correct_to_not_correct", "not_correct_to_correct", "disagreements",
-    "citation_omission_to_wrong", "wrong_to_citation_omission", "disagreeing_first_unit_ids", "gate",
+    "citation_omission_to_wrong", "wrong_to_citation_omission", "citation_omission_to_correct",
+    "correct_to_citation_omission", "disagreeing_first_unit_ids", "gate",
 )
 PUBLIC_RUN_RESULT_KEYS: tuple[str, ...] = tuple(k for k in RUN_RESULT_KEYS if k != "disagreeing_first_unit_ids")
 SECOND_LOOK_RESULT_KEYS: tuple[str, ...] = ("agreement", "bootstrap_seed", "runs")
@@ -939,10 +940,11 @@ def git_commit_info(repo: str, sha: str, path: str) -> tuple[str, str, bytes | N
 
 
 def check_freeze_commit(manifest_bytes: bytes, manifest: Mapping[str, Any], *, repo: str, sha: str, rel_path: str,
-                        now: datetime) -> tuple[list[str], datetime | None]:
-    """The freeze commit is at least 48 hours old, its closing trailer block holds the trailer
-    for the manifest's reviewer and date (only Co-Authored-By lines beside it), and it holds
-    the manifest byte for byte."""
+                        now: datetime, min_gap: timedelta | None = MIN_GAP) -> tuple[list[str], datetime | None]:
+    """The freeze commit is at least `min_gap` old (48 hours for the second look; settlement
+    passes None, since it may run right after the freeze), its closing trailer block holds the
+    trailer for the manifest's reviewer and date (only Co-Authored-By lines beside it), and it
+    holds the manifest byte for byte."""
     gaps: list[str] = []
     try:
         committer, message, blob = git_commit_info(repo, sha, rel_path)
@@ -954,7 +956,7 @@ def check_freeze_commit(manifest_bytes: bytes, manifest: Mapping[str, Any], *, r
             freeze_time = freeze_time.replace(tzinfo=timezone.utc)
     except ValueError:
         return [f"freeze commit {sha}: committer time {committer!r} is not ISO"], None
-    if now - freeze_time < MIN_GAP:
+    if min_gap is not None and now - freeze_time < min_gap:
         gaps.append(f"freeze commit {sha} is less than 48 hours old")
     stated = _parse_date(str(manifest.get("freeze_date", "")))
     if stated is not None and stated > latest_local_date(freeze_time):
@@ -1338,8 +1340,9 @@ def second_look_result(rec: Record, sl_rows: Sequence[dict], sl_map: Sequence[di
     flips both ways, the disagreement count and ids (private), and the gate. Agreement only.
     Classes are trial effects (D-R9): a `citation_omission` on a name code confirms the
     case file holds passes like `correct`. Finding units ruled `citation_omission` once
-    and `wrong` the other time are counted apart, both ways (D-R9); the first verdict
-    stays of record (D-M)."""
+    and `wrong` or `correct` the other time are counted apart, each way (D-R9, D-R17): the
+    class cannot see a flip between a confirmed `citation_omission` and `correct`, so these counts
+    report it. The first verdict stays of record (D-M)."""
     units_by_run = second_look_units(rec)
     first_verdict = _verdict_of(rec)
     sl_verdict = {r["unit_id"]: r["verdict"] for r in sl_rows}
@@ -1350,7 +1353,7 @@ def second_look_result(rec: Record, sl_rows: Sequence[dict], sl_map: Sequence[di
         drawn = sorted((r for r in sl_map if r["row_kind"] == "narrative" and r["run_id"] == run),
                        key=lambda r: r["first_unit_id"])
         first, second, ids = [], [], []
-        co_to_wrong = wrong_to_co = 0
+        co_to_wrong = wrong_to_co = co_to_correct = correct_to_co = 0
         strata: Counter = Counter()
         for r in drawn:
             u = by_first.get(r["first_unit_id"])
@@ -1365,6 +1368,8 @@ def second_look_result(rec: Record, sl_rows: Sequence[dict], sl_map: Sequence[di
                 pair = (first_verdict.get(f), sl_verdict.get(finding_sl[f]))
                 co_to_wrong += pair == (CITATION_OMISSION, "wrong")
                 wrong_to_co += pair == ("wrong", CITATION_OMISSION)
+                co_to_correct += pair == (CITATION_OMISSION, "correct")
+                correct_to_co += pair == ("correct", CITATION_OMISSION)
             first.append(u["first_class"] == FIRST_CORRECT)
             second.append(ok)
             ids.append(u["first_unit_id"])
@@ -1382,6 +1387,7 @@ def second_look_result(rec: Record, sl_rows: Sequence[dict], sl_map: Sequence[di
             "resamples": boot["resamples"], "degenerate_resamples": boot["degenerate_resamples"],
             "correct_to_not_correct": c2n, "not_correct_to_correct": n2c, "disagreements": c2n + n2c,
             "citation_omission_to_wrong": co_to_wrong, "wrong_to_citation_omission": wrong_to_co,
+            "citation_omission_to_correct": co_to_correct, "correct_to_citation_omission": correct_to_co,
             "disagreeing_first_unit_ids": [i for i, a, b in zip(ids, first, second) if a != b],
         }
         result["gate"] = gate(result)

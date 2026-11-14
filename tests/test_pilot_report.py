@@ -62,6 +62,7 @@ def _load_script():
 
 pr = _load_script()
 _REAL_PACKAGE_CODE_GAPS = pr.package_code_gaps
+FAKE_FREEZE = "f" * 40
 
 
 @pytest.fixture(autouse=True)
@@ -71,6 +72,18 @@ def _package_check_passes(monkeypatch):
     test_refuses_a_record_whose_run_commit_package_differs runs the real check and
     tests/test_d_r9.py tests it on a scratch repository."""
     monkeypatch.setattr(pr, "package_code_gaps", lambda repo, commit: [])
+    # The synthetic manifests sit outside this repository and in no commit, so the section 8
+    # freeze-commit check is stubbed too; tests/test_freeze_ancestry.py tests it on a scratch
+    # repository.
+    monkeypatch.setattr(pr, "freeze_commit_gaps", _record_freeze_call)
+
+
+FREEZE_CALLS: list[dict] = []
+
+
+def _record_freeze_call(repo, mpath, mbytes, man, commit):
+    FREEZE_CALLS.append({"repo": repo, "mpath": mpath, "commit": commit})
+    return [], FAKE_FREEZE
 
 
 def _log_dir(tmp_path_factory, label: str) -> str:
@@ -563,7 +576,10 @@ def test_with_a_record_prints_all_four_figures_labeled_and_fm008_on_the_review_s
     sha = hashlib.sha256(Path(records.correct_manifest).read_bytes()).hexdigest()
     assert data["review_record"] == {"packet_dir": records.correct,
                                      "run_ids": {"sonnet": "R1", "haiku": None, "template": None},
-                                     "manifest": {"path": records.correct_manifest, "sha256": sha}}
+                                     "manifest": {"path": records.correct_manifest, "sha256": sha,
+                                                  "freeze_commit": FAKE_FREEZE,
+                                                  "settlement_commit": data["review_record"]["manifest"]["settlement_commit"]}}
+    assert re.fullmatch(r"[0-9a-f]{40}", data["review_record"]["manifest"]["settlement_commit"])
     assert (f"Frozen review record {records.correct}: every file it lists hashes to its manifest "
             f"{records.correct_manifest} (sha256 {sha})") in out
     assert data["runs"]["haiku"]["content_pass4_figures"]["score_of_record"] is None
@@ -697,6 +713,31 @@ def test_refuses_a_record_whose_run_commit_package_differs(logs, capsys, records
     code, out, err = _main(capsys, *_base(logs), *_rec(records, "correct"))
     assert code == pr.EXIT_REFUSED and out == ""
     assert "fails the frozen-record check" in err and "run commit 0000000 cannot be read" in err
+
+
+def test_freeze_commit_needs_a_review_record(logs, capsys):
+    code, out, err = _main(capsys, *_base(logs), "--freeze-commit", "abcdef1")
+    assert code == pr.EXIT_REFUSED and out == "" and "--freeze-commit needs --review-record" in err
+
+
+def test_freeze_commit_reaches_the_check(logs, capsys, records):
+    FREEZE_CALLS.clear()
+    code, out, err = _main(capsys, *_base(logs), *_rec(records, "correct"), "--freeze-commit", "abcdef1")
+    assert code == 0, err
+    assert FREEZE_CALLS[-1]["commit"] == "abcdef1" and FREEZE_CALLS[-1]["repo"] == pr.REPO_ROOT
+    assert str(FREEZE_CALLS[-1]["mpath"]) == records.correct_manifest
+    assert re.search(rf"frozen in commit {FAKE_FREEZE[:12]}, an ancestor of the settlement commit "
+                     rf"[0-9a-f]{{12}} \(HEAD\)", out)
+
+
+def test_refuses_a_record_whose_freeze_commit_fails(logs, capsys, records, monkeypatch):
+    """Section 8: a freeze-commit gap refuses the record before any figure."""
+    monkeypatch.setattr(pr, "freeze_commit_gaps",
+                        lambda repo, mpath, mbytes, man, commit: (["freeze commit abc is not an ancestor of the "
+                                                                   "settlement commit (HEAD)"], ""))
+    code, out, err = _main(capsys, *_base(logs), *_rec(records, "correct"))
+    assert code == pr.EXIT_REFUSED and out == ""
+    assert "fails the frozen-record check" in err and "not an ancestor of the settlement commit" in err
 
 
 def test_review_manifest_needs_a_review_record(logs, capsys, records):
