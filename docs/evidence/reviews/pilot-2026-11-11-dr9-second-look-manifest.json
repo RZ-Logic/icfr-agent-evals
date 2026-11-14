@@ -1,0 +1,65 @@
+{
+  "manifest_version": "1",
+  "kind": "second_look",
+  "run_id": "pilot-2026-11-11-dr9",
+  "agreement": "intra-rater",
+  "first_manifest_sha256": "0d8678f8eabb1b0610000f3076ea9e6e6ea8173c8be54bbd0124ed6c7631eb0d",
+  "freeze_commit": "271f2fa",
+  "draw_seed": 12998175386459259325,
+  "bootstrap_seed": 12642175247983892275,
+  "private_files": {
+    "packet-meta.json": "96314a8f8aab9d07ec8140c42401e36f8477874972362caa5f7231a96d6a8f83",
+    "reviewer/cases.csv": "e99c8279cab2f2c1f2d2e064fdea08570d47a275f0b363f068cc401221032997",
+    "reviewer/packet.csv": "45487eeb548ebe1c544bbf1104b6ce6ae86b771c22ca60814a34aec46bba57bd",
+    "reviewer/packet.html": "54f8ada73b1a4e5620e7e7e3145e45d08e1f5912930b470182b365d38367b547",
+    "reviewer/verdicts-blank.csv": "09ac75ac345a30e319488746934965b09fd77bac1c1b9763907d5c6475e825e1",
+    "sealed/members.csv": "9c8d811cab980ec76838d34f34feea33e3c83c58b14327df01a72ec66a8c014e",
+    "sealed/runs.json": "5afd03dcfcb5cc4d3b418972e37811c3f7216308951dfa9e8085619e984395b6",
+    "sealed/second-look-map.csv": "4a884a5c49ab0fa75c3b38cbdcdd9cbb7a62b3a229b7d6e1942a38f4c5458f55",
+    "sealed/second-look-meta.json": "f24e71fce2ba22389b9e4d2940a94a4fb0a3cfc2d81204040f9d3823fd1ea321",
+    "sealed/second-look-result.json": "2609994573823a0298546a24fff396b7a647284ac7ce837a6c0753389d762da0",
+    "sealed/summary.json": "491895ab3b34efd41b08658995752b17825176f97bd3bba273ee9b72c3f1a4b3",
+    "verdicts.csv": "376c2f56960c22eeced14474e8c6ce59eec56f9ec2c28da9c73ebf7fc7d9f27e"
+  },
+  "runs": {
+    "sonnet55": {
+      "N": 57,
+      "n": 57,
+      "strata": {
+        "both": 7,
+        "code_review": 45,
+        "narrative_sweep": 5
+      },
+      "first_class_counts": {
+        "correct": 57,
+        "not_correct": 0
+      },
+      "second_class_counts": {
+        "correct": 57,
+        "not_correct": 0
+      },
+      "sample_first_correct": 57,
+      "sample_first_not_correct": 0,
+      "run_first_not_correct": 0,
+      "kappa": null,
+      "ci_lower": null,
+      "ci_upper": null,
+      "resamples": 10000,
+      "degenerate_resamples": 10000,
+      "correct_to_not_correct": 0,
+      "not_correct_to_correct": 0,
+      "disagreements": 0,
+      "citation_omission_to_wrong": 0,
+      "wrong_to_citation_omission": 0,
+      "gate": {
+        "branch": "no_overturn",
+        "passed": true,
+        "result": "confirmed"
+      }
+    }
+  },
+  "blinding": null,
+  "reviewer": "Rizwan Ahmed",
+  "date": "2026-11-14",
+  "statement": "The second look was made without access to the first verdicts and with the worker model hidden. It reports agreement only."
+}
