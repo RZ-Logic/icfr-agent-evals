@@ -49,6 +49,7 @@ Written on 2026-11-13 from the author's private decision record as it stood then
 
 - **Second look:** at least 48 hours after the freeze, the author re-reviews a blinded sample (100 units or 10 percent per worker run, plus every not-correct unit up to 50). If agreement falls below kappa 0.60, no correct verdict can be overturned. An outside reviewer is optional. [D-D, 2026-11-09]
 - **Blinding check:** 40 units, drawn from every narrative the author read (flagged, coded and the hard-case reads alike), where the author guesses the model. [D-D, 2026-11-09; D-R6, 2026-11-10]
+- **The freeze commit's Reviewed-by line may sit beside Co-Authored-By attribution lines** in the message's closing trailer block; another reviewer's line, other text or another kind of trailer there still refuses the freeze. Changed after the pilot's second-look draw refused both pilot freeze commits for this order, and disclosed in the pilot record. [D-R16, 2026-11-13]
 
 ## 7. The route judge (an LLM that would sort flags)
 
