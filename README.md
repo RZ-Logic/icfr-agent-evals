@@ -358,6 +358,7 @@ Code: Apache License 2.0, see [`LICENSE`](./LICENSE). Datasets in `data/`: CC BY
 
 - Website: [velocyt.ca](https://velocyt.ca)
 - GitHub: [@RZ-Logic](https://github.com/RZ-Logic)
+- Consulting: custom evals, pre-registration and AI control reviews for regulated finance through [Velocyt](https://velocyt.ca), at [systems@velocyt.ca](mailto:systems@velocyt.ca)
 
 Also built: __[FinAgent OS](https://github.com/RZ-Logic/finagent-os)__ (governance pillar, SOX-defensible AI for crypto-finance) · __[regulated-rag](https://github.com/RZ-Logic/regulated-rag)__ (retrieval pillar, citation grounding as architecture) · __[RegisterBench](https://github.com/RZ-Logic/RegisterBench)__ (measurement pillar, anti-AI-slop rulesets on real filings)
 
