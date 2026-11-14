@@ -540,6 +540,13 @@ def test_24_a_citation_omission_then_wrong_is_a_flip_and_classes_are_trial_effec
     unconfirmed = SimpleNamespace(**{**vars(record), "units": {**record.units, "F1": {
         "row_kind": "finding", "route_class": "narrative_sweep", "facts_json": "[]"}}})
     assert rf.second_look_units(unconfirmed)["R1"][0]["first_class"] == rf.FIRST_NOT_CORRECT
+    # D-R17: a flip between citation_omission and correct keeps the class but is counted apart,
+    # each way (the pilot's one change, BitGo Trust, was of this kind).
+    to_correct = rf.second_look_result(record, [{"unit_id": "S1", "verdict": "none_wrong"},
+                                                {"unit_id": "S2", "verdict": "correct"}],
+                                       sl_map, bootstrap_seed=1)["runs"]["R1"]
+    assert to_correct["citation_omission_to_correct"] == 1 and to_correct["correct_to_citation_omission"] == 0
+    assert to_correct["disagreements"] == 0 and to_correct["citation_omission_to_wrong"] == 0
 
 
 # --- 25: the generator assertion -----------------------------------------------------------------

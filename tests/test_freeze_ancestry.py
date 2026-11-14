@@ -129,31 +129,87 @@ def test_a_manifest_changed_after_the_freeze_refuses(repo):
     assert any("differs from the manifest file" in g for g in gaps)
 
 
-def test_a_freeze_commit_off_heads_history_refuses(repo):
+def test_a_freeze_commit_off_heads_history_is_not_a_freeze(repo):
     git(repo, "checkout", "-q", "-b", "side")
     sha = freeze(repo, f"Freeze review record\n\n{TRAILER}\n")
     git(repo, "checkout", "-q", "main")
     write_manifest(repo)  # the same bytes, uncommitted on main
     gaps, found = check(repo, sha)
-    assert found == sha
-    assert any("is not an ancestor of the settlement commit (HEAD)" in g for g in gaps)
+    assert found == "" and "it is not frozen" in gaps[0]
 
 
-def test_a_commit_that_does_not_hold_the_manifest_refuses(repo):
-    other = git(repo, "rev-parse", "HEAD")
-    freeze(repo, f"Freeze review record\n\n{TRAILER}\n")
-    gaps, _ = check(repo, other)
-    assert any("does not hold" in g for g in gaps)
+def test_a_merged_side_branch_freeze_passes(repo):
+    git(repo, "checkout", "-q", "-b", "side")
+    sha = freeze(repo, f"Freeze review record\n\n{TRAILER}\n")
+    git(repo, "checkout", "-q", "main")
+    later_commit(repo, "main-only.txt")
+    git(repo, "merge", "-q", "--no-ff", "-m", "merge side", "side")
+    assert check(repo) == ([], sha)
 
 
-def test_a_manifest_added_twice_needs_an_explicit_commit(repo):
+def test_an_explicit_commit_that_did_not_freeze_the_manifest_refuses(repo):
+    start = git(repo, "rev-parse", "HEAD")
+    sha = freeze(repo, f"Freeze review record\n\n{TRAILER}\n")
+    gaps, found = check(repo, start)
+    assert found == sha and any("is not the commit that froze" in g for g in gaps)
+
+
+def test_a_later_commit_with_the_trailer_cannot_stand_in_for_the_freeze(repo):
+    freeze(repo, "commit manifest without sign-off\n")
+    git(repo, "commit", "-q", "--allow-empty", "-m", f"later\n\n{TRAILER}\n")
+    later = git(repo, "rev-parse", "HEAD")
+    gaps, _ = check(repo, later)
+    assert any("is not the commit that froze" in g for g in gaps)
+    assert any("closing trailer block" in g for g in gaps)
+
+
+def test_a_manifest_changed_after_its_freeze_refuses_even_with_an_explicit_commit(repo):
+    first = freeze(repo, f"Freeze review record\n\n{TRAILER}\n")
+    path = repo / REL
+    path.write_bytes(path.read_bytes().replace(b'"run-x"', b'"run-x" '))
+    git(repo, "commit", "-q", "-am", f"re-freeze\n\n{TRAILER}\n")
+    second = git(repo, "rev-parse", "HEAD")
+    for commit in (None, second, first):
+        gaps, found = check(repo, commit)
+        assert found == first and any("never re-frozen" in g for g in gaps)
+
+
+def test_a_manifest_removed_and_added_again_refuses(repo):
     freeze(repo, f"Freeze review record\n\n{TRAILER}\n")
     git(repo, "rm", "-q", REL)
     git(repo, "commit", "-q", "-m", "remove")
-    sha = freeze(repo, f"Freeze again\n\n{TRAILER}\n")
-    gaps, found = check(repo)
-    assert found == "" and "added in 2 commits" in gaps[0]
-    assert check(repo, sha) == ([], sha)
+    freeze(repo, f"Freeze again\n\n{TRAILER}\n")
+    gaps, _ = check(repo)
+    assert any("never re-frozen" in g for g in gaps)
+
+
+def test_a_freeze_commit_that_carries_other_files_refuses(repo):
+    write_manifest(repo)
+    (repo / "figures.txt").write_text("19/20\n", encoding="utf-8")
+    git(repo, "add", REL, "figures.txt")
+    git(repo, "commit", "-q", "-m", f"Freeze with figures\n\n{TRAILER}\n")
+    gaps, _ = check(repo)
+    assert any("not the manifest alone" in g for g in gaps)
+
+
+def test_a_manifest_off_the_public_path_refuses(repo):
+    other = repo / "notes" / "run-x-manifest.json"
+    other.parent.mkdir()
+    other.write_bytes(manifest_bytes())
+    git(repo, "add", "notes/run-x-manifest.json")
+    git(repo, "commit", "-q", "-m", f"Freeze elsewhere\n\n{TRAILER}\n")
+    gaps, found = check(repo, path=other)
+    assert found == "" and "public manifest path" in gaps[0]
+
+
+def test_a_shallow_clone_refuses(repo, tmp_path):
+    freeze(repo, f"Freeze review record\n\n{TRAILER}\n")
+    later_commit(repo)
+    clone = tmp_path / "shallow"
+    subprocess.run(["git", "clone", "-q", "--depth", "1", repo.as_uri(), str(clone)], check=True,
+                   capture_output=True)
+    gaps, found = check(clone)
+    assert found == "" and "shallow" in gaps[0]
 
 
 @pytest.mark.parametrize("bad", ["HEAD", "xyz1234", "abc"])

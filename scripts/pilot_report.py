@@ -42,10 +42,12 @@ scripts/review_freeze.py check_record_files (the check second-look-draw runs too
 manifest must be this packet's review_freeze manifest and list every packet and record
 file, and every file it lists must hash to it. The manifest is --review-manifest, by
 default docs/evidence/reviews/<run-id>-manifest.json in this repo. The freeze commit is
-checked too (freeze_commit_gaps): --freeze-commit, by default the one commit on HEAD's
-history that added the manifest, must hold the manifest byte for byte, carry the
-reviewer's trailer and be an ancestor of HEAD, the settlement commit (section 8; its
-age is not checked here, only by the second look). The package-hash check of
+checked too (freeze_commit_gaps): the one commit on HEAD's history that touches the
+manifest (at docs/evidence/reviews/<run-id>-manifest.json, in a full clone) must change
+the manifest alone, hold it byte for byte, carry the reviewer's trailer with a freeze
+date not after the commit, and be an ancestor of HEAD, the settlement commit (section 8;
+its age is not checked here, only by the second look); --freeze-commit, if given, must
+name it. The package-hash check of
 pre-registration section 8 (Review record and freeze) is: the package code this report
 runs (icfr_agent_evals in this tree, the settlement code) must hash the same, file by
 file as git blob ids, as at the manifest's run commit (the commit that scored the logs);
@@ -101,7 +103,8 @@ Exit codes:
      log that is not the template baseline (or a worker log that is), a regression
      pair compare_runs.py refuses, a help request, an output path that cannot be
      written, a review record that cannot be read, that has no freeze manifest or
-     fails the check against it (every gap counted), that names none of the three
+     fails the check against it or the section 8 freeze-commit check (every gap
+     counted), that names none of the three
      pilot logs or that does not cover a run it names (trials.RecordError, every gap
      listed), or any other input the report cannot read
 """
@@ -324,7 +327,9 @@ def load_review_record(packet_dir: str, manifest: str | None = None,
         more = f"; and {len(gaps) - MAX_GAPS_SHOWN} more" if len(gaps) > MAX_GAPS_SHOWN else ""
         raise Refused(f"review record {packet_dir} fails the frozen-record check against {mpath} "
                       f"({len(gaps)} gap(s)): {shown}{more}")
-    return record, {"path": str(mpath), "sha256": hashlib.sha256(mbytes).hexdigest(), "freeze_commit": commit}
+    head = _git(REPO_ROOT, "rev-parse", "HEAD").stdout.decode("utf-8", errors="replace").strip()
+    return record, {"path": str(mpath), "sha256": hashlib.sha256(mbytes).hexdigest(), "freeze_commit": commit,
+                    "settlement_commit": head}
 
 
 def freeze_commit_gaps(repo: Path, mpath: Path, mbytes: bytes, man: dict,
@@ -333,37 +338,58 @@ def freeze_commit_gaps(repo: Path, mpath: Path, mbytes: bytes, man: dict,
     a record unless its manifest was frozen in a commit that is an ancestor of the
     settlement commit. The settlement commit is HEAD of this repository (the commit whose
     code applies the verdicts; package_code_gaps checks that code against the run commit).
-    The freeze commit is `freeze_commit`, or by default the one commit on HEAD's history
-    that added the manifest file. That commit must hold the manifest byte for byte and carry
-    the reviewer's trailer in its closing trailer block (review_freeze.check_freeze_commit,
-    with no minimum age: settlement may follow the freeze at once), and `git merge-base
-    --is-ancestor` must place it on HEAD's history (HEAD itself counts). Returns (gaps, the
-    freeze commit's full hash or "" when none was found). Runs git log, git show and git
-    merge-base, and nothing else."""
+
+    The manifest must sit at the public path section 8 names,
+    docs/evidence/reviews/<run-id>-manifest.json, in a full (not shallow) clone. The freeze
+    commit is the one commit on HEAD's history that touches that path: a manifest changed
+    again after its freeze is refused, since a frozen manifest is never re-frozen (a
+    correction goes to an amendment, section 8). `freeze_commit`, when given, must name that
+    same commit. The freeze commit must change the manifest alone (no merge, no other file),
+    hold it byte for byte, carry the reviewer's trailer in its closing trailer block with a
+    freeze date not after the commit (review_freeze.check_freeze_commit, with no minimum
+    age: settlement may follow the freeze at once), and `git merge-base --is-ancestor` must
+    place it on HEAD's history (HEAD itself counts). Returns (gaps, the freeze commit's full
+    hash or "" when none was found). Runs git rev-parse, git log, git diff-tree, git show
+    and git merge-base, and nothing else."""
     rf = load_review_freeze()
     try:
         rel = mpath.resolve().relative_to(Path(repo).resolve()).as_posix()
     except ValueError:
         return [f"the manifest {mpath} is outside this repository, so its freeze commit cannot be checked"], ""
-    sha = str(freeze_commit or "")
-    if not sha:
-        added = _git(repo, "log", "--diff-filter=A", "--format=%H", "HEAD", "--", rel)
-        found = added.stdout.decode("utf-8", errors="replace").split() if added.returncode == 0 else []
-        if not found:
-            return [f"the manifest {rel} is in no commit on HEAD's history: it is not frozen; commit it with "
-                    f"the reviewer's trailer before settling"], ""
-        if len(found) > 1:
-            return [f"the manifest {rel} was added in {len(found)} commits on HEAD's history; pass "
-                    f"--freeze-commit"], ""
-        sha = found[0]
-    if not _COMMIT_RE.match(sha):
-        return [f"--freeze-commit {sha!r} is not a hex commit hash"], ""
-    resolved = _git(repo, "rev-parse", "--verify", "--quiet", f"{sha}^{{commit}}")
-    if resolved.returncode != 0:
-        return [f"freeze commit {sha} cannot be read in {repo}"], ""
-    full = resolved.stdout.decode("utf-8", errors="replace").strip()
-    gaps, _when = rf.check_freeze_commit(mbytes, man, repo=str(repo), sha=full, rel_path=rel,
+    want = f"docs/evidence/reviews/{man.get('run_id')}-manifest.json"
+    if rel.lower() != want.lower():
+        return [f"the manifest is {rel}, not {want}, the public manifest path section 8 names"], ""
+    shallow = _git(repo, "rev-parse", "--is-shallow-repository")
+    if shallow.returncode != 0 or shallow.stdout.decode("utf-8", errors="replace").strip() != "false":
+        return ["this checkout is shallow (or git cannot say); fetch the full history before settling"], ""
+    touched = _git(repo, "log", "--format=%H", "HEAD", "--", rel)
+    history = touched.stdout.decode("utf-8", errors="replace").split() if touched.returncode == 0 else []
+    if not history:
+        return [f"the manifest {rel} is in no commit on HEAD's history: it is not frozen; commit it with "
+                f"the reviewer's trailer before settling"], ""
+    full = history[-1]
+    gaps: list[str] = []
+    if len(history) > 1:
+        gaps.append(f"the manifest {rel} was first committed in {full[:12]} and changed in {len(history) - 1} "
+                    f"later commit(s); a frozen manifest is never re-frozen (a correction goes to an amendment)")
+    if freeze_commit:
+        if not _COMMIT_RE.match(freeze_commit):
+            return [f"--freeze-commit {freeze_commit!r} is not a hex commit hash"], ""
+        given = _git(repo, "rev-parse", "--verify", "--quiet", f"{freeze_commit}^{{commit}}")
+        if given.returncode != 0:
+            return [f"freeze commit {freeze_commit} cannot be read in {repo}"], ""
+        if given.stdout.decode("utf-8", errors="replace").strip() != full:
+            gaps.append(f"--freeze-commit {freeze_commit} is not the commit that froze {rel} ({full[:12]})")
+    parents = _git(repo, "rev-list", "--parents", "-n", "1", full).stdout.decode("utf-8", errors="replace").split()
+    if len(parents) > 2:
+        gaps.append(f"freeze commit {full[:12]} is a merge; the manifest is frozen in a commit of its own")
+    files = _git(repo, "diff-tree", "--no-commit-id", "--name-only", "-r", "--root", full)
+    changed = sorted(set(files.stdout.decode("utf-8", errors="replace").splitlines()) - {""})
+    if len(parents) <= 2 and [c.lower() for c in changed] != [rel.lower()]:
+        gaps.append(f"freeze commit {full[:12]} changes {changed}, not the manifest alone")
+    more, _when = rf.check_freeze_commit(mbytes, man, repo=str(repo), sha=full, rel_path=rel,
                                          now=datetime.now(timezone.utc), min_gap=None)
+    gaps.extend(more)
     ancestor = _git(repo, "merge-base", "--is-ancestor", full, "HEAD")
     if ancestor.returncode == 1:
         gaps.append(f"freeze commit {full[:12]} is not an ancestor of the settlement commit (HEAD)")
@@ -1075,7 +1101,8 @@ def build_report(args: argparse.Namespace) -> tuple[str, dict[str, Any], list[di
     if record is not None:
         lines.append(f"Frozen review record {record_dir}: every file it lists hashes to its manifest "
                      f"{manifest['path']} (sha256 {manifest['sha256']}), frozen in commit "
-                     f"{manifest['freeze_commit'][:12]}, an ancestor of HEAD")
+                     f"{manifest['freeze_commit'][:12]}, an ancestor of the settlement commit "
+                     f"{manifest['settlement_commit'][:12]} (HEAD)")
     payload["review_record"] = ({"packet_dir": record_dir, "run_ids": run_ids, "manifest": manifest}
                                 if record is not None else None)
     for role, log in logs.items():
@@ -1178,11 +1205,12 @@ def parser() -> argparse.ArgumentParser:
                         "fm_audit.csv (scripts/review_freeze.py load_frozen_record). With it, every run the record "
                         "names gets the review-settled figure (the score of record) and the audit-adjusted figure; "
                         "without it only the route-blind and code-only figures print. The record is refused "
-                        "unless every file its freeze manifest lists hashes to it")
+                        "unless every file its freeze manifest lists hashes to it and its freeze commit passes the "
+                        "section 8 check (see --freeze-commit)")
     p.add_argument("--freeze-commit", default=None, metavar="SHA",
-                   help="the commit that froze the record's manifest (default: the one commit on HEAD's history "
-                        "that added the manifest file); it must hold the manifest, carry the reviewer's trailer and "
-                        "be an ancestor of HEAD; needs --review-record")
+                   help="the commit that froze the record's manifest; checked against the one commit on HEAD's "
+                        "history that touches the manifest, which must change the manifest alone, hold it, carry "
+                        "the reviewer's trailer and be an ancestor of HEAD; optional; needs --review-record")
     p.add_argument("--review-manifest", default=None, metavar="MANIFEST",
                    help="the record's freeze manifest (default: docs/evidence/reviews/<run-id>-manifest.json in "
                         "this repo); needs --review-record")
