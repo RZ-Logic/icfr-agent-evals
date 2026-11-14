@@ -1,5 +1,5 @@
 """Build the labeling sheet a rater uses on the hand-labeled cases (section 4,
-Labeling protocol, Branch A).
+Labeling protocol; Branch B in force, decision D-R18).
 
 The sheet is one self-contained HTML file: no network, no external script, no
 external style sheet. For each case it shows the case file exactly as the worker

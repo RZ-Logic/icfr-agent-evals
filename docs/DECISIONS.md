@@ -2,7 +2,7 @@
 
 The author's rulings on the Phase 1 pre-registration ([`PRE-REGISTRATION-PHASE-1.md`](../PRE-REGISTRATION-PHASE-1.md)) from 2026-11-09 to 2026-11-14, grouped by topic, one plain sentence each. The tag and date in brackets are the ruling's name and date in the pre-registration, which states each rule in full; where this log and the pre-registration differ, the pre-registration governs. Earlier D-numbered decisions (D1 to D18, from 2026-11-05 on; the D1 of 2026-11-11 on difficulty check (b) is listed below), P12 of 2026-11-07 and the ratifications of 2026-11-03 and 2026-11-04 are recorded in §13 of the pre-registration; the few that still shape today's rules are noted where they matter.
 
-Written on 2026-11-13 from the author's private decision record as it stood then: 37 rulings, with D-R16 added the same evening and D-R17 on 2026-11-14 (39).
+Written on 2026-11-13 from the author's private decision record as it stood then: 37 rulings, with D-R16 added the same evening and D-R17 and D-R18 on 2026-11-14 (40).
 
 ## 1. What the score of record is
 
@@ -83,7 +83,7 @@ Written on 2026-11-13 from the author's private decision record as it stood then
 
 ## 11. Data, labeling and licences
 
-- **Labeling the 54 hand-written cases:** two raters (Branch A). [name withheld] is named as the external SOX-experienced reviewer, although his commitment to label the 54 cases and to be named is not yet confirmed; it is checked before the repository is made public. If he cannot complete the labeling, Branch B (the author relabels after 48 hours) applies and is logged in DEVIATIONS.md. [D-R7, 2026-11-11; D-R7a, 2026-11-12]
+- **Labeling the 54 hand-written cases:** one rater (Branch B, the pre-registered fallback). No external reviewer is named, so the author labels the 54 cases and re-labels them after at least 48 hours; the statistic is intra-rater kappa and the subset is named Self-verified. Branch A (two raters) was the plan from 2026-10-09; the rulings that kept it with a reviewer whose commitment was not yet confirmed are superseded. [D-R7, 2026-11-11; D-R7a, 2026-11-12; D-R18, 2026-11-14]
 - **"Hand-written" means the author writes each case's scenario;** balances, items and arithmetic may be built and checked by code. [D-R13, 2026-11-11]
 - **Licences:** code Apache 2.0, datasets CC BY 4.0, a canary GUID in the 0.1.0 dataset files, and a private held-out slice from v0.2. [D-R14, 2026-11-12]
 
