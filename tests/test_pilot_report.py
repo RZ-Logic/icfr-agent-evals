@@ -726,7 +726,8 @@ def test_freeze_commit_reaches_the_check(logs, capsys, records):
     assert code == 0, err
     assert FREEZE_CALLS[-1]["commit"] == "abcdef1" and FREEZE_CALLS[-1]["repo"] == pr.REPO_ROOT
     assert str(FREEZE_CALLS[-1]["mpath"]) == records.correct_manifest
-    assert f"frozen in commit {FAKE_FREEZE[:12]}, an ancestor of the settlement commit " in out
+    assert re.search(rf"frozen in commit {FAKE_FREEZE[:12]}, an ancestor of the settlement commit "
+                     rf"[0-9a-f]{{12}} \(HEAD\)", out)
 
 
 def test_refuses_a_record_whose_freeze_commit_fails(logs, capsys, records, monkeypatch):

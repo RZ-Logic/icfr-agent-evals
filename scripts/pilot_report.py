@@ -349,7 +349,7 @@ def freeze_commit_gaps(repo: Path, mpath: Path, mbytes: bytes, man: dict,
     freeze date not after the commit (review_freeze.check_freeze_commit, with no minimum
     age: settlement may follow the freeze at once), and `git merge-base --is-ancestor` must
     place it on HEAD's history (HEAD itself counts). Returns (gaps, the freeze commit's full
-    hash or "" when none was found). Runs git rev-parse, git log, git diff-tree, git show
+    hash or "" when none was found). Runs git rev-parse, git log, git rev-list, git diff-tree, git show
     and git merge-base, and nothing else."""
     rf = load_review_freeze()
     try:
@@ -1213,7 +1213,7 @@ def parser() -> argparse.ArgumentParser:
                         "the reviewer's trailer and be an ancestor of HEAD; optional; needs --review-record")
     p.add_argument("--review-manifest", default=None, metavar="MANIFEST",
                    help="the record's freeze manifest (default: docs/evidence/reviews/<run-id>-manifest.json in "
-                        "this repo); needs --review-record")
+                        "this repo, the only path the section 8 freeze-commit check accepts); needs --review-record")
     return p
 
 

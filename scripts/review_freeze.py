@@ -1341,7 +1341,7 @@ def second_look_result(rec: Record, sl_rows: Sequence[dict], sl_map: Sequence[di
     Classes are trial effects (D-R9): a `citation_omission` on a name code confirms the
     case file holds passes like `correct`. Finding units ruled `citation_omission` once
     and `wrong` or `correct` the other time are counted apart, each way (D-R9, D-R17): the
-    class cannot see a flip between `citation_omission` and `correct`, so these counts
+    class cannot see a flip between a confirmed `citation_omission` and `correct`, so these counts
     report it. The first verdict stays of record (D-M)."""
     units_by_run = second_look_units(rec)
     first_verdict = _verdict_of(rec)
