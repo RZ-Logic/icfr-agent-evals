@@ -560,7 +560,7 @@ def test_freeze_commit_checks(tmp_path, monkeypatch, capsys):
     env = _frozen(tmp_path, monkeypatch, capsys)
     _git(monkeypatch, env, message="Freeze review record\n\nReviewed-by: someone else, 2026-11-09\n")
     assert rf.main(draw_argv(env)) == 3
-    assert "last line" in capsys.readouterr().err
+    assert "closing trailer block" in capsys.readouterr().err
     _git(monkeypatch, env, blob=b"{}\n")
     assert rf.main(draw_argv(env)) == 3
     assert "differs from the manifest file" in capsys.readouterr().err
@@ -568,6 +568,51 @@ def test_freeze_commit_checks(tmp_path, monkeypatch, capsys):
     assert rf.main(draw_argv(env)) == 0, capsys.readouterr().err
     assert calls[-1][2] == "docs/evidence/reviews/dev-test-run-manifest.json"
     assert not (env.tmp / "repo" / ".git").exists()
+
+
+_WANT = "Reviewed-by: Rizwan Ahmed, 2026-11-11"
+_CO = "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+
+
+@pytest.mark.parametrize("message", [
+    f"Freeze\n\n{_WANT}\n",
+    f"Freeze\n\n{_WANT}",
+    f"Freeze\n\n{_WANT}\n{_CO}\n",                      # the pilot's two freeze commits (7dcb85b, 271f2fa)
+    f"Freeze\n\n{_WANT}\n{_CO}\n\n",                    # as `git show -s --format=%B` prints them
+    f"Freeze\n\n{_CO}\n{_WANT}\n",
+    f"Freeze\r\n\r\n{_WANT}\r\n{_CO}\r\n",
+    f"Freeze\n\n{_WANT}\nco-authored-by: Someone Else <someone@example.com>\n",
+    f"{_WANT}\n",                                       # a one-paragraph message is its own trailer block
+])
+def test_closing_block_accepts_reviewer_line_beside_attribution(message):
+    assert rf.closing_block_holds_trailer(message, _WANT)
+
+
+@pytest.mark.parametrize("message", [
+    "Freeze\n\nReviewed-by: someone else, 2026-11-11\n",
+    f"Freeze\n\nReviewed-by: Rizwan Ahmed, 2026-11-12\n{_CO}\n",   # wrong date
+    f"Freeze\n\n{_CO}\n",                                         # no reviewer line
+    f"Freeze\n\n{_WANT}\n\n{_CO}\n",                              # reviewer line not in the closing block
+    f"Freeze, with {_WANT} quoted in the body\n\n{_CO}\n",
+    f"Freeze\n\n{_WANT}\nReviewed-by: someone else, 2026-11-11\n",  # a second reviewer beside it
+    f"Freeze\n\n{_WANT}\nSigned-off-by: Rizwan Ahmed <r@example.com>\n",
+    f"Freeze\n\n{_WANT}\nsee the pilot record\n",
+    f"Freeze\n\n{_WANT}\n{_WANT}\n",
+    f"Freeze\n\n {_WANT}\n",                                      # not the exact line
+    f"Freeze\n\n{_WANT}\nCo-Authored-By: no address\n",
+    f"Freeze\n\n{_WANT}\nCo-Authored-By: Someone <no-at-sign>\n",
+    f"Freeze\n\n{_WANT}\nCo-Authored-By: x Reviewed-by: someone else, 2026-11-11 <a@b.c>\n",
+    "Freeze\n\nReviewed-by: someone else, 2026-11-11\n \n" + _WANT + "\n",  # NBSP line is not blank to git
+    "",
+])
+def test_closing_block_refuses_anything_else(message):
+    assert not rf.closing_block_holds_trailer(message, _WANT)
+
+
+def test_draw_accepts_attribution_after_reviewer_line(tmp_path, monkeypatch, capsys):
+    env = _frozen(tmp_path, monkeypatch, capsys)
+    _git(monkeypatch, env, message=f"Freeze review record\n\nReviewed-by: {REVIEWER}, {DAY}\n{_CO}\n")
+    assert rf.main(draw_argv(env)) == 0, capsys.readouterr().err
 
 
 def test_second_look_48h(tmp_path, monkeypatch, capsys):

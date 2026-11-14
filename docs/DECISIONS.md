@@ -2,7 +2,7 @@
 
 The author's rulings on the Phase 1 pre-registration ([`PRE-REGISTRATION-PHASE-1.md`](../PRE-REGISTRATION-PHASE-1.md)) from 2026-11-09 to 2026-11-13, grouped by topic, one plain sentence each. The tag and date in brackets are the ruling's name and date in the pre-registration, which states each rule in full; where this log and the pre-registration differ, the pre-registration governs. Earlier D-numbered decisions (D1 to D18, from 2026-11-05 on; the D1 of 2026-11-11 on difficulty check (b) is listed below), P12 of 2026-11-07 and the ratifications of 2026-11-03 and 2026-11-04 are recorded in §13 of the pre-registration; the few that still shape today's rules are noted where they matter.
 
-Written on 2026-11-13 from the author's private decision record as it stood then: 37 rulings.
+Written on 2026-11-13 from the author's private decision record as it stood then: 37 rulings, with D-R16 added the same evening (38).
 
 ## 1. What the score of record is
 
@@ -49,6 +49,7 @@ Written on 2026-11-13 from the author's private decision record as it stood then
 
 - **Second look:** at least 48 hours after the freeze, the author re-reviews a blinded sample (100 units or 10 percent per worker run, plus every not-correct unit up to 50). If agreement falls below kappa 0.60, no correct verdict can be overturned. An outside reviewer is optional. [D-D, 2026-11-09]
 - **Blinding check:** 40 units, drawn from every narrative the author read (flagged, coded and the hard-case reads alike), where the author guesses the model. [D-D, 2026-11-09; D-R6, 2026-11-10]
+- **The freeze commit's Reviewed-by line may sit beside Co-Authored-By attribution lines** in the message's closing trailer block; another reviewer's line, other text or another kind of trailer there still refuses the freeze. The attribution credits the tooling that built the manifest and drafted the commit; every verdict in the record is the named reviewer's. Changed after the pilot's second-look draw refused both pilot freeze commits for this order, and disclosed in the pilot record. [D-R16, 2026-11-13]
 
 ## 7. The route judge (an LLM that would sort flags)
 
