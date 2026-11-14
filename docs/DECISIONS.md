@@ -93,5 +93,4 @@ Written on 2026-11-13 from the author's private decision record as it stood then
 
 ## Still open
 
-- The CONTEXT.md edit for D-R18 (CONTEXT.md still states Branch A in force).
 - The author's ratification of the §13 decision row.
