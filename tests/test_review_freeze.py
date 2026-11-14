@@ -578,6 +578,7 @@ _CO = "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
     f"Freeze\n\n{_WANT}\n",
     f"Freeze\n\n{_WANT}",
     f"Freeze\n\n{_WANT}\n{_CO}\n",                      # the pilot's two freeze commits (7dcb85b, 271f2fa)
+    f"Freeze\n\n{_WANT}\n{_CO}\n\n",                    # as `git show -s --format=%B` prints them
     f"Freeze\n\n{_CO}\n{_WANT}\n",
     f"Freeze\r\n\r\n{_WANT}\r\n{_CO}\r\n",
     f"Freeze\n\n{_WANT}\nco-authored-by: Someone Else <someone@example.com>\n",
@@ -599,6 +600,9 @@ def test_closing_block_accepts_reviewer_line_beside_attribution(message):
     f"Freeze\n\n{_WANT}\n{_WANT}\n",
     f"Freeze\n\n {_WANT}\n",                                      # not the exact line
     f"Freeze\n\n{_WANT}\nCo-Authored-By: no address\n",
+    f"Freeze\n\n{_WANT}\nCo-Authored-By: Someone <no-at-sign>\n",
+    f"Freeze\n\n{_WANT}\nCo-Authored-By: x Reviewed-by: someone else, 2026-11-11 <a@b.c>\n",
+    "Freeze\n\nReviewed-by: someone else, 2026-11-11\n \n" + _WANT + "\n",  # NBSP line is not blank to git
     "",
 ])
 def test_closing_block_refuses_anything_else(message):

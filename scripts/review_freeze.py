@@ -837,18 +837,22 @@ def trailer(reviewer: str, date: str) -> str:
     return f"Reviewed-by: {reviewer}, {date}"
 
 
-_CO_AUTHOR = re.compile(r"Co-Authored-By: \S.* <[^<>\s]+>", re.IGNORECASE)
+# A name with no colon or angle bracket, then one e-mail address: the attribution form only,
+# so no reviewer statement can ride inside it.
+_CO_AUTHOR = re.compile(r"Co-Authored-By: [^<>:\r\n]*[^\s<>:] <[^<>\s@]+@[^<>\s@]+>", re.IGNORECASE)
 
 
 def closing_block_holds_trailer(message: str, want: str) -> bool:
     """The message's last paragraph (its closing trailer block) holds `want` exactly once and
     every other line in it is a Co-Authored-By attribution. The reviewer's line may sit beside
     an attribution trailer, never beside another reviewer's line, other text or another kind
-    of trailer (pre-registration section 8, amended 2026-11-13 after the pilot rehearsal)."""
+    of trailer (pre-registration section 8, amended 2026-11-13 after the pilot rehearsal).
+    A format check, not a safeguard: the author writes the message. A blank line is one that
+    holds only spaces and tabs, as git counts it."""
     lines = [line.rstrip("\r") for line in message.rstrip("\r\n").split("\n")]
     block: list[str] = []
     for line in reversed(lines):
-        if not line.strip():
+        if not line.strip(" \t"):
             break
         block.append(line)
     if block.count(want) != 1:
