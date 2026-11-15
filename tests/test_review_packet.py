@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 from inspect_ai import eval as inspect_eval
-from inspect_ai.log import EvalError, read_eval_log, write_eval_log
+from inspect_ai.log import read_eval_log, write_eval_log
 from inspect_ai.model import ModelOutput, get_model
 from inspect_ai.scorer import Score
 
@@ -584,9 +584,6 @@ def test_refusals(base_log, truths, tmp_path):
     def set_fingerprint(log):
         log.eval.metadata = {**log.eval.metadata, "dataset_sha256": "0" * 64}
 
-    def set_error(log):
-        log.samples[0].error = EvalError(message="boom", traceback="", traceback_ansi="")
-
     def drop_truth(log):
         log.samples[0].metadata = {k: v for k, v in log.samples[0].metadata.items() if k != "truth"}
 
@@ -612,7 +609,8 @@ def test_refusals(base_log, truths, tmp_path):
         "split": [f"a={bad('split', set_split)}"],
         "eval_split": [f"a={bad('evalsplit', set_eval_split)}"],
         "fingerprint": [f"a={good}", f"b={bad('fp', set_fingerprint)}"],
-        "sample_error": [f"a={bad('err', set_error)}"],
+        # a sample error is no longer refused: the epoch is carried as a failed trial with
+        # no review unit (tests/test_review_packet_eval.py)
         "no_truth": [f"a={bad('notruth', drop_truth)}"],
         "no_fixture": [f"a={bad('nofixture', drop_fixture)}"],
         "limit": [f"a={bad('limit', set_limit)}"],
