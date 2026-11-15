@@ -1,8 +1,8 @@
 # Decision log
 
-The author's rulings on the Phase 1 pre-registration ([`PRE-REGISTRATION-PHASE-1.md`](../PRE-REGISTRATION-PHASE-1.md)) from 2026-11-09 to 2026-11-14, grouped by topic, one plain sentence each. The tag and date in brackets are the ruling's name and date in the pre-registration, which states each rule in full; where this log and the pre-registration differ, the pre-registration governs. Earlier D-numbered decisions (D1 to D18, from 2026-11-05 on; the D1 of 2026-11-11 on difficulty check (b) is listed below), P12 of 2026-11-07 and the ratifications of 2026-11-03 and 2026-11-04 are recorded in §13 of the pre-registration; the few that still shape today's rules are noted where they matter.
+The author's rulings on the Phase 1 pre-registration ([`PRE-REGISTRATION-PHASE-1.md`](../PRE-REGISTRATION-PHASE-1.md)) from 2026-11-09 to 2026-11-15, grouped by topic, one plain sentence each. The tag and date in brackets are the ruling's name and date in the pre-registration, which states each rule in full; where this log and the pre-registration differ, the pre-registration governs. Earlier D-numbered decisions (D1 to D18, from 2026-11-05 on; the D1 of 2026-11-11 on difficulty check (b) is listed below), P12 of 2026-11-07 and the ratifications of 2026-11-03 and 2026-11-04 are recorded in §13 of the pre-registration; the few that still shape today's rules are noted where they matter.
 
-Written on 2026-11-13 from the author's private decision record as it stood then: 37 rulings, with D-R16 added the same evening, D-R17 and D-R18 on 2026-11-14, and D-R19 (the outside pre-tag review's fixes) the same day (41).
+Written on 2026-11-13 from the author's private decision record as it stood then: 37 rulings, with D-R16 added the same evening, D-R17 and D-R18 on 2026-11-14, and D-R19 (the outside pre-tag review's fixes) the same day (41). D-R20, the first ruling after the tag, was added on 2026-11-15 (section 13).
 
 ## 1. What the score of record is
 
@@ -96,6 +96,19 @@ Written on 2026-11-13 from the author's private decision record as it stood then
 ## 12. Cost
 
 - **Calibration-time grading is a one-off cost outside the per-run cap;** Opus 5.5 and Sonnet 5 costs are measured from their own dev logs. Confirmed 2026-11-12: about $140 per full run at grader step 1. [D-R12, 2026-11-11]
+
+## 13. After the tag
+
+D-R20 (2026-11-15) is the first ruling after the tag. It settles points the tagged text leaves open for the tooling built after the tag, and changes no rule, threshold or criterion of the pre-registration. It is logged in DEVIATIONS.md.
+
+- **An errored epoch is a format break (FM-000):** an epoch that ended in an error fails its trial, scores 0 on every anchor, and counts as FM-000 in every FM count, the format-break rate and the CI regression gates. It gets its FM-000 code audit and its whole-narrative read, stays in the audit-adjusted figure, and supports H2 only when the audit rules it `real_error`. The audit sees the error's class name, never its message. An epoch with a missing score and no error stays a failed trial. This follows §9: a missing or refused generation stays a format break. [D-R20, 2026-11-15]
+- **The sensitivity row drops only the defect epochs:** an epoch hit by an extractor crash or an answer-key mismatch leaves the row; a case passes when all its remaining epochs pass; a case with every epoch dropped leaves the row; the count of cases scored on fewer than four epochs is given per model and subset. The row is given for all three figures, never as the score of record, and an errored epoch is never dropped from it. [D-R20, 2026-11-15]
+- **Blinding check pool:** a text that another worker run also wrote, on any case, leaves the pool, since it has no single right answer; an empty text never enters it. [D-R20, 2026-11-15]
+- **H3 robustness** compares the set of failing steps across the readings, and a gap of exactly one standard error counts as saturation. [D-R20, 2026-11-15]
+- **An undefined reliability limit fails:** when the full-run ICC(A,1) lower limit cannot be computed, that sub-dimension is excluded for the run and the other is decided on its own value. [D-R20, 2026-11-15]
+- **Test-retest and bias-audit details are kept as built:** the alpha bootstrap uses 10,000 unit resamples with undefined resamples dropped and counted, and the one seeded option permutation is kept, and flagged, when it comes out as the identity or the reversal. [D-R20, 2026-11-15]
+- **Labeling checks:** the 48-hour gap is shown on every case from the sheet's timer, or the subset gets no name; the published adjudicated-case count is the count of cases differing on any label, a label given in one pass and left blank in the other counting as differing. [D-R20, 2026-11-15]
+- **The template baseline goes in the review packet,** so its reference row gets all three figures; an evaluation-split packet without it is refused. [D-R20, 2026-11-15]
 
 ## Still open
 
