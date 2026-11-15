@@ -16,6 +16,7 @@ from inspect_ai.dataset import MemoryDataset
 from inspect_ai.model import ModelOutput, ModelUsage
 from inspect_ai.solver import Generate, TaskState, solver
 
+from icfr_agent_evals import reliability as rel
 from icfr_agent_evals.casefile import CaseFile, to_sample, truth_of
 from icfr_agent_evals.regression import CODE_ROUTE, SWEEP_ROUTE, route_key
 from icfr_agent_evals.reliability import (
@@ -131,6 +132,50 @@ def test_error_with_full_mark_scores_still_fails_the_trial():
     sample.error = SimpleNamespace(message="boom")
     t = evaluate_trial(sample)
     assert not t.success and "sample error" in t.failed_because
+
+
+# --- Decision D-R20: an errored epoch is a format break (FM-000) in every FM count ------------
+
+ERR = SimpleNamespace(message="boom")
+
+
+def test_errored_epoch_carries_fm000_from_evaluate_trial():
+    t = evaluate_trial(SimpleNamespace(id="a", epoch=1, scores=None, error=ERR))
+    assert t.failure_modes == ("FM-000",) and "failure modes ['FM-000']" in t.failed_because
+    coded = _sample("a", 1, {"fabrication_anchor": _score(0, ["FM-005"])}, error=ERR)
+    assert evaluate_trial(coded).failure_modes == ("FM-000", "FM-005")
+    # idempotent: an FM-000 its scorers already recorded is not added twice
+    broke = _sample("a", 1, {"correctness_anchor": _score(0, ["FM-000"]), "fabrication_anchor": _score(0, ["FM-005"])},
+                    error=ERR)
+    assert evaluate_trial(broke).failure_modes == ("FM-000", "FM-005")
+    assert rel.errored_format_break(broke, ("FM-000", "FM-005", "FM-000")) == ("FM-000", "FM-005")
+    # no sample error: the codes its scorers recorded, exactly as before
+    plain = _sample("a", 1, {"fabrication_anchor": _score(0, ["FM-005"]), "faithfulness_anchor": _score(0, ["FM-005"])})
+    assert evaluate_trial(plain).failure_modes == ("FM-005",)
+    assert rel.errored_format_break(plain, ()) == ()
+
+
+def test_fm_counts_count_an_errored_epoch_as_fm000():
+    samples = [_sample("a", 1), _sample("a", 2, error=ERR), _sample("b", 1, {"correctness_anchor": _score(0, ["FM-000"])}),
+               _sample("b", 2)]
+    rep = reliability_report(samples, k=2)
+    assert rep.fm_counts == {"FM-000": 2} and rep.pass_k == {"a": 0, "b": 0}
+    assert rel.format_fm_counts(rep) == "FM counts: FM-000 2"
+    # a log with no errored epoch counts as before
+    assert reliability_report([_sample("a", 1), _sample("b", 1, {"correctness_anchor": _score(0, ["FM-000"])})],
+                              k=1).fm_counts == {"FM-000": 1}
+
+
+def test_regression_records_and_signoff_see_fm000_on_an_errored_epoch():
+    from icfr_agent_evals import regression
+
+    rec = regression.record_from_sample(_sample("a", 1, error=ERR))
+    assert rec.failure_modes == ("FM-000",) and not rec.success
+    base = [regression.record_from_sample(_sample("a", e)) for e in range(1, 5)]
+    cand = [regression.record_from_sample(_sample("a", e, error=ERR if e == 2 else None)) for e in range(1, 5)]
+    found = regression.signoff_check({"a": base}, {"a": cand}, "R1")
+    assert [(c.sample_id, c.trigger) for c in found] == [("a", "FM-000")]
+    assert regression.signoff_check({"a": base}, {"a": list(base)}, "R1") == ()
 
 
 # --- Required Inspect-level test -----------------------------------------------------

@@ -59,20 +59,26 @@ before.
 
 Errored epochs are format breaks (decision D-R20, 2026-11-15; section 9: "A missing or
 refused generation stays a format break, and review never settles it"). An epoch with a
-sample error carries FM-000 here (epoch_codes), whatever its scorers recorded: it counts
-in every FM count, fails its trial, scores 0 on every anchor in every figure and mean, needs
-its FM-000 audit row and its whole-narrative read, and the audit-adjusted figure keeps it
-whatever the audit rules (D-R5). H2 counts it only when the audit rules it real_error.
-The scorer files are not changed: the code is added at the settlement and counting level,
-and the epoch keeps its carried reason. An unscored epoch with no sample error is not a
-format break: it stays a failed trial with its carried reason, as before.
+sample error carries FM-000 (reliability.evaluate_trial adds it, whatever its scorers
+recorded, so every trial here reads it from there): it counts in every FM count, fails its
+trial, scores 0 on every anchor in every figure and mean (the code-only figure included),
+needs its FM-000 audit row and its whole-narrative read, and the audit-adjusted figure
+keeps it whatever the audit rules (D-R5). H2 counts it only when the audit rules it
+real_error. A whole-narrative `wrong` on it is recorded on its result (narrative_errors)
+and counted as review-found, as on a parse-failure FM-000 epoch; its anchors are already 0
+and it already fails, so no figure moves. The scorer files are not changed, and the epoch
+keeps its carried reason. An unscored epoch with no sample error is not a format break: it
+stays a failed trial with its carried reason, as before, and its narrative record settles
+nothing.
 
 Defect sensitivity row (decision D-R20; section 8, the row "that drops the extractor-crash
 and answer-key-mismatch epochs from every model's figures"): defect_epochs reads, from the
 log, the epochs holding an unsettleable route whose settlement-table row files an extractor
 or an answer-key defect, and defect_dropped gives a figure without them: a sample passes
 when all its remaining epochs pass, and a sample whose epochs are all dropped leaves the
-row. It is a sensitivity row, never the score of record.
+row. A carried epoch (a sample error, or an unscored trial anchor) is never a defect epoch:
+it stays a failed trial in the row, and the review packet builds no route member from it.
+It is a sensitivity row, never the score of record.
 
 Imports of settlement and regression are made inside functions, so regression.py may
 import this module at load time without an import cycle.
@@ -161,14 +167,11 @@ ERRORED_FORMAT_BREAK_REASON = ("format break (FM-000): an errored epoch (a sampl
 
 
 def epoch_codes(sample: Any, codes: Iterable[str]) -> tuple[str, ...]:
-    """The FM codes of one (sample, epoch) at the settlement and counting level: the codes
-    its scorers recorded, with FM-000 added first on an epoch with a sample error (decision
-    D-R20: an errored epoch is a format break). An epoch with no sample error keeps its
-    codes exactly."""
-    codes = tuple(dict.fromkeys(str(c) for c in codes))
-    if getattr(sample, "error", None) is None or FORMAT_BREAK_CODE in codes:
-        return codes
-    return (FORMAT_BREAK_CODE, *codes)
+    """The FM codes of one (sample, epoch), with FM-000 first on an epoch with a sample
+    error (decision D-R20: an errored epoch is a format break). The rule lives in
+    reliability.errored_format_break, which reliability.evaluate_trial applies, so every
+    trial's failure_modes already hold it; this is the same idempotent call."""
+    return rel.errored_format_break(sample, codes)
 
 
 class RecordError(ValueError):
@@ -201,6 +204,7 @@ class EpochResult:
     wallet_label_omissions: int = 0       # of them, the wallet-label matcher's added tokens (choice 5)
     citation_assessable: bool = True      # False on a sample error or FM-000: no parsed output to check
     case_kind: str | None = None
+    narrative_wrong: bool = False         # the whole-narrative record applied here is `wrong` (review-found)
 
 
 @dataclass(frozen=True)
@@ -428,7 +432,7 @@ def _collect(samples: Iterable[Any], k: int) -> tuple[rel.ReliabilityReport, dic
         extractions = cdet.get("narrative_extractions") or []
         facts[ident] = _Facts(
             sample_id=t.sample_id, epoch=t.epoch, sample=s, error=getattr(s, "error", None) is not None,
-            anchors=anchors, codes=epoch_codes(s, t.failure_modes), findings=tuple(findings),
+            anchors=anchors, codes=tuple(t.failure_modes), findings=tuple(findings),
             unsettleable=tuple(unsettleable), code_trial=t,
             structured_points=_numeric(cdet.get("structured_points")),
             citation_omissions=len(omissions) if isinstance(omissions, (list, tuple)) else 0,
@@ -892,7 +896,7 @@ def _settle(f: _Facts, *, finding_verdict: Callable[[str], str], narrative: tupl
         sample_id=f.sample_id, epoch=f.epoch, success=not reasons, reasons=tuple(reasons), anchors=anchors,
         failure_modes=tuple(dict.fromkeys(remaining)), removed_codes=removed_codes,
         review_found=tuple(review_found), review_found_omissions=omissions_found, narrative_errors=narrative_errors,
-        **_citation_fields(f),
+        narrative_wrong=narrative is not None and narrative[0] == WRONG, **_citation_fields(f),
     )
 
 
@@ -925,8 +929,10 @@ def code_only_trial(log_or_samples: Any, *, k: int | None = None) -> TrialReport
     figure, never a score."""
     k = _k_of(log_or_samples, k)
     _, facts = _collect(_samples_of(log_or_samples), k)
+    # Decision D-R20: an errored epoch scores 0 on every anchor here too, as in the other figures.
     results = [EpochResult(f.sample_id, f.epoch, f.code_trial.success, tuple(f.code_trial.failed_because),
-                           dict(f.anchors), tuple(f.codes), **_citation_fields(f)) for f in facts.values()]
+                           {a: 0.0 for a in rel.TRIAL_ANCHORS} if f.error else dict(f.anchors), tuple(f.codes),
+                           **_citation_fields(f)) for f in facts.values()]
     return _report(CODE_ONLY, k, results)
 
 
@@ -946,6 +952,14 @@ def route_blind_trial(log_or_samples: Any, *, k: int | None = None) -> TrialRepo
     results = [_settle(f, finding_verdict=lambda key: CORRECT, narrative=None, narrative_required=False,
                        ) for f in facts.values()]
     return _report(ROUTE_BLIND, k, results)
+
+
+def narrative_applies(f: _Facts, carried: bool) -> bool:
+    """Whether an epoch's whole-narrative record enters its settled result: every epoch the
+    packet does not carry, and an errored carried epoch (decision D-R20: a format break,
+    read like a parse failure's FM-000 epoch). An unscored carried epoch with no sample
+    error is not: its narrative record settles nothing."""
+    return not carried or f.error
 
 
 def _reviewed(kind: str, log_or_samples: Any, record: Any, *, k: int | None, run_id: str | None,
@@ -969,8 +983,11 @@ def _reviewed(kind: str, log_or_samples: Any, record: Any, *, k: int | None, run
             return got.verdict if got is not None and got.verdict else NOT_REVIEWED  # unreviewed fails (D-K)
 
         # A carried epoch fails on its own reason and review never settles it (section 6): the
-        # whole-narrative row its code audit needs is checked above and settles nothing here.
-        narrative = None if ident in carried else view.narratives.get(ident)
+        # whole-narrative row its code audit needs is checked above. On an errored (FM-000)
+        # epoch it is applied like a parse failure's (decision D-R20), so a `wrong` counts as
+        # review-found; its anchors are 0 and it fails whatever the row says. On an unscored
+        # carried epoch it settles nothing here.
+        narrative = view.narratives.get(ident) if narrative_applies(f, ident in carried) else None
         required = _narrative_required(f) and ident not in carried
         removed: frozenset[str] = frozenset()
         if kind == AUDIT_ADJUSTED:
@@ -1243,11 +1260,16 @@ def is_defect_route(route_key: str, reasons: Sequence[str]) -> bool:
 def defect_epochs(log_or_samples: Any, *, k: int | None = None) -> dict[tuple[str, int], tuple[str, ...]]:
     """(sample id, epoch) -> the route keys of its unsettleable routes the settlement table
     files as an extractor or an answer-key defect, from the log alone. These are the epochs
-    the section 8 sensitivity row drops (decision D-R20)."""
+    the section 8 sensitivity row drops (decision D-R20). A carried epoch (carried_reason:
+    a sample error, or an unscored trial anchor) is skipped: it stays a failed trial in the
+    row (an errored epoch is a failed FM-000 trial, ruling 1), and the review packet builds
+    no route member from it, so the record's unsettleable members never hold it either."""
     k = _k_of(log_or_samples, k)
     _, facts = _collect(_samples_of(log_or_samples), k)
     out: dict[tuple[str, int], tuple[str, ...]] = {}
     for ident, f in sorted(facts.items()):
+        if carried_reason(f):
+            continue
         keys = tuple(key for key, reasons in f.unsettleable if is_defect_route(key, reasons))
         if keys:
             out[ident] = keys
