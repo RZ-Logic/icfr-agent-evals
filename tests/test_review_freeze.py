@@ -778,7 +778,7 @@ def _second_look_fill(env, out, flip_first=None):
 
 def score_argv(env, filled, *extra):
     return ["second-look-score", "--packet-dir", str(env.dir), "--second-look-dir", str(env.tmp / "second-look"),
-            "--filled", str(filled), "--reviewer", REVIEWER, "--date", "2026-11-12", "--bootstrap-seed", "99",
+            "--filled", str(filled), "--reviewer", REVIEWER, "--date", "2026-11-12",
             "--manifest-dir", str(mdir(env)), "--repo", str(env.tmp / "repo"), *extra]
 
 

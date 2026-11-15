@@ -11,7 +11,7 @@ Usage:
          --models LABEL=NAME,LABEL=NAME,... [--out D-blind-check] [--repo .] [--manifest ...]
   python scripts/review_freeze.py blind-check-score --packet-dir D --blind-check-dir D3 --filled B.csv
   python scripts/review_freeze.py second-look-score --packet-dir D --second-look-dir D2 --filled SL.csv
-         --reviewer NAME --date YYYY-MM-DD --bootstrap-seed INT [--blind-check-dir D3]
+         --reviewer NAME --date YYYY-MM-DD [--bootstrap-seed INT] [--blind-check-dir D3]
          [--manifest-dir docs/evidence/reviews] [--repo .]
 
 The draw seeds are not chosen by anyone: each is derived from the SHA-256 of the frozen
@@ -20,7 +20,9 @@ blinding-check ids are salted with a random value kept only under that folder's 
 so they cannot be traced back to first ids or runs from the public seeds (red-team M2).
 `second-look-score` rebuilds the whole second-look folder from the frozen record and the
 recorded salt and refuses any file that differs, rechecks the freeze commit, and rechecks
-the blinding check from its own map and the kept answers.
+the blinding check from its own map and the kept answers. The bootstrap seed is derived
+the same way and never chosen: `second-look-score` derives it when --bootstrap-seed is
+left out and refuses any other value (pre-registration section 8, decision D-R19).
 
 Pre-registration section 8 ("Review record and freeze", "Second look on review
 verdicts", owner decision D-D kept exactly as written). The packet folder is the one
@@ -121,6 +123,7 @@ RUN_RESULT_KEYS: tuple[str, ...] = (
     "degenerate_resamples", "correct_to_not_correct", "not_correct_to_correct", "disagreements",
     "citation_omission_to_wrong", "wrong_to_citation_omission", "citation_omission_to_correct",
     "correct_to_citation_omission", "disagreeing_first_unit_ids", "gate",
+    "narrative_only_wrong_not_second_looked",
 )
 PUBLIC_RUN_RESULT_KEYS: tuple[str, ...] = tuple(k for k in RUN_RESULT_KEYS if k != "disagreeing_first_unit_ids")
 SECOND_LOOK_RESULT_KEYS: tuple[str, ...] = ("agreement", "bootstrap_seed", "runs")
@@ -130,6 +133,8 @@ SECOND_LOOK_MANIFEST_KEYS: tuple[str, ...] = (
 )
 BLINDING_KEYS: tuple[str, ...] = ("n", "named_correctly", "share", "ci_lower", "ci_upper", "chance", "status")
 GATE_KEYS: tuple[str, ...] = ("branch", "passed", "result")
+GATE_CONFIRMED, GATE_NOT_CONFIRMED, GATE_EMPTY = "confirmed", "review not confirmed", "second look empty"
+BOOTSTRAP_PURPOSE = "bootstrap"
 
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _SHA_RE = re.compile(r"^[0-9a-f]{7,40}$")
@@ -198,7 +203,10 @@ def earliest_local_date(t: datetime) -> date:
 
 def derived_seed(first_manifest_sha256: str, run_id: str, purpose: str) -> int:
     """A draw seed fixed by the frozen first manifest: nobody picks it, and the same
-    frozen record always gives the same draw (red-team H1)."""
+    frozen record always gives the same draw (red-team H1). It is the first 16 hex digits,
+    read as an integer, of the SHA-256 of the first manifest file's SHA-256, the run id and
+    the purpose joined by vertical bars (pre-registration section 8, decision D-R19, with
+    purpose `bootstrap` for the second-look interval)."""
     digest = hashlib.sha256(f"{first_manifest_sha256}|{run_id}|{purpose}".encode()).hexdigest()
     return int(digest[:16], 16)
 
@@ -1135,11 +1143,22 @@ def second_look_units(rec: Record) -> dict[str, list[dict]]:
 
 
 def blind_check_pool(rec: Record) -> list[tuple[str, str]]:
-    """The blinding check population: (narrative unit id, worker run) for every narrative the
-    reviewer read, routed, FM-coded and narrative-only (D-J hard-case reads) alike (owner
-    decision D-R6, 2026-11-10). A unit counts only when it occurs in exactly one worker run,
-    since a narrative several workers wrote has no one model to name. Unlike the second look,
-    the pool is not limited to routed narratives."""
+    """The blinding check population: (narrative unit id, worker run) drawn from every
+    narrative the reviewer read, routed, FM-coded and narrative-only (D-J hard-case reads)
+    alike (decision D-R6, 2026-11-10). Unlike the second look, the pool is not limited to
+    routed narratives.
+
+    Uniqueness is judged on the narrative text the reviewer is shown (the unit's narrative
+    cell, which the blind-check page shows as is), for the same case, and no text is shown
+    twice (pre-registration section 8, decision D-R19):
+    1. units are grouped by (case id, narrative text); a group qualifies only when its
+       narrative members fall in exactly one worker run, since a text several workers wrote
+       has no one model to name (a template baseline is never a worker run);
+    2. a qualifying group gives one entry, its lowest unit id, so a text one run wrote
+       twice is shown once;
+    3. the same text qualifying on several cases is still one text on the page, which shows
+       no case: it gives one entry, from its lowest (case id, unit id).
+    Entries are sorted by unit id."""
     worker_set = set(worker_run_ids(rec))
     runs_of_unit: dict[str, set[str]] = {}
     for m in rec.members:
@@ -1149,7 +1168,19 @@ def blind_check_pool(rec: Record) -> list[tuple[str, str]]:
     missing = sorted(set(runs_of_unit) - narrative_units)
     if missing:
         raise Refused(f"member map names narrative unit(s) not in the packet: {missing[:5]}")
-    return sorted((uid, next(iter(runs))) for uid, runs in runs_of_unit.items() if len(runs) == 1)
+    groups: dict[tuple[str, str], list[str]] = {}
+    for uid in runs_of_unit:
+        u = rec.units[uid]
+        groups.setdefault((str(u.get("case_id", "")), str(u.get("narrative", ""))), []).append(uid)
+    by_text: dict[str, tuple[str, str, str]] = {}
+    for (case, text), uids in sorted(groups.items()):
+        runs = set().union(*(runs_of_unit[uid] for uid in uids))
+        if len(runs) != 1:
+            continue
+        pick = (case, min(uids), next(iter(runs)))
+        if text not in by_text or pick[:2] < by_text[text][:2]:
+            by_text[text] = pick
+    return sorted((uid, run) for _case, uid, run in by_text.values())
 
 
 def sample_size(n_units: int) -> int:
@@ -1319,11 +1350,24 @@ def bootstrap_kappa(first: Sequence[bool], second: Sequence[bool], *, seed: int,
             "degenerate_resamples": degenerate, "seed": seed}
 
 
+def _is_empty(result_for_run: Mapping[str, Any]) -> bool:
+    """A worker run with no second-look units (N = 0). A result without N is read from its
+    sample: a run with N of at least 1 always draws at least one unit."""
+    n_units = result_for_run.get("N")
+    if n_units is None:
+        n_units = result_for_run["sample_first_correct"] + result_for_run["sample_first_not_correct"]
+    return n_units == 0
+
+
 def gate(result_for_run: Mapping[str, Any]) -> dict:
-    """D-D gate. kappa: both first classes hold at least 10 sampled units and the kappa
-    lower limit is at least 0.60. no_overturn: the run holds fewer than 10 first
-    not_correct units and no unit first ruled correct is ruled otherwise. Else
-    too_few_per_class, failed."""
+    """D-D gate. empty: the run has no second-look units (N = 0), so the gate has nothing
+    to test; passed is None and the result is `second look empty`, never `confirmed` and
+    never `review not confirmed` (pre-registration section 8, decision D-R19). kappa: both
+    first classes hold at least 10 sampled units and the kappa lower limit is at least
+    0.60. no_overturn: the run holds fewer than 10 first not_correct units and no unit
+    first ruled correct is ruled otherwise. Else too_few_per_class, failed."""
+    if _is_empty(result_for_run):
+        return {"branch": "empty", "passed": None, "result": GATE_EMPTY}
     if (result_for_run["sample_first_correct"] >= GATE_MIN_PER_CLASS
             and result_for_run["sample_first_not_correct"] >= GATE_MIN_PER_CLASS):
         lower = result_for_run.get("ci_lower")
@@ -1332,7 +1376,25 @@ def gate(result_for_run: Mapping[str, Any]) -> dict:
         branch, passed = "no_overturn", result_for_run["correct_to_not_correct"] == 0
     else:
         branch, passed = "too_few_per_class", False
-    return {"branch": branch, "passed": passed, "result": "confirmed" if passed else "review not confirmed"}
+    return {"branch": branch, "passed": passed, "result": GATE_CONFIRMED if passed else GATE_NOT_CONFIRMED}
+
+
+def narrative_only_wrong(rec: Record) -> dict[str, int]:
+    """Per worker run: the count of narrative-only units (decision D-J) first ruled
+    whole-narrative `wrong`. The second look does not re-read them, so the count is
+    reported beside the gate, labeled not second-looked (pre-registration section 8,
+    decision D-R19). A unit belongs to every worker run holding one of its narrative
+    members, as a second-look unit does, so a narrative two worker runs carry counts in
+    each. The template baseline is never a worker run."""
+    verdicts = _verdict_of(rec)
+    wrong = {uid for uid, u in rec.units.items()
+             if u.get("row_kind") == "narrative" and u.get("route_class") == rs.NARRATIVE_CLASS_ONLY
+             and verdicts.get(uid) == "wrong"}
+    out: dict[str, int] = {}
+    for run in worker_run_ids(rec):
+        out[run] = len({m["unit_id"] for m in rec.members
+                        if m["run_id"] == run and m["member_kind"] == "narrative" and m["unit_id"] in wrong})
+    return out
 
 
 def second_look_result(rec: Record, sl_rows: Sequence[dict], sl_map: Sequence[dict], *, bootstrap_seed: int) -> dict:
@@ -1342,8 +1404,12 @@ def second_look_result(rec: Record, sl_rows: Sequence[dict], sl_map: Sequence[di
     case file holds passes like `correct`. Finding units ruled `citation_omission` once
     and `wrong` or `correct` the other time are counted apart, each way (D-R9, D-R17): the
     class cannot see a flip between a confirmed `citation_omission` and `correct`, so these counts
-    report it. The first verdict stays of record (D-M)."""
+    report it. The first verdict stays of record (D-M). A run with no second-look units
+    gets the gate's empty branch. Beside the gate, each run carries the count of its
+    narrative-only units first ruled whole-narrative `wrong`, which the second look does
+    not re-read (narrative_only_wrong, decision D-R19)."""
     units_by_run = second_look_units(rec)
+    not_second_looked = narrative_only_wrong(rec)
     first_verdict = _verdict_of(rec)
     sl_verdict = {r["unit_id"]: r["verdict"] for r in sl_rows}
     finding_sl = {r["first_unit_id"]: r["sl_unit_id"] for r in sl_map if r["row_kind"] == "finding"}
@@ -1391,6 +1457,7 @@ def second_look_result(rec: Record, sl_rows: Sequence[dict], sl_map: Sequence[di
             "disagreeing_first_unit_ids": [i for i, a, b in zip(ids, first, second) if a != b],
         }
         result["gate"] = gate(result)
+        result["narrative_only_wrong_not_second_looked"] = not_second_looked.get(run, 0)
         assert tuple(result) == RUN_RESULT_KEYS
         runs[run] = result
     return {"agreement": AGREEMENT_LABEL, "bootstrap_seed": bootstrap_seed, "runs": runs}
@@ -1436,12 +1503,46 @@ def check_second_look_folder(first: Record, packet_dir: str, d2: Path, sl_meta: 
     return gaps
 
 
+def _check_blind_check_draw(first: Record, d3: Path, meta: Mapping[str, Any], mapping: Sequence[dict]) -> list[str]:
+    """The drawn checks, the reviewer sheet and the pool and drawn counts are the ones the
+    frozen record gives under the recorded seed and salt."""
+    salt = meta.get("id_salt")
+    if not isinstance(salt, str) or not re.fullmatch(r"[0-9a-f]{32}", salt):
+        return ["blind-check-meta.json records no id salt"]
+    try:
+        pool, checks = blind_check_checks(first, seed=int(meta.get("seed")), salt=salt)
+    except Refused as e:
+        return [f"blinding check rebuild: {g}" for g in e.gaps]
+    except Exception as e:  # any failure to rebuild is a gap, never a pass
+        return [f"blinding check rebuild failed: {type(e).__name__}: {e}"]
+    gaps: list[str] = []
+    if meta.get("pool") != len(pool) or meta.get("drawn") != len(checks):
+        gaps.append("blind-check-meta.json pool or drawn count differs from the rebuild of the pool")
+    want_map = [{c: ch[c] for c in ("check_id", "run_id", "run_label")} for ch in checks]
+    if [{c: m[c] for c in ("check_id", "run_id", "run_label")} for m in mapping] != want_map:
+        gaps.append("blind-check-map.csv differs from the rebuild of the drawn checks")
+    names = {}
+    for m in mapping:
+        names.setdefault(m["run_label"], set()).add(m["display_name"])
+    if any(len(v) != 1 for v in names.values()):
+        gaps.append("blind-check-map.csv gives one run two display names")
+    try:
+        sheet = rs.read_csv(d3 / BLIND_CHECK_CSV, BLIND_CHECK_COLUMNS)
+    except (OSError, ValueError) as e:
+        return gaps + [f"cannot read {BLIND_CHECK_CSV}: {e}"]
+    if sheet != [{c: ch[c] for c in BLIND_CHECK_COLUMNS} for ch in checks]:
+        gaps.append("blind-check.csv differs from the rebuild of the drawn checks")
+    return gaps
+
+
 def check_blind_check_folder(first: Record, d3: Path, first_sha: str,
                              freeze_commit: str) -> tuple[list[str], dict | None]:
     """The blinding check is bound to this frozen record: its meta names the same first
     manifest and freeze commit and the derived seed, every file still hashes to its meta,
-    and the result is recomputed from the map and the kept answers (red-team M4).
-    Returns (gaps, result)."""
+    the drawn checks are the ones the pool of this record gives under that seed and the
+    recorded salt (blind_check_checks: judged on the displayed text, no text shown twice,
+    pre-registration section 8), and the result is recomputed from the map and the kept
+    answers (red-team M4). Returns (gaps, result)."""
     gaps: list[str] = []
     meta_path = d3 / BLIND_CHECK_META
     if not meta_path.is_file():
@@ -1465,6 +1566,9 @@ def check_blind_check_folder(first: Record, d3: Path, first_sha: str,
         return gaps, None
     mapping = rs.read_csv(d3 / BLIND_CHECK_MAP, BLIND_CHECK_MAP_COLUMNS)
     answers = rs.read_csv(d3 / BLIND_CHECK_ANSWERS, BLIND_CHECK_COLUMNS)
+    gaps.extend(_check_blind_check_draw(first, d3, meta, mapping))
+    if gaps:
+        return gaps, None
     try:
         again = blinding_result([{"check_id": r["check_id"], "guess": r["guess"]} for r in answers],
                                 {m["check_id"]: m["display_name"] for m in mapping}, chance_of(meta))
@@ -1473,6 +1577,19 @@ def check_blind_check_folder(first: Record, d3: Path, first_sha: str,
     if json.loads(json.dumps(again)) != _read_json(d3 / BLIND_CHECK_RESULT):
         gaps.append("blind-check-result.json differs from the result recomputed from the kept answers")
     return gaps, again
+
+
+def check_bootstrap_seed(given: int | None, first_manifest_sha256: str, run_id: str) -> tuple[int, list[str]]:
+    """The bootstrap seed is derived from the frozen first manifest and never chosen: the
+    first 16 hex digits, read as an integer, of the SHA-256 of the first manifest file's
+    SHA-256, the run id and `bootstrap` joined by vertical bars (pre-registration section 8,
+    decision D-R19). Returns (the derived seed, gaps): no seed given takes the derived one,
+    and any other value is a gap."""
+    want = derived_seed(first_manifest_sha256, run_id, BOOTSTRAP_PURPOSE)
+    if given is None or given == want:
+        return want, []
+    return want, [f"--bootstrap-seed {given} is not the seed the frozen first manifest gives ({want}); "
+                  "the bootstrap seed is derived, never chosen: leave the flag out"]
 
 
 def _second_look_score(args: argparse.Namespace) -> int:
@@ -1489,6 +1606,8 @@ def _second_look_score(args: argparse.Namespace) -> int:
     first_bytes = first_manifest.read_bytes()
     first_sha = rs.sha256_file(first_manifest)
     man = _read_json(first_manifest)
+    bootstrap_seed, seed_gaps = check_bootstrap_seed(args.bootstrap_seed, first_sha, run_id)
+    gaps.extend(seed_gaps)
     gaps.extend(check_private_files(str(d), man))
     if args.reviewer != man.get("reviewer"):
         gaps.append(f"--reviewer {args.reviewer!r} is not the first record's reviewer; the second look is "
@@ -1552,7 +1671,7 @@ def _second_look_score(args: argparse.Namespace) -> int:
     if gaps:
         raise Refused(gaps)
     sl_map = rs.read_csv(d2 / SECOND_LOOK_MAP_FILE, rs.SECOND_LOOK_MAP_COLUMNS)
-    result = second_look_result(first, sl_rec.rows, sl_map, bootstrap_seed=args.bootstrap_seed)
+    result = second_look_result(first, sl_rec.rows, sl_map, bootstrap_seed=bootstrap_seed)
     rs.write_rb7_csv(d2 / SECOND_LOOK_VERDICTS_FILE, record_rows(sl_rec, ("finding", "narrative")))
     _write_json(d2 / SECOND_LOOK_RESULT_FILE, result)
     private = _files_of(d2)
@@ -1562,17 +1681,20 @@ def _second_look_score(args: argparse.Namespace) -> int:
     manifest = {
         "manifest_version": "1", "kind": "second_look", "run_id": run_id, "agreement": AGREEMENT_LABEL,
         "first_manifest_sha256": first_sha, "freeze_commit": sl_meta.get("freeze_commit", ""),
-        "draw_seed": sl_meta.get("seed"), "bootstrap_seed": args.bootstrap_seed, "private_files": private,
+        "draw_seed": sl_meta.get("seed"), "bootstrap_seed": bootstrap_seed, "private_files": private,
         "runs": {labels[rid]: {k: r[k] for k in PUBLIC_RUN_RESULT_KEYS} for rid, r in sorted(result["runs"].items())},
         "blinding": blinding, "reviewer": args.reviewer, "date": args.date, "statement": SECOND_LOOK_STATEMENT,
     }
     assert tuple(manifest) == SECOND_LOOK_MANIFEST_KEYS
     mdir.mkdir(parents=True, exist_ok=True)
     _write_json(out_manifest, manifest)
+    print(f"bootstrap seed {bootstrap_seed} (derived from the first manifest, run id and {BOOTSTRAP_PURPOSE})")
     for label, r in manifest["runs"].items():
         ci = "none (kappa undefined)" if r["ci_lower"] is None else f"[{r['ci_lower']}, {r['ci_upper']}]"
         print(f"{label}: {AGREEMENT_LABEL} agreement, n {r['n']} of N {r['N']}, kappa {r['kappa']}, "
-              f"CI {ci}, disagreements {r['disagreements']}, gate {r['gate']['branch']}: {r['gate']['result']}")
+              f"CI {ci}, disagreements {r['disagreements']}, gate {r['gate']['branch']}: {r['gate']['result']} "
+              f"(passed {r['gate']['passed']}), narrative-only wrong "
+              f"{r['narrative_only_wrong_not_second_looked']} (not second-looked)")
     print(out_manifest)
     print(trailer(args.reviewer, args.date))
     return EXIT_OK
@@ -1714,6 +1836,26 @@ once. Save the answers file when you are done.</p>
 """
 
 
+def blind_check_checks(rec: Record, *, seed: int, salt: str) -> tuple[list[tuple[str, str]], list[dict]]:
+    """The pool and the drawn checks in page order: 40 entries of the pool drawn under the
+    derived seed, or all of them when fewer than 40 qualify (pre-registration section 8).
+    Each check holds its salted id, the narrative text shown, the guess column (blank),
+    the run id and the run label. Deterministic given the frozen record, seed and salt,
+    so check_blind_check_folder can rebuild it."""
+    pool = blind_check_pool(rec)
+    k = min(BLIND_CHECK_UNITS, len(pool))
+    drawn = random.Random(f"{seed}|blind_check").sample(pool, k)
+    checks = []
+    for uid, run in drawn:
+        cid = "BC-" + hashlib.sha256(f"{salt}|blind_check|{uid}|{run}".encode()).hexdigest()[:12]
+        checks.append({"check_id": cid, "narrative": rec.units[uid]["narrative"], "guess": "", "run_id": run,
+                       "run_label": str(rec.runs[run].get("label", ""))})
+    texts = [c["narrative"] for c in checks]
+    if len(set(texts)) != len(texts):  # blind_check_pool keeps one entry per text
+        raise Refused("the blinding check would show a narrative text twice")
+    return pool, checks
+
+
 def _blind_check_draw(args: argparse.Namespace) -> int:
     now = _utcnow()
     out = Path(args.out) if args.out else _default_out(args.packet_dir, "blind-check")
@@ -1738,17 +1880,12 @@ def _blind_check_draw(args: argparse.Namespace) -> int:
         gaps.append("--models gives two runs the same display name")
     if gaps:
         raise Refused(gaps)
-    pool = blind_check_pool(rec)
     first_sha = rs.sha256_file(mpath)
     seed = derived_seed(first_sha, str(rec.meta.get("run_id", "")), "blind_check")
     salt = secrets.token_hex(16)  # kept under sealed/ only: a check id cannot be traced to its run
-    k = min(BLIND_CHECK_UNITS, len(pool))
-    drawn = random.Random(f"{seed}|blind_check").sample(pool, k)
-    checks = []
-    for uid, run in drawn:
-        cid = "BC-" + hashlib.sha256(f"{salt}|blind_check|{uid}|{run}".encode()).hexdigest()[:12]
-        checks.append({"check_id": cid, "narrative": rec.units[uid]["narrative"], "guess": "", "run_id": run,
-                       "run_label": labels[run], "display_name": models[labels[run]]})
+    pool, drawn_checks = blind_check_checks(rec, seed=seed, salt=salt)
+    k = len(drawn_checks)
+    checks = [dict(c, display_name=models[c["run_label"]]) for c in drawn_checks]
     choices = sorted(models.values())
     random.Random(f"{seed}|blind_check|choices").shuffle(choices)
     (out / "reviewer").mkdir(parents=True, exist_ok=True)
@@ -1762,7 +1899,8 @@ def _blind_check_draw(args: argparse.Namespace) -> int:
                                          "first_manifest_sha256": first_sha, "draw_time": now.isoformat(),
                                          "pool": len(pool), "drawn": k, "choices": choices, "files": files})
     if k < BLIND_CHECK_UNITS:
-        print(f"only {k} narrative unit(s) occur in exactly one worker run; all drawn", file=sys.stderr)
+        print(f"only {k} narrative text(s) occur in exactly one worker run for their case; all drawn",
+              file=sys.stderr)
     print(f"blinding check drawn: {k} narrative(s); open {out / BLIND_CHECK_HTML}")
     return EXIT_OK
 
@@ -1872,7 +2010,8 @@ def parser() -> argparse.ArgumentParser:
     s2.add_argument("--filled", required=True)
     s2.add_argument("--reviewer", required=True)
     s2.add_argument("--date", required=True)
-    s2.add_argument("--bootstrap-seed", type=int, required=True)
+    s2.add_argument("--bootstrap-seed", type=int, default=None,
+                    help="optional: derived from the frozen first manifest; any other value is refused")
     s2.add_argument("--blind-check-dir")
     s2.add_argument("--manifest-dir", default=DEFAULT_MANIFEST_DIR)
     s2.add_argument("--repo", default=".", help="the repository holding the freeze commit")
