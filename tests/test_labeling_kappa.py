@@ -51,7 +51,9 @@ def case(case_id: str, items, **fields) -> dict:
 
 def csv_text(sheet_id: str, rater: str, codes: dict[str, str], cases: list[dict],
              exported: str = "2026-11-20T10:00:00.000Z", first_start: str = "2026-11-23T10:00:00.000Z",
-             extra_rows: list[list[str]] | None = None) -> str:
+             extra_rows: list[list[str]] | None = None, last_stop: str = "",
+             starts: dict[str, str] | None = None, stops: dict[str, str] | None = None) -> str:
+    """starts and stops override first_start and last_stop for the named case ids."""
     buf = io.StringIO()
     w = csv.writer(buf, quoting=csv.QUOTE_ALL, lineterminator="\r\n")
     w.writerow(LK.CSV_COLUMNS)
@@ -63,7 +65,14 @@ def csv_text(sheet_id: str, rater: str, codes: dict[str, str], cases: list[dict]
             for fld in LK.ITEM_FIELDS:
                 w.writerow([sheet_id, rater, code, ref, src, fld, elig if fld == "r_eligible" else "", exported])
         for fld in LK.TIMER_FIELDS:
-            val = first_start if fld == "first_start_utc" else "0"
+            if fld == "first_start_utc":
+                val = (starts or {}).get(c["case_id"], first_start)
+            elif fld == "last_stop_utc":
+                val = (stops or {}).get(c["case_id"], last_stop)
+            elif fld == "timer_running_at_export":
+                val = "no"
+            else:
+                val = "0"
             w.writerow([sheet_id, rater, code, "", "timer", fld, val, exported])
     for r in extra_rows or []:
         w.writerow(r)
@@ -93,8 +102,9 @@ def pad54(cases: list[dict]) -> list[dict]:
     return cases + [c for c in fill if c["case_id"] not in have][:54 - len(cases)]
 
 
-def run_pair(tmp: Path, first_cases, second_cases, *, seed: int = 7, resamples: int = 500, **kw):
-    a = LK.read_export(*write_pass(tmp, "p1", "aaaa111111", first_cases))
+def run_pair(tmp: Path, first_cases, second_cases, *, seed: int = 7, resamples: int = 500,
+             first_kw: dict | None = None, **kw):
+    a = LK.read_export(*write_pass(tmp, "p1", "aaaa111111", first_cases, **(first_kw or {})))
     b = LK.read_export(*write_pass(tmp, "p2", "bbbb222222", second_cases, **kw))
     return LK.compare(a, b, seed=seed, resamples=resamples)
 
@@ -162,8 +172,8 @@ def test_perfect_agreement(tmp_path):
     assert "the passes hold 2 cases, not the 54 cases" in g["name_reason"]
     assert g["items"] == 5 and g["items_labeled_in_both"] == 5 and g["agreed_items"] == 5
     assert g["ci"]["ci_upper"] == 1.0
-    assert r["disagreed_cases"]["on_eligibility"]["count"] == 0
-    assert r["disagreed_cases"]["on_any_compared_label"]["count"] == 0
+    assert r["disagreed_cases"]["breakdown"]["on_eligibility"]["count"] == 0
+    assert r["disagreed_cases"]["adjudicated_case_count"]["count"] == 0
     assert r["case_count"] == 2
     assert r["beside_not_gating"]["amounts_within_1_usd"]["share"] == 1.0
 
@@ -185,7 +195,8 @@ def test_omitted_item_counts_as_not_eligible(tmp_path):
     assert (g["items_labeled_in_both"], g["items_labeled_in_first_only"], g["items_labeled_in_second_only"]) == (3, 2, 1)
     # 6 items: first yes R-1, MEMO-9, R-3 (3); second yes X-7, R-3 (2); agree R-2, R-3, R-4 (3)
     assert g["kappa_exact"] == str(LK.binary_kappa(6, 3, 2, 3))
-    assert r["disagreed_cases"]["on_eligibility"]["cases"] == ["mock-case-001"]
+    assert r["disagreed_cases"]["breakdown"]["on_eligibility"]["cases"] == ["mock-case-001"]
+    assert r["disagreed_cases"]["adjudicated_case_count"]["cases"] == ["mock-case-001"]
 
 
 def test_item_neither_pass_labels_is_left_out(tmp_path):
@@ -374,12 +385,56 @@ def test_side_kappas_in_report(tmp_path):
     assert side["evidence_state"]["kappa_exact"] == "-1"
     assert side["evidence_state"]["cases"] == 3
     assert side["evidence_state"]["cases_left_out_for_a_missing_value"] == 1
-    by = r["disagreed_cases"]["by_label"]
-    assert by["band"] == 2 and by["variance_direction"] == 1 and by["evidence_state"] == 3
-    assert by["eligibility"] == 0
-    assert r["disagreed_cases"]["on_eligibility"]["count"] == 0
-    assert r["disagreed_cases"]["on_any_compared_label"]["cases"] == ["mock-case-001", "mock-case-002",
-                                                                       "mock-case-004"]
+    dis = r["disagreed_cases"]
+    by = dis["breakdown"]["by_label"]
+    # case 4 leaves evidence blank in the second pass: a one-sided blank is not a difference (decision D-R20)
+    assert by["band"] == 2 and by["variance_direction"] == 1 and by["evidence_state"] == 2
+    assert by["eligibility"] == 0 and by["amounts"] == 0
+    assert dis["breakdown"]["on_eligibility"]["count"] == 0
+    assert dis["adjudicated_case_count"]["cases"] == ["mock-case-001", "mock-case-002", "mock-case-004"]
+    assert dis["adjudicated_case_count"]["count"] == 3
+    assert dis["label_given_in_one_pass_only"]["count"] == 0  # case 4 is adjudicated on band
+
+
+def test_adjudicated_case_count_is_the_any_label_count(tmp_path):
+    # decision D-R20, ruling 10(b): eligibility, direction, band, evidence state or an amount more than $1 apart
+    first = [case("mock-case-001", [("R-1", "yes")]),
+             case("mock-case-002", [("R-2", "no")], r_dir="surplus"),
+             case("mock-case-003", [("R-3", "no")], r_band="M2"),
+             case("mock-case-004", [("R-4", "no")], r_evidence="full"),
+             case("mock-case-005", [("R-5", "no")], r_explained="-601.01"),
+             case("mock-case-006", [("R-6", "no")], r_variance="-1000.50"),
+             case("mock-case-007", [("R-7", "no")], r_band=""),
+             case("mock-case-008", [("R-8", "no")], r_variance="", r_explained="-700.00"),
+             case("mock-case-009", [("R-9", "no")])]
+    second = [case("mock-case-001", [("R-1", "no")]),
+              case("mock-case-002", [("R-2", "no")]),
+              case("mock-case-003", [("R-3", "no")]),
+              case("mock-case-004", [("R-4", "no")]),
+              case("mock-case-005", [("R-5", "no")]),
+              case("mock-case-006", [("R-6", "no")]),
+              case("mock-case-007", [("R-7", "no")]),
+              case("mock-case-008", [("R-8", "no")]),
+              case("mock-case-009", [("R-9", "no")])]
+    r = run_pair(tmp_path, first, second)
+    dis = r["disagreed_cases"]
+    adj = dis["adjudicated_case_count"]
+    # 001 eligibility, 002 direction, 003 band, 004 evidence, 005 explained $1.01 apart,
+    # 008 explained $100 apart beside a blank variance; 006 is 50 cents apart; 007 is a one-sided blank
+    assert adj["cases"] == ["mock-case-001", "mock-case-002", "mock-case-003", "mock-case-004", "mock-case-005",
+                            "mock-case-008"]
+    assert adj["count"] == 6 and "more than $1 apart" in adj["definition"] and "decision D-R20" in adj["definition"]
+    assert dis["breakdown"]["on_eligibility"] == {"count": 1, "cases": ["mock-case-001"]}
+    assert dis["breakdown"]["by_label"] == {"eligibility": 1, "variance_direction": 1, "band": 1,
+                                            "evidence_state": 1, "amounts": 2}
+    assert dis["label_given_in_one_pass_only"]["cases"] == ["mock-case-007"]
+    labels = {c["case_id"]: c["labels"]["amounts"] for c in r["cases"]}
+    assert labels["mock-case-006"] == "agree" and labels["mock-case-008"] == "differ"
+    out = LK.format_summary(r)
+    assert "Adjudicated-case count: 6 (" in out
+    assert "breakdown: 1 on eligibility; by label eligibility 1, variance_direction 1, band 1, " \
+           "evidence_state 1, amounts 2" in out
+    assert "1 other case(s) hold a label given in one pass only" in out
 
 
 # --- Amounts ------------------------------------------------------------------------------
@@ -553,11 +608,14 @@ def test_dataset_version_file(tmp_path):
 def test_case_count_warning_and_relabel_gap(tmp_path):
     r = run_pair(tmp_path, _cases(), _cases(), first_start="2026-11-21T10:00:00.000Z")
     assert any("holds 54" in w for w in r["warnings"])
-    assert r["timing"]["hours_from_first_export_to_second_start"] == 24.0
-    assert any("48 hours" in w for w in r["warnings"])
+    t = r["timing"]
+    assert [c["hours"] for c in t["cases"]] == [24.0, 24.0] and t["smallest_gap_hours"] == 24.0
+    assert t["cases_under_48_hours"] == ["mock-case-001", "mock-case-002"] and not t["gap_shown_on_every_case"]
     r = run_pair(tmp_path, _cases(), _cases(), first_start="2026-11-22T10:00:00.000Z")
-    assert r["timing"]["hours_from_first_export_to_second_start"] == 48.0
-    assert not any("48 hours" in w for w in r["warnings"])
+    t = r["timing"]
+    assert [c["status"] for c in t["cases"]] == ["at_least_48_hours"] * 2 and t["gap_shown_on_every_case"]
+    assert t["cases"][0]["reference"] == LK.REFERENCE_EXPORT and t["cases"][0]["hours"] == 48.0
+    assert "decision D-R20" in t["rule"]
 
 
 def test_name_withheld_when_the_second_pass_started_within_48_hours(tmp_path):
@@ -566,27 +624,72 @@ def test_name_withheld_when_the_second_pass_started_within_48_hours(tmp_path):
     g = r["gate"]
     assert g["kappa"] == 1.0                                   # still computed and printed
     assert g["name"] is None and g["name_on_kappa_alone"] == "Self-verified"
-    assert "started 24.0 hours after the first pass was exported" in g["name_reason"]
-    assert len(g["name_withheld_because"]) == 1 and r["timing"]["gap_verifiable"] is True
+    assert "less than 48 hours after the first pass on 54 case(s)" in g["name_reason"]
+    assert len(g["name_withheld_because"]) == 1 and "mock-case-001" in g["name_reason"]
     r = run_pair(tmp_path, cases, cases, first_start="2026-11-22T10:00:00.000Z")
     assert r["gate"]["name"] == "Self-verified" and r["gate"]["name_withheld_because"] == []
+
+
+def test_the_gap_is_checked_on_every_case(tmp_path):
+    # decision D-R20, ruling 10(a): one case started 47 hours 59 minutes after the export withholds the name
+    cases = pad54(_cases())
+    r = run_pair(tmp_path, cases, cases, starts={"mock-case-002": "2026-11-22T09:59:00.000Z"})
+    g, t = r["gate"], r["timing"]
+    assert g["kappa"] == 1.0 and g["name"] is None and g["name_on_kappa_alone"] == "Self-verified"
+    assert t["cases_under_48_hours"] == ["mock-case-002"] and t["cases_without_timer_data"] == []
+    assert "on 1 case(s) (mock-case-002)" in g["name_reason"]
+    row = next(c for c in t["cases"] if c["case_id"] == "mock-case-002")
+    assert row["status"] == "under_48_hours" and row["hours"] == 47.98
+    assert t["smallest_gap_hours"] == 47.98
+    assert "48-hour gap: not shown on every case" in LK.format_summary(r)
+
+
+def test_the_first_pass_last_stop_on_a_case_counts_when_later_than_the_export(tmp_path):
+    cases = pad54(_cases())
+    # the export is 2026-11-20 10:00; a last stop on case 001 at 2026-11-21 10:00 (a clock change) moves its
+    # reference, so a start 72 hours after the export is only 48 hours after that case's last stop
+    r = run_pair(tmp_path, cases, cases, first_kw={"stops": {"mock-case-001": "2026-11-21T10:00:00.000Z"},
+                                                   "last_stop": "2026-11-20T09:00:00.000Z"})
+    rows = {c["case_id"]: c for c in r["timing"]["cases"]}
+    assert rows["mock-case-001"]["reference"] == LK.REFERENCE_LAST_STOP and rows["mock-case-001"]["hours"] == 48.0
+    assert rows["mock-case-002"]["reference"] == LK.REFERENCE_EXPORT and rows["mock-case-002"]["hours"] == 72.0
+    assert r["gate"]["name"] == "Self-verified"
+    r = run_pair(tmp_path, cases, cases, first_kw={"stops": {"mock-case-001": "2026-11-21T10:00:01.000Z"}})
+    assert r["timing"]["cases_under_48_hours"] == ["mock-case-001"] and r["gate"]["name"] is None
 
 
 def test_short_case_count_and_short_gap_both_give_their_reasons(tmp_path):
     g = run_pair(tmp_path, _cases(), _cases(), first_start="2026-11-20T12:00:00.000Z")["gate"]
     assert g["name"] is None and len(g["name_withheld_because"]) == 2
-    assert "2 cases" in g["name_reason"] and "2.0 hours" in g["name_reason"]
+    assert "2 cases" in g["name_reason"] and "less than 48 hours after the first pass on 2 case(s)" in g["name_reason"]
 
 
-def test_unverifiable_gap_warns_and_does_not_withhold_the_name_alone(tmp_path):
+@pytest.mark.parametrize("first_kw, second_kw, why", [
+    ({}, {"first_start": ""}, "the second pass records no start time on the case"),
+    ({}, {"first_start": "not a time"}, "the second pass's start time on the case is unreadable"),
+    ({"stops": {"mock-case-001": "0"}}, {}, "the first pass's last stop time on the case is unreadable"),
+    ({"exported": "not a time"}, {}, "the first pass's export time is missing or unreadable"),
+])
+def test_a_case_without_timer_data_withholds_the_name(tmp_path, first_kw, second_kw, why):
+    # decision D-R20, ruling 10(a): missing timer data withholds the name; kappa is still computed
     cases = pad54(_cases())
-    r = run_pair(tmp_path, cases, cases, first_start="")
-    assert r["timing"]["hours_from_first_export_to_second_start"] is None
-    assert r["timing"]["gap_verifiable"] is False
-    assert LK.GAP_NOT_VERIFIABLE in r["warnings"]
-    assert "the 48-hour gap is not verifiable" in LK.GAP_NOT_VERIFIABLE
-    assert r["gate"]["name"] == "Self-verified"
-    assert "warning: the 48-hour gap is not verifiable" in LK.format_summary(r)
+    r = run_pair(tmp_path, cases, cases, first_kw=first_kw, **second_kw)
+    g, t = r["gate"], r["timing"]
+    assert g["kappa"] == 1.0 and g["name"] is None and g["name_on_kappa_alone"] == "Self-verified"
+    assert "mock-case-001" in t["cases_without_timer_data"] and not t["gap_shown_on_every_case"]
+    assert "lack timer data (mock-case-001" in g["name_reason"]
+    row = next(c for c in t["cases"] if c["case_id"] == "mock-case-001")
+    assert row["status"] == "no_timer_data" and row["reason"] == why and row["hours"] is None
+    out = LK.format_summary(r)
+    assert "kappa 1.000" in out and "name: neither name" in out
+
+
+def test_one_case_without_a_start_withholds_the_name_and_lists_it(tmp_path):
+    cases = pad54(_cases())
+    r = run_pair(tmp_path, cases, cases, starts={"mock-case-002": ""})
+    assert r["timing"]["cases_without_timer_data"] == ["mock-case-002"]
+    assert "1 case(s) lack timer data (mock-case-002)" in r["gate"]["name_reason"]
+    assert r["gate"]["name"] is None
 
 
 def _rewrite_source(key_path: Path, source):
@@ -675,4 +778,5 @@ def test_main_in_process(tmp_path, capsys):
     assert LK.main(["--first", str(c1), str(k1), "--second", str(c2), str(k2), "--dataset-version", str(vf)]) == 0
     out = capsys.readouterr().out
     assert "kappa 1.000" in out and "name: Self-verified" in out
-    assert "Disagreed cases: 0 on eligibility" in out
+    assert "Adjudicated-case count: 0 (" in out and "breakdown: 0 on eligibility" in out
+    assert "48-hour gap: shown on every case; smallest gap 72.0 hours" in out

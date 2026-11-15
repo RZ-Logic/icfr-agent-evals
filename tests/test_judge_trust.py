@@ -330,10 +330,49 @@ def test_reliability_exclusion_excludes_below_the_limit():
     assert clean["gate_passed"] and clean["excluded"] == [] and clean["kept"] == [G, C]
 
 
-def test_reliability_exclusion_refuses_an_undefined_lower_limit():
+def test_reliability_exclusion_counts_an_undefined_lower_limit_as_failing():
+    # decision D-R20, ruling 7: an undefined lower limit excludes that sub-dimension for the run
     flat = _pass([1] * 5)
-    with pytest.raises(jt.Refused, match="undefined"):
-        jt.reliability_exclusion(flat, flat)
+    r = jt.reliability_exclusion(flat, flat)
+    assert not r["gate_passed"] and r["kept"] == [] and r["triggers_grader_change"] is False
+    assert [ex["subdimension"] for ex in r["excluded"]] == [G, C]
+    for ex in r["excluded"]:
+        assert ex["reason"] == jt.EXCLUSION_UNDEFINED == "undefined"
+        assert ex["ci_lower"] is None and ex["estimate"] is None and ex["n"] == 5
+        assert "lower limit undefined" in ex["disclosure"] and "decision D-R20" in ex["disclosure"]
+        assert "deterministic anchors stand alone" in ex["disclosure"]
+    assert r["remedy_order"] == jt.REMEDY_NOTE and "outside the judge remedy order" in r["remedy_order"]
+
+
+def test_reliability_exclusion_decides_the_other_subdimension_on_its_own_value():
+    flat = [1] * 40
+    passing = jt.reliability_exclusion({G: _pass(flat)[G], C: _pass(CLOSE)[C]}, {G: _pass(flat)[G], C: _pass(HUMAN)[C]})
+    assert passing["kept"] == [C] and [ex["subdimension"] for ex in passing["excluded"]] == [G]
+    assert passing["excluded"][0]["reason"] == "undefined" and not passing["gate_passed"]
+    failing = jt.reliability_exclusion({G: _pass(flat)[G], C: _pass(NOISY)[C]}, {G: _pass(flat)[G], C: _pass(HUMAN)[C]})
+    assert failing["kept"] == []
+    assert {ex["subdimension"]: ex["reason"] for ex in failing["excluded"]} == {G: "undefined", C: jt.EXCLUSION_BELOW}
+    below = failing["excluded"][1]
+    assert below["ci_lower"] < 0.60 and "below 0.60" in below["disclosure"] and "undefined" not in below["disclosure"]
+
+
+def test_reliability_exclusion_discloses_a_defined_estimate_with_an_undefined_interval(monkeypatch):
+    real = jt.icc_a1
+
+    def no_interval(matrix, *, confidence=jt.CONFIDENCE):
+        out = real(matrix, confidence=confidence)
+        if out["n"] == 5:
+            out = dict(out, ci_lower=None, ci_upper=None, defined=False,
+                       note="interval undefined: the McGraw-Wong degrees of freedom v are not positive")
+        return out
+
+    monkeypatch.setattr(jt, "icc_a1", no_interval)
+    r = jt.reliability_exclusion({G: _pass([0, 1, 2, 3, 2])[G], C: _pass(CLOSE)[C]},
+                                 {G: _pass([0, 1, 3, 3, 2])[G], C: _pass(HUMAN)[C]})
+    (ex,) = r["excluded"]
+    assert ex["subdimension"] == G and ex["reason"] == "undefined" and ex["estimate"] is not None
+    assert f"ICC(A,1) {ex['estimate']:.3f}, lower limit undefined" in ex["disclosure"]
+    assert r["kept"] == [C]
 
 
 # --- Test-retest ------------------------------------------------------------------------------
