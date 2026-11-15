@@ -1,4 +1,4 @@
-"""Build the grouped review packet from scored dev logs. NO API key, no model call.
+"""Build the grouped review packet from scored logs. NO API key, no model call.
 
 Usage:
   python scripts/review_packet.py --run LABEL=PATH [--run LABEL=PATH ...] --out DIR --seed INT --run-id ID
@@ -35,14 +35,39 @@ only file the reviewer opens), reviewer/packet.csv, reviewer/cases.csv,
 reviewer/verdicts-blank.csv, sealed/members.csv, sealed/runs.json,
 sealed/summary.json and packet-meta.json. Same inputs and seed give the same bytes.
 
+Splits (pre-registration section 4 and section 13, decision D-R19). A dev log is read
+as before, and regression.refuse_evaluation_split still checks it. A log on the
+evaluation split is read only when its header task_args hold allow_evaluation_split
+exactly True, the unlock the task records in every log header, and its header
+metadata names the same split. Any other evaluation-split log is refused (the flag
+absent, false, 1 or the string "true"), and so is a packet that mixes splits. The
+section 10 regression gates keep their own refusal of the evaluation split; this
+script does not call it on an unlocked evaluation log. sealed/runs.json records
+split and allow_evaluation_split for an evaluation-split run only, so a dev packet
+keeps its bytes.
+
+Errored and unscored epochs (pre-registration section 6: "Parse failures (FM-000),
+errors and unscored epochs count as failed trials whatever review finds ... and
+review never settles them"). An epoch with a sample error, or with a trial anchor
+that is missing or not a finite number (the test trials.py applies), is carried as
+a failed trial with no review unit: no finding, narrative, narrative-only or audit
+unit is built from it, and nothing about it reaches reviewer/. sealed/summary.json
+records each one under totals.carried_failed_trials (run id, sample id, epoch and
+the reason, in the words trials.py uses) with a count per run, so the settlement
+code and the run report can count it. The key is written when the packet carries
+an epoch or reads the evaluation split. A format break (FM-000) is not carried: it
+keeps its audit unit and its whole-narrative read. A log missing an epoch, or one
+regression.refuse_partial_run refuses, is still refused as structurally incomplete.
+
 Exit codes:
   0  packet written; stdout prints totals only
   3  refused (nothing written): a missing or unreadable log, a log whose status is
-     not success, a log not on the dev split (or one regression.refuse_evaluation_split
-     refuses), logs whose content fingerprints differ, a sample with an error, a
-     sample without truth or fixture metadata, a duplicate or malformed label, an
-     --out that exists and is not empty, a malformed run id or one naming a model
-     word, a help request, or any argument error
+     not success, a log on a split other than dev or an unlocked eval, a dev log
+     regression.refuse_evaluation_split refuses, logs on different splits, logs
+     whose content fingerprints differ, a sample missing an epoch, a sample without
+     truth or fixture metadata, a duplicate or malformed label, an --out that exists
+     and is not empty, a malformed run id or one naming a model word, a help
+     request, or any argument error
 """
 
 # No `from __future__ import annotations`: review_freeze.py loads this file with
@@ -67,12 +92,20 @@ from icfr_agent_evals import casefile, consistency, narrative_vocab, regression,
 from icfr_agent_evals import reliability as rel
 from icfr_agent_evals import review_facts as rf
 from icfr_agent_evals import review_schema as rs
+from icfr_agent_evals import trials as tr
 from icfr_agent_evals.reliability import GateError
 from icfr_agent_evals.review_facts import FactBlock
 
 EXIT_OK, EXIT_REFUSED = 0, 3
 PACKET_VERSION = "1"
 DEV_SPLIT = "dev"
+EVAL_SPLIT = consistency.EVALUATION_SPLIT
+UNLOCK_ARG = "allow_evaluation_split"
+# sealed/summary.json: one entry per carried epoch under totals, and a count under each run.
+CARRIED_KEY = "carried_failed_trials"
+# The reasons trials.py gives the same epoch (trials._settle), so the two can be matched.
+SAMPLE_ERROR_REASON = "sample error"
+UNSCORED_REASON = "{anchor} unscored or non-numeric"
 LABEL_RE = re.compile(r"^[A-Za-z0-9._-]{1,40}$")
 RUN_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 MODES = ("review", "second_look")
@@ -99,6 +132,19 @@ ROUTE_MEMBER_KINDS = frozenset({"finding", "unsettleable", "fm_epoch_route_skipp
 
 class Refused(Exception):
     """An input the packet builder will not read; exit 3, nothing written."""
+
+
+@dataclass(frozen=True)
+class CarriedEpoch:
+    """An errored or unscored epoch: a failed trial with no review unit (pre-registration
+    section 6). Kept under sealed/ only; reviewer/ shows nothing about it."""
+    run_id: str
+    sample_id: str
+    epoch: int
+    reason: str            # the reasons trials.py gives, joined by "; "
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"run_id": self.run_id, "sample_id": self.sample_id, "epoch": self.epoch, "reason": self.reason}
 
 
 # --- Data model (signatures fixed by the spec; review_freeze.py imports these) ---------------
@@ -163,6 +209,7 @@ class Packet:
     members: tuple[Member, ...]      # sorted by (run_id, sample_id, epoch, member_kind, route_key)
     case_facts: Mapping[str, tuple[FactBlock, ...]]
     case_inputs: Mapping[str, str]   # the case file text the worker saw (sample input), per case
+    carried: tuple[CarriedEpoch, ...] = ()   # sorted by (run_id, sample_id, epoch); sealed/ only
 
 
 # --- Small helpers ----------------------------------------------------------------------------
@@ -339,16 +386,54 @@ def _read_log(path: str) -> Any:
         raise Refused(f"cannot read log {p.name}: {type(e).__name__}") from e
 
 
-def _check_log(log: Any, name: str) -> None:
+def log_split(log: Any, name: str) -> str:
+    """The split a log may be read on: "dev", or "eval" when the header task_args hold
+    allow_evaluation_split exactly True and the header metadata names the eval split
+    too (pre-registration section 4). Raises Refused on every other log. A dev log
+    still passes regression.refuse_evaluation_split; an unlocked eval log never meets
+    it, since that refusal belongs to the section 10 regression gates."""
+    task_args = getattr(log.eval, "task_args", None) or {}
+    split = task_args.get("split")
+    if split == DEV_SPLIT:
+        try:
+            regression.refuse_evaluation_split(log)
+        except GateError as e:
+            raise Refused(f"log {name}: {e}") from e
+        return DEV_SPLIT
+    if split == EVAL_SPLIT:
+        unlock = task_args.get(UNLOCK_ARG)
+        if unlock is not True:
+            raise Refused(f"log {name} is on the evaluation split, but its task_args hold {UNLOCK_ARG} = "
+                          f"{unlock!r}; only the literal True unlocks it (pre-registration section 4)")
+        meta_split = (getattr(log.eval, "metadata", None) or {}).get("split")
+        if meta_split != EVAL_SPLIT:
+            raise Refused(f"log {name} task_args name split 'eval' but its header metadata names "
+                          f"{meta_split!r}; the header disagrees with itself")
+        return EVAL_SPLIT
+    raise Refused(f"log {name} split is {split!r}; this build reads the dev split, or the evaluation "
+                  f"split with {UNLOCK_ARG} True")
+
+
+def carried_reasons(sample: Any) -> tuple[str, ...]:
+    """Why an epoch is carried as a failed trial with no review unit, in the words
+    trials.py uses: a sample error, and each trial anchor that is missing or not a
+    finite number (trials._numeric, the same test). () for an epoch review reads."""
+    reasons: list[str] = []
+    if getattr(sample, "error", None) is not None:
+        reasons.append(SAMPLE_ERROR_REASON)
+    scores = getattr(sample, "scores", None) or {}
+    for anchor in rel.TRIAL_ANCHORS:
+        score = scores.get(anchor)
+        if score is None or tr._numeric(getattr(score, "value", None)) is None:
+            reasons.append(UNSCORED_REASON.format(anchor=anchor))
+    return tuple(reasons)
+
+
+def _check_log(log: Any, name: str) -> str:
+    """Refuse a log the packet will not read; return its split (log_split)."""
     if getattr(log, "status", None) != "success":
         raise Refused(f"log {name} status is {getattr(log, 'status', None)!r}, not 'success'")
-    split = (log.eval.task_args or {}).get("split")
-    if split != DEV_SPLIT:
-        raise Refused(f"log {name} split is {split!r}; this build reads the dev split only")
-    try:
-        regression.refuse_evaluation_split(log)
-    except GateError as e:
-        raise Refused(f"log {name}: {e}") from e
+    split = log_split(log, name)
     if log.samples is None:
         raise Refused(f"log {name} has no samples")
     try:
@@ -362,17 +447,19 @@ def _check_log(log: Any, name: str) -> None:
     for sid, eps in sorted(epochs_of.items()):
         if sorted(eps) != list(range(1, k + 1)):
             raise Refused(f"log {name} sample {sid} holds epochs {sorted(eps)}, not 1 to {k}")
+    # A sample error is no longer refused: build_packet carries that epoch as a failed
+    # trial with no review unit (pre-registration section 13, decision D-R19).
     for s in log.samples:
-        if getattr(s, "error", None) is not None:
-            raise Refused(f"log {name} holds a sample with an error ({s.id} epoch {s.epoch})")
         meta = s.metadata or {}
         if not meta.get("truth") or not meta.get("fixture"):
             raise Refused(f"log {name} sample {s.id} lacks truth or fixture metadata")
+    return split
 
 
 def load_runs(specs: Sequence[tuple[str, str]], seed: int) -> tuple[RunInput, ...]:
     """Read and check every log; assign masked run ids R1.. by sorted label order
-    shuffled under the seed. Raises Refused on any refusal."""
+    shuffled under the seed. Raises Refused on any refusal, logs on different splits
+    included."""
     if not specs:
         raise Refused("no --run given")
     labels = [label for label, _ in specs]
@@ -388,10 +475,14 @@ def load_runs(specs: Sequence[tuple[str, str]], seed: int) -> tuple[RunInput, ..
 
     runs: list[RunInput] = []
     fingerprints: dict[str, Any] = {}
+    splits: dict[str, str] = {}
     for label, path in specs:
         log = _read_log(path)
         name = Path(path).name
-        _check_log(log, name)
+        splits[label] = _check_log(log, name)
+        if len(set(splits.values())) > 1:
+            raise Refused(f"the logs sit on different splits {sorted(set(splits.values()))}; "
+                          "one packet reads one split")
         try:
             fingerprints[label] = regression.content_fingerprint(log)
         except GateError as e:
@@ -477,14 +568,19 @@ def build_packet(runs: Sequence[RunInput], *, run_id: str, seed: int,
                  scope: str = rs.DEFAULT_WHOLE_NARRATIVE_SCOPE,
                  fm_epoch_routes: str = "findings") -> Packet:
     """Group every run's routes, narratives and FM codes into review units. Pure apart
-    from one stderr line per unlisted route key; never sets a verdict."""
+    from one stderr line per unlisted route key; never sets a verdict. An errored or
+    unscored epoch (carried_reasons) builds no unit and is listed in Packet.carried."""
     if scope not in rs.WHOLE_NARRATIVE_SCOPES:
         raise Refused(f"unknown whole-narrative scope {scope!r}")
     if fm_epoch_routes not in rs.FM_EPOCH_ROUTE_MODES:
         raise Refused(f"unknown fm-epoch-routes mode {fm_epoch_routes!r}")
+    splits = {_run_split(run) for run in runs}
+    if len(splits) > 1:
+        raise Refused(f"the runs sit on different splits {sorted(splits)}; one packet reads one split")
 
     epochs: dict[tuple[str, str, int], _Epoch] = {}
     route_members: list[Member] = []           # finding, unsettleable, skipped (unit ids filled later)
+    carried: list[CarriedEpoch] = []
     case_inputs: dict[str, str] = {}
     case_meta: dict[str, Any] = {}
     hard_case: dict[str, bool] = {}
@@ -495,8 +591,14 @@ def build_packet(runs: Sequence[RunInput], *, run_id: str, seed: int,
         k = int(log.eval.config.epochs or 1)
         report = rel.reliability_report(log.samples, k)
         trials = {(t.sample_id, t.epoch): t for t in report.trials}
+        skip: set[tuple[str, int]] = set()
         for s in log.samples:
             sid, ep = str(s.id), int(s.epoch)
+            why = carried_reasons(s)
+            if why:  # a failed trial whatever review finds; review never settles it (section 6)
+                carried.append(CarriedEpoch(run.run_id, sid, ep, "; ".join(why)))
+                skip.add((sid, ep))
+                continue
             parse = scoring.parse_worker_output(_completion(s))
             parsed = parse.parsed if parse.ok else None
             text = str(parsed.get("narrative", "")) if parsed is not None else _completion(s)
@@ -508,7 +610,7 @@ def build_packet(runs: Sequence[RunInput], *, run_id: str, seed: int,
 
         merged: dict[tuple[str, int, str], dict[str, Any]] = {}
         for item in rel.queue_items(report):
-            if item.route_key is None:
+            if item.route_key is None or (item.sample_id, item.epoch) in skip:
                 continue
             g = merged.setdefault((item.sample_id, item.epoch, item.route_key),
                                   {"reasons": [], "scorers": [], "cls": item.queue_class})
@@ -643,7 +745,35 @@ def build_packet(runs: Sequence[RunInput], *, run_id: str, seed: int,
         run_id=run_id, seed=seed, scope=scope, fm_epoch_routes=fm_epoch_routes, runs=tuple(runs),
         case_order=case_order, units=units, members=_sort_members(members),
         case_facts=case_facts, case_inputs={cid: case_inputs[cid] for cid in sorted(case_ids)},
+        carried=_sort_carried(carried),
     )
+
+
+def _sort_carried(carried: Sequence[CarriedEpoch]) -> tuple[CarriedEpoch, ...]:
+    return tuple(sorted(carried, key=lambda c: (c.run_id, c.sample_id, c.epoch)))
+
+
+def _run_split(run: RunInput) -> str:
+    """The run's split: from its log header, or from sealed/runs.json for a loaded
+    packet, where only an evaluation-split run records it."""
+    if run.log is not None:
+        return str((getattr(run.log.eval, "task_args", None) or {}).get("split") or DEV_SPLIT)
+    return str(run_meta_get(run, "split") or DEV_SPLIT)
+
+
+def packet_split(packet: Packet) -> str:
+    """The one split every run of the packet sits on (load_runs and build_packet refuse
+    a mix); "dev" for a packet with no runs."""
+    splits = {_run_split(run) for run in packet.runs}
+    if len(splits) > 1:
+        raise Refused(f"the packet's runs sit on different splits {sorted(splits)}")
+    return next(iter(splits)) if splits else DEV_SPLIT
+
+
+def _records_carried(packet: Packet) -> bool:
+    """Whether sealed/summary.json holds the carried-epoch key: when the packet carries
+    an epoch or reads the evaluation split. A dev packet with none keeps its bytes."""
+    return bool(packet.carried) or packet_split(packet) == EVAL_SPLIT
 
 
 def _sort_members(members: Sequence[Member]) -> tuple[Member, ...]:
@@ -807,11 +937,17 @@ def _counts(members: Sequence[Member]) -> dict[str, Any]:
 
 
 def summary(packet: Packet) -> dict:
-    """Per masked run id (with its label: this goes to sealed/ only) and totals."""
+    """Per masked run id (with its label: this goes to sealed/ only) and totals. With
+    _records_carried, each run also counts its carried epochs and totals lists them."""
+    carried = _records_carried(packet)
     out: dict[str, Any] = {}
     for run in packet.runs:
         out[run.run_id] = {"label": run.label, **_counts([m for m in packet.members if m.run_id == run.run_id])}
+        if carried:
+            out[run.run_id][CARRIED_KEY] = sum(1 for c in packet.carried if c.run_id == run.run_id)
     totals = _counts(packet.members)
+    if carried:
+        totals[CARRIED_KEY] = [c.as_dict() for c in packet.carried]
     totals.update({
         "finding_units": sum(1 for u in packet.units if u.row_kind == "finding"),
         "narrative_units": sum(1 for u in packet.units if u.row_kind == "narrative"),
@@ -835,6 +971,10 @@ def _runs_json(packet: Packet) -> dict:
             "template_baseline": bool(rel.is_template_baseline_log(log)) if log is not None
             else bool(run_meta_get(run, "template_baseline")),
         }
+        if _run_split(run) == EVAL_SPLIT:  # a dev run records neither key, so a dev packet keeps its bytes
+            unlock = (log.eval.task_args or {}).get(UNLOCK_ARG) if log is not None else run_meta_get(run, UNLOCK_ARG)
+            out[run.run_id]["split"] = EVAL_SPLIT
+            out[run.run_id][UNLOCK_ARG] = unlock is True
     return out
 
 
@@ -1452,7 +1592,8 @@ def load_packet(packet_dir: str) -> Packet:
         run = RunInput(run_id=rid, label=r["label"], path=r["file_name"], sha256=r["sha256"], eval_id=r["eval_id"],
                        model=r["model"], revision_commit=r["revision_commit"], log=None)
         _LOADED_RUN_EXTRA[(rid, r["sha256"])] = {"dataset_sha256": r.get("dataset_sha256"),
-                                                "template_baseline": r.get("template_baseline")}
+                                                "template_baseline": r.get("template_baseline"),
+                                                "split": r.get("split"), UNLOCK_ARG: r.get(UNLOCK_ARG)}
         runs.append(run)
     runs.sort(key=lambda r: int(r.run_id[1:]) if r.run_id[1:].isdigit() else 0)
     units = []
@@ -1483,7 +1624,20 @@ def load_packet(packet_dir: str) -> Packet:
         runs=tuple(runs), case_order=tuple(case_order), units=tuple(units), members=_sort_members(members),
         case_facts={k: case_facts[k] for k in sorted(case_facts)},
         case_inputs={k: case_inputs[k] for k in sorted(case_inputs)},
+        carried=load_carried(packet_dir),
     )
+
+
+def load_carried(packet_dir: str) -> tuple[CarriedEpoch, ...]:
+    """The carried epochs sealed/summary.json records (totals.carried_failed_trials);
+    () when the key or the file is absent, as in a dev packet that carries none."""
+    path = Path(packet_dir) / rs.PACKET_FILES["summary"]
+    if not path.is_file():
+        return ()
+    totals = (json.loads(path.read_text(encoding="utf-8")) or {}).get("totals") or {}
+    rows = totals.get(CARRIED_KEY) or []
+    return _sort_carried(CarriedEpoch(str(r["run_id"]), str(r["sample_id"]), int(r["epoch"]), str(r["reason"]))
+                         for r in rows)
 
 
 # --- Second-look subset -----------------------------------------------------------------------
@@ -1499,7 +1653,8 @@ def subset_packet(packet: Packet, narrative_unit_ids: Sequence[str], *, seed: in
                   id_salt: str = "") -> tuple[Packet, dict[str, str]]:
     """The drawn narrative units plus every finding unit with a member on any of their
     member epochs; fresh ids (S + prefix, salted with id_salt); no fm_audit units; case
-    and unit order reshuffled under seed. Returns (subset, new id -> old id)."""
+    and unit order reshuffled under seed. A carried epoch has no unit to draw, so the
+    subset carries none. Returns (subset, new id -> old id)."""
     by_id = {u.unit_id: u for u in packet.units}
     drawn = list(dict.fromkeys(narrative_unit_ids))
     for nid in drawn:
@@ -1570,7 +1725,8 @@ class _HelpAction(argparse.Action):
 
 
 def parser() -> argparse.ArgumentParser:
-    p = _Parser(description="Grouped review packet from scored dev logs (no model call).", add_help=False)
+    p = _Parser(description="Grouped review packet from scored logs: the dev split, or the evaluation split with "
+                            "allow_evaluation_split True in the log header (no model call).", add_help=False)
     p.add_argument("-h", "--help", action=_HelpAction, help="show this help and exit 3 (nothing built)")
     p.add_argument("--run", action="append", required=True, metavar="LABEL=PATH",
                    help="a scored .eval log under a label (repeat for several runs)")
@@ -1621,6 +1777,8 @@ def _model_word_texts(packet: Packet) -> int:
 def _totals_lines(packet: Packet) -> list[str]:
     t = summary(packet)["totals"]
     unsettleable = sum(t["unsettleable_by_key"].values())
+    carried = ([f"carried failed trials (errored or unscored epochs, no review unit): {len(t[CARRIED_KEY])}"]
+               if CARRIED_KEY in t else [])
     return [
         f"findings: {t['findings']} on {t['route_keys']} route keys; finding units: {t['finding_units']}; "
         f"grouping ratio: {t['grouping_ratio']}",
@@ -1629,6 +1787,7 @@ def _totals_lines(packet: Packet) -> list[str]:
         f"narrative units by class: {t['narrative_units_by_class']}",
         f"audit units: {t['audit_units']}; cases with units: {t['cases_with_units']}",
         f"scope: {packet.scope}; fm-epoch routes: {packet.fm_epoch_routes}",
+        *carried,
     ]
 
 
