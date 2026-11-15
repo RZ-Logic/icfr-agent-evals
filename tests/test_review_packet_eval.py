@@ -59,15 +59,19 @@ def _load_script():
 
 rp = _load_script()
 REAL_COMPOSITION_CHECK = rp.check_eval_composition
+REAL_TEMPLATE_CHECK = rp.check_eval_template
 
 
 @pytest.fixture(scope="module", autouse=True)
 def _small_eval_logs_allowed():
     """The mock evaluation-split logs here hold two or three cases, not the 200 of section
     4, so the composition check is set aside for them; the composition tests below call the
-    real check (REAL_COMPOSITION_CHECK)."""
+    real check (REAL_COMPOSITION_CHECK). Most hold one worker run and no template run, so the
+    template check (decision D-R20) is set aside too; the template tests put it back
+    (REAL_TEMPLATE_CHECK)."""
     mp = pytest.MonkeyPatch()
     mp.setattr(rp, "check_eval_composition", lambda log, name: None)
+    mp.setattr(rp, "check_eval_template", lambda runs, split: None)
     yield
     mp.undo()
 
@@ -384,7 +388,8 @@ def test_errored_epoch_is_a_format_break_with_its_audit_and_narrative_read(base_
     # Decision D-R20 (section 9: "A missing or refused generation stays a format break, and
     # review never settles it"): an errored epoch carries FM-000. It stays carried as a failed
     # trial and its routes build no finding, but it gets its FM-000 audit unit and its
-    # whole-narrative read like any FM-000 epoch: the raw completion, never a parsed output.
+    # whole-narrative read like any FM-000 epoch. Its output is shown as its real parse gives
+    # it (here it parses: the narrative and the fields), under its own page tag.
     path = make_log(base_log, tmp_path / "err.eval", MODEL_A,
                     _with_errored(truths, fms=(), error="boom: provider error"), eval_split=eval_split)
     p = rp.build_packet(rp.load_runs([("alpha", path)], SEED), run_id="carry", seed=SEED)
@@ -399,13 +404,24 @@ def test_errored_epoch_is_a_format_break_with_its_audit_and_narrative_read(base_
     audits = [u for u in p.units if u.row_kind == "fm_audit"]
     assert [u.fm_code for u in audits] == ["FM-000", "FM-000"]
     assert {u.fm_reasons for u in audits} == {(rp.ERRORED_EVIDENCE,)}
-    completions = {str(s.id): s.output.completion for s in log.samples if s.epoch == 4}
+    parsed = {str(s.id): json.loads(s.output.completion) for s in log.samples if s.epoch == 4}
     for a in audits:
         narrative = next(u for u in p.units if u.unit_id == a.narrative_unit_ids[0])
-        assert narrative.parsed_ok is False and narrative.structured == {}
-        assert narrative.narrative == completions[narrative.case_id] and MARK in narrative.narrative
+        assert narrative.parsed_ok is True and narrative.errored is True
+        assert narrative.structured["asset"] == parsed[narrative.case_id]["asset"]
+        assert narrative.narrative == parsed[narrative.case_id]["narrative"] and MARK in narrative.narrative
+        assert narrative.facts[0].block_id == "worker_fields" and len(narrative.facts) > 1
+    # every other narrative unit is untagged
+    assert sum(u.errored for u in p.units if u.row_kind == "narrative") == 2
     out = tmp_path / "packet"
     rp.write_packet(p, str(out))
+    page = (out / rs.PACKET_FILES["html"]).read_text(encoding="utf-8")
+    assert page.count(rp.ERRORED_TAG) == 2
+    assert 'if (n.errored_tag) card.appendChild(el("div", "tag", n.errored_tag));' in page
+    # the tag survives a reload of the packet (derived from the carried epochs and the members)
+    loaded = rp.load_packet(str(out))
+    assert {u.unit_id for u in loaded.units if u.errored} == {u.unit_id for u in p.units if u.errored}
+    assert rp.render_html(loaded) == page
     summary = json.loads((out / rs.PACKET_FILES["summary"]).read_text(encoding="utf-8"))
     assert summary["totals"]["carried_failed_trials"] == [
         {"run_id": "R1", "sample_id": sid, "epoch": 4, "reason": "sample error"} for sid in sids]
@@ -491,7 +507,7 @@ def test_errored_epoch_with_no_scores_carried(base_log, truths, tmp_path):
     on3 = [m for m in p.members if m.epoch == 3 and m.sample_id == p.carried[0].sample_id]
     assert sorted((m.member_kind, m.fm_codes) for m in on3) == [("fm_audit", ("FM-000",)), ("narrative", ("FM-000",))]
     narrative = next(u for u in p.units if u.unit_id == next(m.unit_id for m in on3 if m.member_kind == "narrative"))
-    assert narrative.narrative == "" and narrative.parsed_ok is False
+    assert narrative.narrative == "" and narrative.parsed_ok is False and narrative.errored is True
 
 
 def test_carried_reasons_agree_with_trials(base_log, truths, tmp_path):
@@ -756,6 +772,75 @@ def test_second_look_subset_never_brings_in_template_epochs(base_log, truths, tm
         sub, _ = rp.subset_packet(packet, shared, seed=SEED + 1)
         assert sub.members and {m.run_id for m in sub.members} == {rid["alpha"]}
         assert [u for u in sub.units if u.row_kind == "finding"]
+
+
+def test_evaluation_packet_needs_exactly_one_template_run(base_log, truths, tmp_path, monkeypatch, capsys):
+    # Decision D-R20 (ruling 11): on the evaluation split the template baseline goes in the
+    # review packet, so a packet without exactly one template run is refused (exit 3).
+    monkeypatch.setattr(rp, "check_eval_template", REAL_TEMPLATE_CHECK)
+    eps = _good_epochs(truths)
+    worker = make_log(base_log, tmp_path / "w.eval", MODEL_A, eps, eval_split=True)
+    other = make_log(base_log, tmp_path / "o.eval", MODEL_B, copy.deepcopy(eps), eval_split=True)
+    tmpl = make_log(base_log, tmp_path / "t.eval", "none/none", copy.deepcopy(eps), eval_split=True,
+                    mutate=_as_template)
+    tmpl2 = make_log(base_log, tmp_path / "t2.eval", "none/none", copy.deepcopy(eps), eval_split=True,
+                     mutate=_as_template)
+    for specs, n in (([("alpha", worker)], 0), ([("alpha", worker), ("beta", other)], 0),
+                     ([("alpha", worker), ("t1", tmpl), ("t2", tmpl2)], 2)):
+        with pytest.raises(rp.Refused, match=rf"exactly one --run that is the template baseline log .*; {n} given"):
+            rp.load_runs(specs, SEED)
+    out = tmp_path / "out"
+    assert _main(["--run", f"alpha={worker}", "--out", out, "--seed", SEED, "--run-id", "eval-mock-run"]) == 3
+    assert not out.exists() and "template baseline" in capsys.readouterr().err
+    runs = rp.load_runs([("alpha", worker), ("beta", other), ("template", tmpl)], SEED)
+    assert sum(rp.is_template_run(r) for r in runs) == 1
+    good = tmp_path / "good"
+    assert _main(["--run", f"alpha={worker}", "--run", f"template={tmpl}", "--out", good, "--seed", SEED,
+                  "--run-id", "eval-mock-run"]) == 0
+    # a dev packet needs no template run, as before
+    dev = make_log(base_log, tmp_path / "dev.eval", MODEL_A, _good_epochs(truths))
+    assert rp.load_runs([("alpha", dev)], SEED)[0].run_id == "R1"
+
+
+def test_errored_epoch_audit_evidence_and_tag_wording():
+    # Decision D-R20: the evidence says the epoch ended in an error, never that no output was
+    # scored, and never shows the error text; the page tag is data on the unit, not a label.
+    assert rp.ERRORED_EVIDENCE == "sample error: the epoch ended in an error (decision D-R20)"
+    assert rp.ERRORED_TAG == "the epoch ended in an error; output shown as written"
+    assert rp.ERRORED_TAG not in rp.UI_TEXT.values()
+    errored = SimpleNamespace(error=SimpleNamespace(message="boom: provider error"), scores={})
+    assert rp._audit_evidence(errored, "FM-000") == (rp.ERRORED_EVIDENCE,)
+    assert rp._audit_evidence(SimpleNamespace(error=None, scores={}), "FM-000") == (rp.STRUCTURED_LINE,)
+
+
+def test_errored_epoch_that_does_not_parse_shows_its_own_tag(base_log, truths, tmp_path):
+    # An errored epoch whose completion does not parse is shown as written, with the errored
+    # tag in place of the unparsed tag; a parse failure with no sample error keeps the unparsed tag.
+    t = truths[STD]
+    eps = [E(STD, 1, answer(t, "Plain narrative.")), E(STD, 2, "not json, errored", error="boom"),
+           E(STD, 3, "not json, parse failure", scores={"correctness_anchor": ((), ("FM-000",), {})})]
+    path = make_log(base_log, tmp_path / "np.eval", MODEL_A, eps)
+    p = rp.build_packet(rp.load_runs([("alpha", path)], SEED), run_id="np", seed=SEED, scope="all")
+    by_text = {u.narrative: u for u in p.units if u.row_kind == "narrative"}
+    err, broke = by_text["not json, errored"], by_text["not json, parse failure"]
+    assert (err.parsed_ok, err.errored, broke.parsed_ok, broke.errored) == (False, True, False, False)
+    data = rp._page_data(p, "t", "review")["units"]
+    assert data[err.unit_id]["errored_tag"] == rp.ERRORED_TAG and "errored_tag" not in data[broke.unit_id]
+    assert "errored_tag" not in data[by_text["Plain narrative."].unit_id]
+
+
+def test_errored_narrative_is_never_grouped_with_the_same_text_unerrored(base_log, truths, tmp_path):
+    # The errored tag sits on the unit, so the same completion on an epoch that did not error
+    # is its own unit; two errored epochs with one text still share one unit.
+    t = truths[STD]
+    same = answer(t, "One text on every epoch.")
+    eps = [E(STD, 1, same), E(STD, 2, same), E(STD, 3, same, error="boom"), E(STD, 4, same, error="boom")]
+    path = make_log(base_log, tmp_path / "grp.eval", MODEL_A, eps)
+    p = rp.build_packet(rp.load_runs([("alpha", path)], SEED), run_id="grp", seed=SEED, scope="all")
+    unit_of = {m.epoch: m.unit_id for m in p.members if m.member_kind == "narrative"}
+    assert unit_of[1] == unit_of[2] and unit_of[3] == unit_of[4] and unit_of[1] != unit_of[3]
+    by_id = {u.unit_id: u for u in p.units}
+    assert (by_id[unit_of[1]].errored, by_id[unit_of[3]].errored) == (False, True)
 
 
 def test_public_text_rules():

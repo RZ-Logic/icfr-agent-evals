@@ -61,13 +61,16 @@ available, with the reason.
 
 Decision D-R20 (2026-11-15). An errored epoch is a format break (FM-000): it counts in the
 FM counts by code and subset and in the format-break rate, with the count of errored epochs
-printed beside FM-000 (an API error rather than a parse failure), and it scores 0 on every
-anchor in every mean (icfr_agent_evals/trials.py). An unscored epoch with no sample error
-stays a failed trial and is counted on its own. Beside each run's review-settled and
-audit-adjusted figures the report prints the section 8 sensitivity row that drops the
-epochs whose unsettleable route the settlement table files as an extractor or an
-answer-key defect, per subset, with the samples scored on fewer than 4 epochs and the
-samples that left the row; it is never the score of record.
+printed beside FM-000 (a sample error rather than a parse failure), and it scores 0 on
+every anchor in every mean (icfr_agent_evals/reliability.py adds the code, trials.py the
+zeros). A whole-narrative wrong on it counts as review-found, as on a parse-failure FM-000
+epoch. An unscored epoch with no sample error stays a failed trial and is counted on its
+own. Beside each run's review-settled and audit-adjusted figures the report prints the
+section 8 sensitivity row that drops the epochs whose unsettleable route the settlement
+table files as an extractor or an answer-key defect, per subset, in all three readings
+(review-settled, audit-adjusted and route-blind), with the samples scored on fewer than 4
+epochs and the samples that left the row; it is never the score of record. A carried
+epoch (errored or unscored) is never dropped: it stays a failed trial in the row.
 
 Each worker row states the reasoning mode sent, read from the recorded model-call request
 of every evaluated-model ModelEvent (section 5), never from the run config; a worker log
@@ -100,7 +103,7 @@ import sys
 from collections import Counter, defaultdict
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
 from icfr_agent_evals import h3
 from icfr_agent_evals import reliability as rel
@@ -132,6 +135,8 @@ FIGURE_ROLES: dict[str, str] = {
 }
 RECORD_KINDS: tuple[str, ...] = (trials.REVIEW_SETTLED, trials.AUDIT_ADJUSTED)
 LOG_KINDS: tuple[str, ...] = (trials.ROUTE_BLIND, trials.CODE_ONLY)
+# The three readings section 6 names, in the order the sensitivity row prints them.
+SENSITIVITY_KINDS: tuple[str, ...] = (*RECORD_KINDS, trials.ROUTE_BLIND)
 WITHHELD = ("withheld: no review-settled or audit-adjusted figure is computed or read until the first record "
             "and the second look are both frozen and checked (pre-registration section 8)")
 REHEARSAL = "REHEARSAL on the dev split, not an evaluation run"
@@ -629,7 +634,7 @@ def _epoch_kinds(sample: Any, carried: bool) -> tuple[bool, bool, bool]:
 def epoch_counts(log: Any) -> dict[str, dict[str, Any]]:
     """Per subset, from the log alone: epochs, format-break epochs (FM-000: a parse failure
     or, decision D-R20, an errored epoch) with the format-break rate and, beside it, how many
-    of them are errored epochs (an API error rather than a parse failure), errored epochs,
+    of them are errored epochs (a sample error rather than a parse failure), errored epochs,
     unscored epochs (a trial anchor missing or not numeric, no sample error), carried epochs
     (review_packet carried_reasons: a sample error or an unscored trial anchor, a failed
     trial with no finding unit), routed epochs (any section 10(c) route, settleable or not),
@@ -687,13 +692,6 @@ def log_totals(items: Sequence[LogInput]) -> dict[str, int]:
     return out
 
 
-def fm_counts_of(report: trials.TrialReport) -> dict[str, int]:
-    """FM counts per (sample, epoch) over a code-only report, FM-000 on an errored epoch
-    included (decision D-R20); the same counts as reliability.fm_counts on a log with no
-    errored epoch."""
-    return dict(sorted(Counter(c for e in report.epochs for c in dict.fromkeys(e.failure_modes)).items()))
-
-
 def log_only_block(item: LogInput) -> tuple[dict[str, Any], dict[str, trials.TrialReport]]:
     """Every figure that reads the log alone (no review record)."""
     res = trials.figures(item.log)
@@ -703,7 +701,8 @@ def log_only_block(item: LogInput) -> tuple[dict[str, Any], dict[str, trials.Tri
         "figures": {kind: pass_rows(reports[kind]) for kind in LOG_KINDS},
         "citation_pass4": citation_rows(reports[trials.ROUTE_BLIND], None),
         "epochs": epoch_counts(item.log),
-        "fm_counts": fm_counts_of(reports[trials.CODE_ONLY]), "fm002_by_direction": r.fm002_by_direction,
+        # reliability.fm_counts: FM-000 on an errored epoch included (decision D-R20, evaluate_trial)
+        "fm_counts": r.fm_counts, "fm002_by_direction": r.fm002_by_direction,
     }
     return payload, reports
 
@@ -718,15 +717,32 @@ def _member_list(m: Mapping[str, Any], col: str) -> list:
     return value if isinstance(value, list) else []
 
 
-def record_tables(record: Any, run_id: str, kinds: Mapping[str, str | None]) -> dict[str, Any]:
+def _member_epoch(m: Mapping[str, Any]) -> int | None:
+    try:
+        return int(m.get("epoch"))
+    except (TypeError, ValueError):
+        return None
+
+
+def record_tables(record: Any, run_id: str, kinds: Mapping[str, str | None], *,
+                  defects: Mapping[tuple[str, int], Sequence[str]],
+                  narrative_wrong: Iterable[tuple[str, int]]) -> dict[str, Any]:
     """Per subset, from the frozen record's members of one run: finding counts and finding
     units by route key and route class, the share of findings ruled `correct` (the
     extractor's false-alarm rate) by route key and route class, the verdict distribution by
     route class, unsettleable-route counts by route key and the defect epochs among them,
     narrative members and units by class, whole-narrative `wrong` counts (members and units)
-    by class, and the audit verdicts by code."""
+    by class, and the audit verdicts by code.
+
+    Two counts read the same source as the lines beside them (decision D-R20): the defect
+    epochs by route key are `defects` (trials.defect_epochs, the epochs the sensitivity row
+    drops), and a narrative member counts as `wrong` only on an epoch in `narrative_wrong`
+    (the review-settled epochs whose applied whole-narrative record is `wrong`, the
+    review-found count), so an errored FM-000 epoch counts in both and an unscored carried
+    epoch, whose narrative record settles nothing, in neither."""
     verdict = {row.get("unit_id", ""): row.get("verdict", "") for row in record.rows or ()}
     members = [m for m in record.members or () if m.get("run_id") == run_id]
+    wrong_epochs = set(narrative_wrong)
     out: dict[str, dict[str, Any]] = {}
 
     def row_for(subset: str) -> dict[str, Any]:
@@ -757,22 +773,20 @@ def record_tables(record: Any, run_id: str, kinds: Mapping[str, str | None]) -> 
                 row["verdicts_by_route_class"][cls][v or "none"] += 1
             elif kind == "unsettleable":
                 row["unsettleable_by_route_key"][key] += 1
-                try:
-                    rows = settlement.rows_for(key, [str(r) for r in _member_list(m, "reasons")])
-                except ValueError:
-                    rows = ()
-                if any(not r.settleable and r.on_correct in DEFECT_ON_CORRECT for r in rows):
-                    row["defect_epochs_by_route_key"][key] += 1
             elif kind == "narrative":
                 row["narrative_members_by_class"][cls] += 1
                 row["narrative_units_by_class"][cls].add(uid)
-                if v == trials.WRONG:
+                if v == trials.WRONG and (str(m.get("sample_id")), _member_epoch(m)) in wrong_epochs:
                     row["wrong_members_by_class"][cls] += 1
                     row["wrong_units_by_class"][cls].add(uid)
             elif kind == "fm_audit":
                 codes = [str(c) for c in _member_list(m, "fm_codes")]
                 code = (record.units.get(uid) or {}).get("fm_code") or (codes[0] if codes else "")
                 row["audit_by_code"][code][v or "none"] += 1
+    for (sid, _ep), keys in defects.items():
+        for subset in subsets_of(kinds.get(sid)):
+            for key in keys:
+                row_for(subset)["defect_epochs_by_route_key"][key] += 1
 
     def finish(row: dict[str, Any]) -> dict[str, Any]:
         share_key = {k: row["correct_by_route_key"][k] / n for k, n in row["findings_by_route_key"].items() if n}
@@ -806,7 +820,9 @@ def record_tables(record: Any, run_id: str, kinds: Mapping[str, str | None]) -> 
 
 def review_found_rows(settled: trials.TrialReport) -> dict[str, dict[str, Any]]:
     """Per subset: review-found codes, citation omissions and whole-narrative wrong epochs
-    on the review-settled trial, counted apart from the code-caught counts."""
+    on the review-settled trial, counted apart from the code-caught counts. A whole-narrative
+    wrong epoch is one whose applied record is `wrong` (EpochResult.narrative_wrong): an
+    errored FM-000 epoch counts like a parse-failure FM-000 epoch (decision D-R20)."""
     out = {}
     for subset in SUBSETS:
         sub = sub_report(settled, subset)
@@ -815,8 +831,15 @@ def review_found_rows(settled: trials.TrialReport) -> dict[str, dict[str, Any]]:
         eps = sub.epochs
         out[subset] = {"codes": dict(sorted(Counter(c for e in eps for c in e.review_found).items())),
                        "citation_omissions": sum(e.review_found_omissions for e in eps),
-                       "whole_narrative_wrong_epochs": sum(1 for e in eps if e.narrative_errors)}
+                       "whole_narrative_wrong_epochs": len(narrative_wrong_epochs(sub))}
     return out
+
+
+def narrative_wrong_epochs(settled: trials.TrialReport) -> set[tuple[str, int]]:
+    """The (sample, epoch) pairs whose applied whole-narrative record is `wrong` on the
+    review-settled trial: the one source of the review-found whole-narrative count and of
+    the whole-narrative wrong counts in the review-queue tables."""
+    return {(e.sample_id, e.epoch) for e in settled.epochs if e.narrative_wrong}
 
 
 def record_block(item: LogInput, record: Any, run_id: str,
@@ -844,14 +867,18 @@ def record_block(item: LogInput, record: Any, run_id: str,
         "run_id": run_id,
         "second_look_label": label,
         "figures": {trials.REVIEW_SETTLED: pass_rows(settled, label), trials.AUDIT_ADJUSTED: pass_rows(audit, label)},
+        # Section 6: every table that reports one of the three figures reports all three, so the
+        # sensitivity row gives the route-blind reading too (from the log alone, no second-look label).
         "defect_sensitivity": {"label": trials.DEFECT_DROPPED_LABEL, "defect_epochs": len(defects),
                                trials.REVIEW_SETTLED: defect_rows(settled, defects, label),
-                               trials.AUDIT_ADJUSTED: defect_rows(audit, defects, label)},
+                               trials.AUDIT_ADJUSTED: defect_rows(audit, defects, label),
+                               trials.ROUTE_BLIND: defect_rows(log_reports[trials.ROUTE_BLIND], defects)},
         "fm008_review_settled": list(settled.fm008),
         "anchor_means": {trials.REVIEW_SETTLED: anchor_rows(settled), trials.AUDIT_ADJUSTED: anchor_rows(audit)},
         "citation_pass4": citation_rows(log_reports[trials.ROUTE_BLIND], settled),
         "review_found": review_found_rows(settled),
-        "record_tables": record_tables(record, run_id, kinds),
+        "record_tables": record_tables(record, run_id, kinds, defects=defects,
+                                       narrative_wrong=narrative_wrong_epochs(settled)),
         "code_audit_counts": audited,
     }
     return payload, {trials.REVIEW_SETTLED: settled, trials.AUDIT_ADJUSTED: audit}
@@ -1040,7 +1067,7 @@ def _citation_lines(rows: Mapping[str, Any]) -> list[str]:
     return lines
 
 
-FORMAT_BREAK_NOTE = "an API error rather than a parse failure, decision D-R20"
+FORMAT_BREAK_NOTE = "a sample error rather than a parse failure, decision D-R20"
 
 
 def _fm_code_text(codes: Mapping[str, int], errored: int) -> str:
@@ -1090,13 +1117,15 @@ def _anchor_mean_lines(block: Mapping[str, Any], label: str | None) -> list[str]
 
 def _defect_lines(block: Mapping[str, Any]) -> list[str]:
     """The section 8 sensitivity row (decision D-R20), labeled so, review-settled with the
-    audit-adjusted reading beside it."""
+    audit-adjusted and route-blind readings beside it (section 6: every table that reports
+    one of the three reports all three). The second-look label is the label of the
+    review-settled and audit-adjusted readings; the route-blind one reads the log alone."""
     d = block["defect_sensitivity"]
     label = block.get("second_look_label")
-    tag = f"; {label}" if label else ""
+    tag = f"; review-settled and audit-adjusted {label}" if label else ""
     lines = [f"  {d['label']}; {d['defect_epochs']} defect epoch(s) dropped from this run{tag}:"]
-    for kind in RECORD_KINDS:
-        rows = d[kind]
+    for kind in SENSITIVITY_KINDS:
+        rows = d.get(kind) or {}
         for subset in _present(rows):
             r = rows[subset]
             lines.append(f"    {FIGURE_NAMES[kind]}, {_sub(subset)}: {_ci(r)}; under the rule before D-R9 "

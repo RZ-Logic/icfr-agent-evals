@@ -53,34 +53,42 @@ Errored and unscored epochs (pre-registration section 6: "Parse failures (FM-000
 errors and unscored epochs count as failed trials whatever review finds ... and
 review never settles them"). An epoch with a sample error, or with a trial anchor
 that is missing or not a finite number (the test trials.py applies), is carried as
-a failed trial: no finding unit is built from it, and without an FM code no unit at
-all, so nothing about it reaches reviewer/. A carried epoch that still holds an FM
-code gets the mandatory code audit like any FM-coded epoch (section 6, one audit row
-per (FM-coded epoch, code), and the reader "reads that epoch's narrative whole";
-section 8, the settlement refuses a record unless "every FM-coded (epoch, code) has
-an audit row"): its audit units and its whole-narrative read (the narrative, or the
-raw completion when the output did not parse, as for a format break) are built, and
-it stays a failed trial. sealed/summary.json records each carried epoch under
-totals.carried_failed_trials (run id, sample id, epoch and the reason, in the words
-trials.py uses) with a count per run, so the settlement code and the run report can
-count it. The key is written when the packet carries an epoch or reads the
-evaluation split. A format break (FM-000) is not carried: it keeps its audit unit and
-its whole-narrative read. A log missing an epoch, or one regression.refuse_partial_run
+a failed trial: no finding unit is built from it. An unscored epoch with no sample
+error and no FM code builds no unit at all, so nothing about it reaches reviewer/. A
+carried epoch that holds an FM code (an errored epoch always does, below) gets the
+mandatory code audit like any FM-coded epoch (section 6, one audit row per (FM-coded
+epoch, code), and the reader "reads that epoch's narrative whole"; section 8, the
+settlement refuses a record unless "every FM-coded (epoch, code) has an audit row"):
+its audit units and its whole-narrative read (the narrative, or the raw completion
+when the output did not parse) are built, and it stays a failed trial.
+sealed/summary.json records each carried epoch under totals.carried_failed_trials (run
+id, sample id, epoch and the reason, in the words trials.py uses) with a count per run,
+so the settlement code and the run report can count it. The key is written when the
+packet carries an epoch or reads the evaluation split. A parse failure (FM-000 on an
+epoch with no sample error) is not carried: it keeps its audit unit and its
+whole-narrative read. A log missing an epoch, or one regression.refuse_partial_run
 refuses, is still refused as structurally incomplete.
 
-An errored epoch is a format break (decision D-R20, 2026-11-15; section 9: "A missing or
-refused generation stays a format break, and review never settles it"). It is still
-carried with its reason, and it carries FM-000 (trials.epoch_codes), so it gets its FM-000
-audit unit and its whole-narrative read like any FM-000 epoch: the raw completion, or an
-empty narrative when nothing came back, never a parsed output. Its audit evidence says it
-ended in an error and never shows the error text, which can name the model. An unscored
-epoch with no sample error is not a format break and builds no unit, as before.
+An errored epoch is a format break too (decision D-R20, 2026-11-15; section 9: "A missing
+or refused generation stays a format break, and review never settles it"), but it is
+carried, with its reason. It carries FM-000 (reliability.evaluate_trial adds it), so it
+gets its FM-000 audit unit and its whole-narrative read like any FM-000 epoch, and no
+finding unit. Its output is shown as its real parse gives it: the narrative and the fields
+when the completion parses, else the raw completion (empty when nothing came back). Its
+narrative unit carries its own page tag, "the epoch ended in an error; output shown as
+written", and is never grouped with the same text from an epoch that did not error. Its
+audit evidence says it ended in an error and never shows the error text, which can name
+the model. An unscored epoch with no sample error is not a format break and builds no unit
+unless it holds an FM code, as before.
 
 The template baseline (decision D-R20). A template run given with --run gets its units like
 a worker run: findings, narrative reads (the narrative-only reads of the 54
 difficulty-bearing cases included) and audit units. sealed/runs.json marks it
 template_baseline, so scripts/review_freeze.py keeps it out of the second look and the
-blinding check, and subset_packet never brings its epochs into a second-look packet.
+blinding check, and subset_packet never brings its epochs into a second-look packet. On
+the evaluation split a packet needs exactly one --run that is the template baseline log
+(check_eval_template, called from load_runs), so the freeze, which rebuilds the packet
+through load_runs, needs it too.
 
 Composition (pre-registration section 4: the evaluation split is 200 cases, 146
 synthetic, 30 edge and 24 adversarial). An evaluation-split log is refused unless its
@@ -92,7 +100,8 @@ Exit codes:
   3  refused (nothing written): a missing or unreadable log, a log whose status is
      not success, a log on a split other than dev or an unlocked eval, a dev log
      regression.refuse_evaluation_split refuses, an evaluation-split log that does not
-     hold the 200 cases of section 4, logs on different splits, logs whose content
+     hold the 200 cases of section 4, an evaluation-split packet without exactly one
+     template baseline run (decision D-R20), logs on different splits, logs whose content
      fingerprints differ, a sample missing an epoch, a sample without
      truth or fixture metadata, a duplicate or malformed label, an --out that exists
      and is not empty, a malformed run id or one naming a model word, a help
@@ -159,7 +168,11 @@ NARRATIVE_FM_CODES = ("FM-001", "FM-002", "FM-003", "FM-016")
 INJECTION_DETAIL_KEYS = ("target_field", "field_complied", "canary_found", "canary_in_raw_text")
 UNPARSED_FACT_KEY = "unparsed"
 # Audit evidence for the FM-000 of an errored epoch (decision D-R20).
-ERRORED_EVIDENCE = "sample error: the epoch ended in an error, so no output was scored (decision D-R20)"
+ERRORED_EVIDENCE = "sample error: the epoch ended in an error (decision D-R20)"
+# The page tag of a narrative unit read from an errored epoch (decision D-R20). It is page
+# data on that unit only, like the audit evidence, never a static label: the error text
+# itself is never shown.
+ERRORED_TAG = "the epoch ended in an error; output shown as written"
 # Member kinds that make an epoch routed (any route item, settleable or not).
 ROUTE_MEMBER_KINDS = frozenset({"finding", "unsettleable", "fm_epoch_route_skipped"})
 
@@ -234,6 +247,9 @@ class Unit:
     allowed_verdicts: tuple[str, ...] = ()
     correct_means: tuple[str, ...] = ()   # one text per settlement row
     facts: tuple[FactBlock, ...] = ()
+    # Narrative units only: read from an errored epoch (decision D-R20). Not a packet.csv
+    # column: load_packet derives it from the carried epochs and the narrative members.
+    errored: bool = False
 
 
 @dataclass(frozen=True)
@@ -569,7 +585,21 @@ def load_runs(specs: Sequence[tuple[str, str]], seed: int) -> tuple[RunInput, ..
     if any(fp != first for fp in fingerprints.values()):
         raise Refused("the logs' content fingerprints differ (task version or dataset content); "
                       "they did not score the same cases")
+    check_eval_template(runs, next(iter(splits.values())))
     return tuple(sorted(runs, key=lambda r: int(r.run_id[1:])))
+
+
+def check_eval_template(runs: Sequence[RunInput], split: str) -> None:
+    """Decision D-R20 (ruling 11): on the evaluation split the template baseline goes in the
+    review packet, so exactly one --run must be the template baseline log. Refused
+    otherwise, so no evaluation packet is built, and none rebuilt at the freeze (it reads
+    the logs through load_runs), without it. A dev packet is read as before."""
+    if split != EVAL_SPLIT:
+        return
+    templates = sum(1 for run in runs if rel.is_template_baseline_log(run.log))
+    if templates != 1:
+        raise Refused(f"an evaluation-split packet needs exactly one --run that is the template baseline log "
+                      f"(decision D-R20); {templates} given")
 
 
 # --- Collection -------------------------------------------------------------------------------
@@ -583,6 +613,7 @@ class _Epoch:
     fm_codes: tuple[str, ...]
     parsed: dict | None
     text: str          # narrative, or the raw completion when the output did not parse
+    errored: bool = False  # a sample error (decision D-R20: a format break)
 
     @property
     def ident(self) -> tuple[str, str, int]:
@@ -673,9 +704,9 @@ def build_packet(runs: Sequence[RunInput], *, run_id: str, seed: int,
         for s in log.samples:
             sid, ep = str(s.id), int(s.epoch)
             trial = trials[(sid, ep)]
-            # Decision D-R20: an errored epoch carries FM-000 (trials.epoch_codes); any other
-            # epoch keeps the codes its scorers recorded.
-            codes = tr.epoch_codes(s, trial.failure_modes)
+            # Decision D-R20: an errored epoch carries FM-000 (reliability.evaluate_trial adds
+            # it); any other epoch keeps the codes its scorers recorded.
+            codes = tuple(trial.failure_modes)
             errored = getattr(s, "error", None) is not None
             why = carried_reasons(s)
             if why:  # a failed trial whatever review finds; review never settles it (section 6)
@@ -686,11 +717,12 @@ def build_packet(runs: Sequence[RunInput], *, run_id: str, seed: int,
                 # Still FM-coded (an errored epoch always is): the mandatory code audit covers
                 # it (section 6 and section 8), with no finding unit (its routes are skipped below).
             parse = scoring.parse_worker_output(_completion(s))
-            # An errored epoch is read like any FM-000 epoch: the raw completion, empty when
-            # nothing came back, never a parsed output.
-            parsed = parse.parsed if parse.ok and not errored else None
+            # An errored epoch keeps its real parse result for display (decision D-R20): its
+            # fields when the completion parses, else the raw completion (empty when nothing
+            # came back). Its own page tag says it ended in an error.
+            parsed = parse.parsed if parse.ok else None
             text = str(parsed.get("narrative", "")) if parsed is not None else _completion(s)
-            epochs[(run.run_id, sid, ep)] = _Epoch(run.run_id, s, sid, ep, codes, parsed, text)
+            epochs[(run.run_id, sid, ep)] = _Epoch(run.run_id, s, sid, ep, codes, parsed, text, errored)
             case_inputs.setdefault(sid, _input_text(s.input))
             case_meta.setdefault(sid, s.metadata)
             hard_case.setdefault(sid, _is_hard_case(s))
@@ -744,8 +776,10 @@ def build_packet(runs: Sequence[RunInput], *, run_id: str, seed: int,
     narr_units: dict[str, dict[str, Any]] = {}
     for ident in sorted(in_scope):
         e = epochs[ident]
+        # An errored epoch's narrative is its own unit, apart from the same text on an epoch
+        # that did not error, since its page tag differs; the key of any other epoch is unchanged.
         gk = rs.group_key([e.case_id, e.parsed is not None, e.text, _cited_signature(e.parsed),
-                           _fields_signature(e.parsed)])
+                           _fields_signature(e.parsed), *((ERRORED_TAG,) if e.errored else ())])
         uid = rs.unit_id(seed, "narrative", gk)
         narr_key_of[ident] = uid
         if uid not in narr_units:
@@ -801,7 +835,7 @@ def build_packet(runs: Sequence[RunInput], *, run_id: str, seed: int,
             route_class=rs.unit_narrative_class(unit_classes[uid]),
             sentences=rs.narrative_sentences(e.text), parsed_ok=e.parsed is not None,
             structured=_structured(e.parsed), allowed_verdicts=rs.NARRATIVE_VERDICTS,
-            facts=tuple(rf.output_facts(case_meta[e.case_id], e.parsed)),
+            facts=tuple(rf.output_facts(case_meta[e.case_id], e.parsed)), errored=e.errored,
         )
     for uid, g in audit_units.items():
         e = g["epoch"]
@@ -1392,7 +1426,8 @@ function narrativeCard(parent, nid){
   var n = D.units[nid], card = el("div", "card ncard");
   card.appendChild(el("h3", null, U.narrative));
   card.appendChild(el("div", "tag", U.unit + ": " + nid));
-  if (!n.parsed_ok) card.appendChild(el("div", "tag", U.unparsed));
+  if (n.errored_tag) card.appendChild(el("div", "tag", n.errored_tag));
+  else if (!n.parsed_ok) card.appendChild(el("div", "tag", U.unparsed));
   var tokensBySentence = {};
   function markUnit(fid){ var f = D.units[fid]; f.routed_sentences.forEach(function(s){ (tokensBySentence[s] = tokensBySentence[s] || []).push.apply(tokensBySentence[s], f.highlight); }); }
   n.findings.forEach(function(c){ c.units.forEach(markUnit); });
@@ -1590,6 +1625,8 @@ def _page_data(packet: Packet, title: str, mode: str) -> dict:
             "facts": rf.facts_payload(u.facts), "allowed": list(u.allowed_verdicts),
             "findings": cards, "refs": refs, "audits": audits,
         }
+        if u.errored:  # decision D-R20: its own tag, on this unit only
+            data_units[u.unit_id]["errored_tag"] = ERRORED_TAG
     return {
         "title": title, "mode": mode, "storage_key": "review:" + _packet_csv_sha(packet),
         "ui": UI_TEXT, "exempt": UI_EXEMPT, "answer_means": FINDING_ANSWER_MEANS,
@@ -1721,14 +1758,27 @@ def load_packet(packet_dir: str) -> Packet:
         epoch=int(row["epoch"]), route_key=row["route_key"], route_class=row["route_class"],
         scorers=_json_list(row["scorers"]), reasons=_json_list(row["reasons"]), fm_codes=_json_list(row["fm_codes"]),
     ) for row in rs.read_csv(root / rs.PACKET_FILES["members"], rs.MEMBER_COLUMNS)]
+    carried = load_carried(packet_dir)
+    errored = errored_narrative_units(members, carried)
+    units = [Unit(**{**u.__dict__, "errored": True}) if u.unit_id in errored else u for u in units]
     return Packet(
         run_id=meta["run_id"], seed=int(meta["seed"]), scope=meta["scope"], fm_epoch_routes=meta["fm_epoch_routes"],
         runs=tuple(runs), case_order=tuple(case_order), units=tuple(units), members=_sort_members(members),
         case_facts={k: case_facts[k] for k in sorted(case_facts)},
         case_inputs={k: case_inputs[k] for k in sorted(case_inputs)},
-        carried=load_carried(packet_dir),
+        carried=carried,
         narrative_only_outside=load_narrative_only_outside(packet_dir),
     )
+
+
+def errored_narrative_units(members: Sequence[Member], carried: Sequence[CarriedEpoch]) -> frozenset[str]:
+    """The narrative units read from an errored epoch (decision D-R20): a narrative member
+    on a carried epoch whose reason starts with a sample error. build_packet keeps such a
+    unit apart from any epoch that did not error, so every member of it is errored."""
+    errored = {(c.run_id, c.sample_id, c.epoch) for c in carried
+               if c.reason.split("; ")[0] == SAMPLE_ERROR_REASON}
+    return frozenset(m.unit_id for m in members
+                     if m.member_kind == "narrative" and (m.run_id, m.sample_id, m.epoch) in errored)
 
 
 def load_narrative_only_outside(packet_dir: str | Path) -> tuple[str, ...]:

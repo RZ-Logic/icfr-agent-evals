@@ -898,3 +898,32 @@ def test_defect_dropped_changes_nothing_without_defects():
     for rep in (trials.review_settled_trial(samples, rec, k=4), trials.audit_adjusted_trial(samples, rec, k=4)):
         row = trials.defect_dropped(rep, trials.defect_epochs(samples, k=4))
         assert row["per_sample"] == rep.pass_k and row["dropped_epochs"] == 0
+
+
+def test_a_carried_epoch_is_never_a_defect_epoch():
+    # Decision D-R20 (ruling 1): an errored epoch is a failed FM-000 trial in the sensitivity
+    # row, never dropped as a defect epoch, whatever routes its scorers raised; an unscored
+    # epoch stays a failed trial too. The packet builds no route member from either.
+    err = SimpleNamespace(message="boom")
+    blank = SimpleNamespace(value=None, metadata={})
+    samples = clean("a", e2=sample("a", 2, error=err, correctness=_score(3, reasons=[DEFECT_REASONS["S72"]])))
+    samples += clean("b", e3=sample("b", 3, completeness=blank, correctness=_score(3, reasons=[DEFECT_REASONS["S72"]])))
+    samples += clean("c", e1=sample("c", 1, correctness=_score(3, reasons=[DEFECT_REASONS["S72"]])))
+    assert trials.defect_epochs(samples, k=4) == {("c", 1): (regression.route_key(DEFECT_REASONS["S72"]),)}
+    blind = trials.route_blind_trial(samples, k=4)
+    row = trials.defect_dropped(blind, trials.defect_epochs(samples, k=4))
+    assert row["per_sample"] == {"a": 0, "b": 0, "c": 1} and row["dropped_epochs"] == 1
+
+
+def test_code_only_trial_scores_an_errored_epoch_0_on_every_anchor():
+    # Decision D-R20: an errored epoch scores 0 on every anchor in every figure, the
+    # code-only extractor health figure included, whatever its scorers recorded.
+    samples = clean("a", e2=sample("a", 2, error=SimpleNamespace(message="boom")))
+    code = trials.code_only_trial(samples, k=4)
+    e2 = next(e for e in code.samples["a"].epochs if e.epoch == 2)
+    assert e2.anchors == {a: 0.0 for a in (C, F, R, K)} and e2.failure_modes == ("FM-000",)
+    assert code.anchor_means()[C]["mean"] == 2.25
+    assert all(e.anchors[C] == 3.0 for e in code.samples["a"].epochs if e.epoch != 2)
+    # a log with no errored epoch keeps its anchors as logged
+    plain = clean("b", e2=sample("b", 2, correctness=_score(1, details={"structured_points": 1})))
+    assert next(e for e in trials.code_only_trial(plain, k=4).samples["b"].epochs if e.epoch == 2).anchors[C] == 1.0

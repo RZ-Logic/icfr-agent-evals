@@ -26,6 +26,7 @@ import re
 import shutil
 import subprocess
 import uuid
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -77,15 +78,19 @@ pr = rr.load_pilot_report()
 rf = rr.load_review_freeze()
 rp = rr.load_review_packet()
 REAL_COMPOSITION_CHECK = rp.check_eval_composition
+REAL_TEMPLATE_CHECK = rp.check_eval_template
 
 
 @pytest.fixture(scope="module", autouse=True)
 def _small_eval_logs_allowed():
     """The mock evaluation-split logs here hold 3 or 55 cases, not the 200 of section 4, so
     the composition check is set aside for them; the composition tests below put the real
-    check back (REAL_COMPOSITION_CHECK)."""
+    check back (REAL_COMPOSITION_CHECK). Most packets here hold worker runs only, so the
+    template check of decision D-R20 is set aside too; the template tests put it back
+    (REAL_TEMPLATE_CHECK)."""
     mp = pytest.MonkeyPatch()
     mp.setattr(rp, "check_eval_composition", lambda log, name: None)
+    mp.setattr(rp, "check_eval_template", lambda runs, split: None)
     yield
     mp.undo()
 
@@ -401,7 +406,7 @@ def assert_withheld(text, payload, why):
     # decision D-R20: the errored epoch is a format break, counted beside the parse failures
     assert t["format_break_epochs"] == 1 and t["format_break_errored_epochs"] == 1 and t["unscored_epochs"] == 0
     assert "Counts only" in text and f"over all {t['logs']} log(s) together, {t['epochs']} epochs; errored 1" in text
-    assert ("format breaks (FM-000) 1, of them errored epochs 1 (an API error rather than a parse failure, "
+    assert ("format breaks (FM-000) 1, of them errored epochs 1 (a sample error rather than a parse failure, "
             "decision D-R20); unscored epochs 0") in text
     body = json.dumps(payload, default=str).lower()
     for name in NAMES_NEVER_SHOWN:
@@ -740,9 +745,9 @@ def test_template_in_the_record_gets_its_review_settled_and_audit_adjusted_figur
     assert "incomplete_template" not in payload and rr.TEMPLATE_NOT_IN_RECORD not in text
     t = payload["template"]["record"]
     assert t is not None and t["second_look_label"] == "reference row, never a worker; not second-looked"
-    # decision D-R20: the sensitivity row covers the template row too
-    assert set(t["defect_sensitivity"]["review_settled"]) == {"all", "synthetic", "edge", "adversarial",
-                                                             "difficulty_bearing"}
+    # decision D-R20: the sensitivity row covers the template row too, in all three readings
+    for kind in ("review_settled", "audit_adjusted", "route_blind"):
+        assert set(t["defect_sensitivity"][kind]) == {"all", "synthetic", "edge", "adversarial", "difficulty_bearing"}
     for kind in ("review_settled", "audit_adjusted"):
         assert set(t["figures"][kind]) == {"all", "synthetic", "edge", "adversarial", "difficulty_bearing"}
     assert t["figures"]["review_settled"]["all"]["passed"] == 3
@@ -753,6 +758,28 @@ def test_template_in_the_record_gets_its_review_settled_and_audit_adjusted_figur
     # never a worker: no second look, no H3 entry, not among the workers
     assert set(payload["workers"]) == {"alpha", "beta"} and set(payload["second_look"]["runs"]) == {
         payload["workers"]["alpha"]["record"]["run_id"], payload["workers"]["beta"]["record"]["run_id"]}
+
+
+def test_the_freeze_rebuild_needs_the_template_run_on_the_evaluation_split(small_logs, tmp_path, monkeypatch):
+    # Decision D-R20 (ruling 11): review_packet refuses an evaluation-split packet without
+    # exactly one template run, and the freeze rebuilds the packet through load_runs, so a
+    # packet built without the template run cannot be frozen.
+    logs = {k: small_logs[k] for k in ("alpha", "beta")}
+    root = tmp_path / "run"
+    repo, packet = root / "repo", root / "packet"
+    init_repo(repo)
+    rp.write_packet(rp.build_packet(rp.load_runs(list(logs.items()), SEED), run_id=RUN_ID, seed=SEED), str(packet))
+    filled = fill_first(packet, root / "filled.csv")
+    monkeypatch.setattr(rp, "check_eval_template", REAL_TEMPLATE_CHECK)
+    with pytest.raises(rp.Refused, match="exactly one --run that is the template baseline log"):
+        rp.load_runs(list(logs.items()), SEED)
+    with pytest.raises(rf.Refused) as e:
+        rf.freeze(str(packet), str(filled), list(logs.items()), reviewer=REVIEWER, freeze_date=DAY,
+                  run_commit="a783322", sittings=[SITTING], manifest_dir=str(repo / "docs/evidence/reviews"))
+    assert any(g.startswith("rederive:") and "template baseline" in g for g in e.value.gaps), e.value.gaps
+    # with the template run in the packet the real check passes and the freeze goes through
+    env = freeze_first(tmp_path / "ok", {k: small_logs[k] for k in ("alpha", "beta", "template")})
+    assert env.first
 
 
 def test_template_that_routes_outside_the_record_is_not_review_settled(small, small_logs, base_log, tmp_path):
@@ -809,10 +836,13 @@ def test_sensitivity_row_drops_each_models_defect_epochs(small_logs, base_log, t
     assert g["figures"]["review_settled"]["all"]["passed"] == 0  # every case fails on an unsettleable route
     d = g["defect_sensitivity"]
     assert d["defect_epochs"] == 5
-    for kind in ("review_settled", "audit_adjusted"):
+    # section 6: every table that reports one of the three figures reports all three, so the
+    # sensitivity row gives the route-blind reading too (from the log alone, no second-look label)
+    for kind in ("review_settled", "audit_adjusted", "route_blind"):
         row = d[kind]["all"]
         assert (row["passed"], row["n"], row["samples_fewer_than_k"], row["samples_left_row"]) == (1, 2, 1, 1)
-        assert row["dropped_epochs"] == 5 and row["second_look"] == "second look confirmed"
+        assert row["dropped_epochs"] == 5
+        assert row.get("second_look") == (None if kind == "route_blind" else "second look confirmed")
         lo, hi = trials.clopper_pearson(1, 2)
         assert row["ci95"] == [lo, hi] and row["before_d_r9"]["n"] == 2
         assert (d[kind]["synthetic"]["passed"], d[kind]["synthetic"]["n"]) == (1, 1)
@@ -822,10 +852,19 @@ def test_sensitivity_row_drops_each_models_defect_epochs(small_logs, base_log, t
     # each model for its own defect epochs: alpha has none, so its row is its figure
     a = payload["workers"]["alpha"]["record"]["defect_sensitivity"]
     assert a["defect_epochs"] == 0 and a["review_settled"]["all"]["n"] == 3
+    assert a["route_blind"]["all"]["n"] == 3
     block = text.split("== Worker gamma", 1)[1]
-    assert f"  {trials.DEFECT_DROPPED_LABEL}; 5 defect epoch(s) dropped from this run; second look confirmed:" in block
-    assert ("review-settled, all: 1/2 (Clopper-Pearson 95% [") in block
+    assert (f"  {trials.DEFECT_DROPPED_LABEL}; 5 defect epoch(s) dropped from this run; review-settled and "
+            "audit-adjusted second look confirmed:") in block
+    for name in ("review-settled", "audit-adjusted", "route-blind"):
+        assert f"    {name}, all: 1/2 (Clopper-Pearson 95% [" in block, name
     assert "samples scored on fewer than 4 epochs 1; samples that left the row 1" in block
+    # the review-queue table counts its defect epochs from the same source as the row
+    tables = g["record_tables"]
+    assert tables["all"]["defect_epochs_by_route_key"] == {
+        k: n for k, n in Counter(key for keys in trials.defect_epochs(read_eval_log(gamma)).values()
+                                 for key in keys).items()}
+    assert sum(tables["all"]["defect_epochs_by_route_key"].values()) == d["defect_epochs"]
 
 
 def test_defect_dropped_rule():
@@ -1115,6 +1154,10 @@ def test_errored_epoch_is_a_format_break_and_a_failed_trial():
         assert next(e for e in r.samples["h"].epochs if e.epoch == 2).failure_modes == ("FM-000",)
     blind = trials.route_blind_trial(samples, k=4)
     assert next(e for e in blind.samples["h"].epochs if e.epoch == 2).anchors == {a: 0.0 for a in ANCHOR_NAMES}
+    # the code-only figure scores it 0 on every anchor too (decision D-R20)
+    code = trials.code_only_trial(samples, k=4)
+    assert next(e for e in code.samples["h"].epochs if e.epoch == 2).anchors == {a: 0.0 for a in ANCHOR_NAMES}
+    assert code.anchor_means()["correctness_anchor"]["mean"] == 2.25
 
 
 def test_errored_epoch_needs_its_fm000_audit_row_and_its_narrative_read():
@@ -1218,10 +1261,57 @@ def test_an_fm_coded_carried_epoch_needs_its_audit_row_and_its_narrative_read():
         rep = trial(samples, done, k=4)
         e2 = next(e for e in rep.samples["h"].epochs if e.epoch == 2)
         assert rep.pass_k == {"h": 0} and not e2.success and e2.reasons[0] == "sample error"
-        assert not any("whole-narrative" in r for r in e2.reasons)  # review never settles a carried epoch
+        # decision D-R20: an errored epoch is a format break, so its whole-narrative wrong is
+        # recorded and counted as review-found, as on a parse-failure FM-000 epoch; its anchors
+        # are 0 and it fails whatever the row says, so no figure moves
+        assert "whole-narrative wrong (amount)" in e2.reasons
+        assert e2.narrative_wrong and e2.narrative_errors == ("amount",)
+        assert e2.anchors == {a: 0.0 for a in ANCHOR_NAMES}
+        assert rep.anchor_means()["correctness_anchor"]["mean"] == 2.25
         assert "FM-000" in e2.failure_modes
     audit = trials.audit_adjusted_trial(samples, done, k=4)
     assert next(e for e in audit.samples["h"].epochs if e.epoch == 2).removed_codes == ("FM-001",)
+
+
+FM000_PARSE = SimpleNamespace(value=0, metadata={"failure_modes": ["FM-000"], "requires_human_review": False,
+                                                 "review_reasons": [], "details": {"structured_points": 0}})
+
+
+def test_whole_narrative_wrong_lines_read_one_source():
+    # Decision D-R20: a whole-narrative wrong on an errored FM-000 epoch counts as review-found,
+    # the same as on a parse-failure FM-000 epoch, in the review-found line and in the
+    # review-queue table alike. On an unscored carried epoch the record settles nothing, so the
+    # wrong it holds counts in neither line.
+    blank = SimpleNamespace(value=None, metadata={})
+    samples = hard_samples(correctness=FM001)  # h epoch 2: errored, FM-001 recorded
+    samples += [sample("u", e, kind="edge") for e in (1, 3, 4)]
+    samples.append(sample("u", 2, kind="edge", correctness=FM001, completeness=blank))
+    samples += [sample("p", e, kind="edge") for e in (1, 2, 4)]
+    samples.append(sample("p", 3, kind="edge", correctness=FM000_PARSE))
+    unscored = entry("u", 2, reason="completeness_anchor unscored or non-numeric")
+    rec = carried_record(samples, [entry(), unscored], errored_rows=False,
+                         overrides={("p", 3): ("wrong", ("amount",))})
+    for code in ("FM-000", "FM-001"):
+        rec.audit("h", 2, code)
+    rec.narrative("h", 2, "wrong", ("amount",))
+    rec.audit("u", 2, "FM-001")
+    rec.narrative("u", 2, "wrong", ("amount",))
+    for m in rec.members:
+        if m["member_kind"] == "narrative":
+            m["route_class"] = rs.NARRATIVE_CLASS_FM_CODED
+    settled = trials.review_settled_trial(samples, rec, k=4)
+    assert rr.narrative_wrong_epochs(settled) == {("h", 2), ("p", 3)}
+    found = rr.review_found_rows(settled)
+    assert found["all"]["whole_narrative_wrong_epochs"] == found["edge"]["whole_narrative_wrong_epochs"] == 2
+    kinds = {sid: "edge" for sid in settled.samples}
+    tables = rr.record_tables(rec, "R1", kinds, defects={}, narrative_wrong=rr.narrative_wrong_epochs(settled))
+    assert tables["all"]["whole_narrative_wrong_members_by_class"][rs.NARRATIVE_CLASS_FM_CODED] == 2
+    assert tables["all"]["whole_narrative_wrong_units_by_class"][rs.NARRATIVE_CLASS_FM_CODED] == 2
+    # no figure of record moves: the errored and parse-failure epochs already fail at 0
+    e_h = next(e for e in settled.samples["h"].epochs if e.epoch == 2)
+    e_u = next(e for e in settled.samples["u"].epochs if e.epoch == 2)
+    assert e_h.anchors == {a: 0.0 for a in ANCHOR_NAMES} and not e_u.narrative_wrong
+    assert settled.pass_k == {"h": 0, "p": 0, "u": 0}
 
 
 def test_audited_code_counts_never_reads_a_missing_carried_audit_row_as_real_error():

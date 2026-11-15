@@ -14,6 +14,13 @@ when exactly k epochs are present and all k trials succeed. The code-only figure
 the extractor health figure (section 8), never a score. The review-settled,
 audit-adjusted and route-blind trials live in trials.py, which reads this module.
 
+Decision D-R20 (2026-11-15): an errored epoch is a format break. evaluate_trial gives
+an epoch with a sample error FM-000 first among its failure modes, whatever its scorers
+recorded (errored_format_break), so every FM count reads it from here: fm_counts, the
+section 10 regression records and sign-off check, the run reports and the review packet.
+An epoch with no sample error keeps exactly the codes its scorers recorded, so a log with
+no errored epoch gives the same trials and counts as before.
+
 Owner decision D-R9 (2026-11-11): a citation omission no longer lowers the fabrication
 anchor, so an epoch whose only flaw is one passes the code-only trial too. The shared
 helpers here (scored_before_d_r9, code_found_omissions) let trials.py and regression.py
@@ -75,6 +82,7 @@ FM002_DIRECTION_KEY = "fm002_direction"  # scoring.FM002_DIRECTION_KEY, kept fre
 FM002_UNRECORDED = "unrecorded"
 FM008_REVIEW_SETTLED = "review_settled"  # trials.REVIEW_SETTLED
 FM008_CODE_ONLY = "code_only"            # trials.CODE_ONLY
+FORMAT_BREAK_FM = "FM-000"  # scoring.FORMAT_BREAK_FM, kept free of the scorer imports
 
 
 class GateError(AssertionError):
@@ -129,9 +137,20 @@ def _numeric(value: Any) -> float | None:
     return float(value) if math.isfinite(float(value)) else None
 
 
+def errored_format_break(sample: Any, codes: Iterable[str]) -> tuple[str, ...]:
+    """The FM codes of one (sample, epoch): `codes` deduplicated in order, with FM-000
+    added first on an epoch with a sample error (decision D-R20: an errored epoch is a
+    format break). Idempotent; an epoch with no sample error keeps its codes exactly."""
+    codes = tuple(dict.fromkeys(str(c) for c in codes))
+    if getattr(sample, "error", None) is None or FORMAT_BREAK_FM in codes:
+        return codes
+    return (FORMAT_BREAK_FM, *codes)
+
+
 def evaluate_trial(sample: Any) -> Trial:
     """One (sample, epoch) record: an Inspect EvalSample or anything with id,
-    epoch, scores (name -> Score) and error."""
+    epoch, scores (name -> Score) and error. An epoch with a sample error carries
+    FM-000 (decision D-R20, errored_format_break)."""
     sid, epoch = str(sample.id), int(sample.epoch)
     failed: list[str] = []
     fms: list[str] = []
@@ -161,15 +180,16 @@ def evaluate_trial(sample: Any) -> Trial:
             directions.add(str(meta[FM002_DIRECTION_KEY]))
         if meta.get("requires_human_review"):
             review.append(ReviewRow(sid, epoch, name, tuple(str(r) for r in meta.get("review_reasons") or [])))
-    if fms:
-        failed.append(f"failure modes {sorted(set(fms))}")
+    codes = errored_format_break(sample, fms)
+    if codes:
+        failed.append(f"failure modes {sorted(set(codes))}")
     if any(r.scorer != SAMPLE_ERROR_SCORER for r in review):
         failed.append("routed to requires_human_review")
 
     direction = None
     if FM002 in fms:
         direction = (directions.pop() if len(directions) == 1 else "mixed") if directions else FM002_UNRECORDED
-    return Trial(sid, epoch, not failed, tuple(dict.fromkeys(fms)), tuple(review), tuple(failed), direction)
+    return Trial(sid, epoch, not failed, codes, tuple(review), tuple(failed), direction)
 
 
 # --- Owner decision D-R9 (2026-11-11): citation omissions, read from the log -------------
