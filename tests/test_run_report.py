@@ -38,7 +38,7 @@ from inspect_ai.scorer import Score
 from test_trials import Record, record_for, sample
 
 from icfr_agent_evals import review_schema as rs
-from icfr_agent_evals import roster, trials
+from icfr_agent_evals import h3, roster, trials
 from icfr_agent_evals.casefile import truth_of
 from icfr_agent_evals.task import variance_commentary
 
@@ -939,6 +939,8 @@ def test_review_not_confirmed_makes_h3_not_tested(full_drawn, full_logs, tmp_pat
     assert settled["verdict"] == "not tested" and settled["holds"] is None
     assert "Sonnet 5" in settled["second_look"]["reason"] and "review not confirmed" in settled["second_look"]["reason"]
     assert "H3 on review-settled anchor scores, the reading H3 is evaluated on (decision D-A): not tested" in text
+    assert f"H3 robustness: {h3.ROBUSTNESS_NOT_GIVEN}" in text
+    assert "the three readings give one ordering" not in text
 
 
 # --- trials.py: carried epochs need no review row ----------------------------------------------------

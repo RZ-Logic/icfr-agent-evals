@@ -1153,7 +1153,11 @@ def format_report(payload: Mapping[str, Any]) -> str:
                 if name in hb["text"]:
                     lines.append(hb["text"][name])
             labels = hb["robustness"]["labels"]
-            lines.append("H3 robustness: " + (", ".join(labels) if labels else "the three readings give one ordering"))
+            if "not_given" in hb["robustness"]:
+                lines.append(f"H3 robustness: {hb['robustness']['not_given']}")
+            else:
+                lines.append("H3 robustness: " + (", ".join(labels) if labels else
+                                                  "the three readings give one ordering"))
             lines.append(f"H3 anchor cells read as 0 because unscored (an errored or unscored epoch), per reading "
                          f"and model: {hb['unscored']}")
     lines.append("== Not available in this repository yet")
