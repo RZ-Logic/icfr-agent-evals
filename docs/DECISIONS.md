@@ -99,4 +99,4 @@ Written on 2026-11-13 from the author's private decision record as it stood then
 
 ## Still open
 
-- The author's ratification of the §13 decision row.
+Nothing at the tag. The author ratified §13 of the pre-registration on 2026-11-14; the tooling the rules need after the tag is listed in its §13 tooling row.
