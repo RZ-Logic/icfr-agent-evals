@@ -26,8 +26,9 @@ Reported beside, never in the verdict:
 - the Sonnet 5.5 versus Opus 5.5 paired difference per anchor, flagged as a
   cross-model saturation finding when its mean lies within one standard error, that
   same SD / sqrt(54) (decision D-R19, 2026-11-14);
-- the Sonnet 5 to Sonnet 5.5 delta per anchor as the generational comparison, with
-  the reasoning mode beside it.
+- the Sonnet 5 to Sonnet 5.5 delta per anchor as the generational comparison.
+The reasoning modes of the two models are printed beside every delta: each step,
+each subset and faithfulness step, the generational line and the saturation line.
 
 Robustness (robustness_labels): the review-settled ordering against the
 audit-adjusted one ("not robust to extractor error") and against the ordering with
@@ -37,7 +38,8 @@ from it.
 
 Second-look gate (second_look_gate): if any worker's second look result is "review
 not confirmed", H3 is reported as not tested. "second look empty" is tested under
-that label. "confirmed" is tested.
+that label. "confirmed" is tested. When H3 is not tested, the step differences are
+printed with no holds or FAILS mark and no robustness label is given.
 
 The input table maps each of the four worker models to its 54 cases, each case to
 its case kind and, per trial anchor, its k epoch scores. table_from_reports builds it
@@ -50,6 +52,8 @@ CLI (exit 0 on a report, 3 on a refusal):
   python -m icfr_agent_evals.h3 --settled S.json --second-look L.json
          [--audit A.json] [--before-d-r9 B.json] [--reasoning-modes M.json] [--json out.json]
 Each table file holds {model id: {case id: {"case_kind": ..., "epochs": {anchor: [scores]}}}}.
+The CLI output is labeled "not a reported figure: computed from the tables given, with
+no freeze check". Reported H3 comes only from scripts/run_report.py.
 """
 
 from __future__ import annotations
@@ -120,6 +124,10 @@ NOT_CONFIRMED = "review not confirmed"
 SECOND_LOOK_EMPTY = "second look empty"
 SECOND_LOOK_RESULTS: tuple[str, ...] = (CONFIRMED, NOT_CONFIRMED, SECOND_LOOK_EMPTY)
 TESTED, NOT_TESTED = "tested", "not tested"
+ROBUSTNESS_NOT_GIVEN = ("no robustness label: H3 is reported as not tested, so no ordering is compared "
+                        "(pre-registration section 2, decision D-L)")
+NOT_REPORTED = "not a reported figure: computed from the tables given, with no freeze check"
+REPORTED_BY = "reported H3 comes only from scripts/run_report.py"
 
 
 class Refused(Exception):
@@ -264,10 +272,14 @@ def step_name(anchor: str, lower: str, higher: str) -> str:
 
 @dataclass(frozen=True)
 class Step:
+    """One paired step, with the reasoning modes of its two models (lower, higher) as
+    given to evaluate_h3, printed beside its difference (sections 2 and 8). None means
+    not given."""
     anchor: str
     lower: str
     higher: str
     difference: Difference
+    modes: tuple[str | None, str | None] = (None, None)
 
     @property
     def holds(self) -> bool:
@@ -281,13 +293,22 @@ class Step:
     def key(self) -> tuple[str, str, str]:
         return (self.anchor, self.lower, self.higher)
 
-    def as_dict(self) -> dict[str, Any]:
+    @property
+    def reasoning_mode(self) -> dict[str, str | None]:
+        return {MODEL_LABELS[self.lower]: self.modes[0], MODEL_LABELS[self.higher]: self.modes[1]}
+
+    def as_dict(self, *, tested: bool = True) -> dict[str, Any]:
+        """JSON view. With tested False (H3 not tested), holds is None: no step is marked."""
         return {"name": self.name, "anchor": self.anchor, "lower": self.lower, "higher": self.higher,
-                "holds": self.holds, **self.difference.as_dict()}
+                "holds": self.holds if tested else None, "reasoning_mode": self.reasoning_mode,
+                **self.difference.as_dict()}
 
 
-def _steps(checked: _Checked, cases: Sequence[str], anchors: Sequence[str]) -> tuple[Step, ...]:
-    return tuple(Step(a, lo, hi, _diff(checked, cases, a, lo, hi)) for a in anchors for lo, hi in STEPS)
+def _steps(checked: _Checked, cases: Sequence[str], anchors: Sequence[str],
+           modes: Mapping[str, str | None] | None = None) -> tuple[Step, ...]:
+    modes = modes or {}
+    return tuple(Step(a, lo, hi, _diff(checked, cases, a, lo, hi), (modes.get(lo), modes.get(hi)))
+                 for a in anchors for lo, hi in STEPS)
 
 
 # --- Second-look gate ---------------------------------------------------------------------------
@@ -383,17 +404,17 @@ def evaluate_h3(table: ScoreTable, second_look: Mapping[str, str], *, reading: s
     cases = checked.cases
     subsets = {kind: tuple(c for c in cases if checked.kinds[c] == kind) for kind in CASE_COUNTS}
     lo, hi = SATURATION_PAIR
+    modes = {m: (reasoning_modes or {}).get(m) for m in WORKERS}
     saturation: dict[str, dict[str, Any]] = {}
     for a in ANCHORS:
         d = _diff(checked, cases, a, lo, hi)
         saturation[a] = {"difference": d, "within_one_se": abs(d.mean_float) <= d.se}
-    modes = {m: (reasoning_modes or {}).get(m) for m in WORKERS}
     return H3Result(
         reading=reading, k=k, cases=cases, gate=gate,
-        steps=_steps(checked, cases, ANCHORS),
+        steps=_steps(checked, cases, ANCHORS, modes),
         model_means={POOLED: _means(checked, cases), **{kind: _means(checked, subsets[kind]) for kind in subsets}},
-        by_subset={kind: _steps(checked, subsets[kind], ANCHORS) for kind in subsets},
-        faithfulness_steps=_steps(checked, cases, (FAITHFULNESS,)),
+        by_subset={kind: _steps(checked, subsets[kind], ANCHORS, modes) for kind in subsets},
+        faithfulness_steps=_steps(checked, cases, (FAITHFULNESS,), modes),
         saturation=saturation,
         generational={a: _diff(checked, cases, a, *GENERATIONAL) for a in ANCHORS},
         reasoning_modes=modes,
@@ -405,10 +426,13 @@ def robustness_labels(settled: H3Result, audit: H3Result | None = None,
     """Compare the review-settled ordering (its set of failing steps, from which the
     verdict follows) with the audit-adjusted one and with the one under the rule
     before D-R9. A difference gives the section 2 label. A reading not given is
-    reported as not compared."""
+    reported as not compared. When H3 is not tested (the second-look gate failed),
+    no ordering is compared and no label is given: "not_given" says why."""
     if settled.reading != REVIEW_SETTLED:
         raise Refused(f"the first reading must be {REVIEW_SETTLED}, got {settled.reading}")
     out: dict[str, Any] = {"labels": []}
+    if not settled.tested:
+        out["not_given"] = ROBUSTNESS_NOT_GIVEN
     for name, other, want, label in (("audit_adjusted", audit, AUDIT_ADJUSTED, NOT_ROBUST_EXTRACTOR),
                                      ("before_d_r9", before_d_r9, BEFORE_D_R9, NOT_ROBUST_CITATION)):
         if other is None:
@@ -418,6 +442,9 @@ def robustness_labels(settled: H3Result, audit: H3Result | None = None,
             raise Refused(f"the {name} reading must be {want}, got {other.reading}")
         if other.cases != settled.cases or other.k != settled.k:
             raise Refused(f"the {name} reading covers other cases or another k than the review-settled one")
+        if not settled.tested:
+            out[name] = {"compared": False, "reason": ROBUSTNESS_NOT_GIVEN}
+            continue
         only_settled = sorted(step_name(*key) for key in settled.ordering - other.ordering)
         only_other = sorted(step_name(*key) for key in other.ordering - settled.ordering)
         differs = bool(only_settled or only_other)
@@ -498,25 +525,32 @@ def h3_from_reports(settled: Mapping[str, Any], audit: Mapping[str, Any] | None,
 
 # --- Output -------------------------------------------------------------------------------------
 
+def _mode_pair(result: H3Result, pair: Sequence[str]) -> dict[str, str | None]:
+    return {MODEL_LABELS[m]: result.reasoning_modes.get(m) for m in pair}
+
+
 def result_dict(result: H3Result) -> dict[str, Any]:
-    """A JSON-ready view of one reading."""
+    """A JSON-ready view of one reading. Every step, subset step, saturation and
+    generational entry carries the reasoning modes of its two models. When H3 is not
+    tested, no step is marked: holds is None and failing_steps is empty."""
+    tested = result.tested
     return {
         "reading": result.reading, "label": READING_LABELS[result.reading], "k": result.k,
         "n_cases": len(result.cases),
         "second_look": dict(result.gate), "verdict": result.verdict, "holds": result.holds,
-        "failing_steps": [s.name for s in result.failing_steps],
-        "steps": [s.as_dict() for s in result.steps],
+        "failing_steps": [s.name for s in result.failing_steps] if tested else [],
+        "steps": [s.as_dict(tested=tested) for s in result.steps],
         "beside": {
             "model_means": {sub: {MODEL_LABELS[m]: v for m, v in per.items()}
                             for sub, per in result.model_means.items()},
-            "by_subset": {sub: [s.as_dict() for s in steps] for sub, steps in result.by_subset.items()},
-            "faithfulness_steps": [s.as_dict() for s in result.faithfulness_steps],
+            "by_subset": {sub: [s.as_dict(tested=tested) for s in steps] for sub, steps in result.by_subset.items()},
+            "faithfulness_steps": [s.as_dict(tested=tested) for s in result.faithfulness_steps],
             "saturation": {a: {"pair": f"{MODEL_LABELS[SATURATION_PAIR[1]]} minus {MODEL_LABELS[SATURATION_PAIR[0]]}",
+                               "reasoning_mode": _mode_pair(result, SATURATION_PAIR),
                                "cross_model_saturation": v["within_one_se"], **v["difference"].as_dict()}
                            for a, v in result.saturation.items()},
             "generational": {a: {"pair": f"{MODEL_LABELS[GENERATIONAL[1]]} minus {MODEL_LABELS[GENERATIONAL[0]]}",
-                                 "reasoning_mode": {MODEL_LABELS[m]: result.reasoning_modes.get(m)
-                                                    for m in GENERATIONAL},
+                                 "reasoning_mode": _mode_pair(result, GENERATIONAL),
                                  **d.as_dict()} for a, d in result.generational.items()},
             "reasoning_modes": {MODEL_LABELS[m]: v for m, v in result.reasoning_modes.items()},
         },
@@ -528,27 +562,40 @@ def _fmt_diff(d: Difference) -> str:
     return f"{float(d.mean):+.4f} (paired 95% t [{lo:+.4f}, {hi:+.4f}], SE {d.se:.4f}, n = {d.n})"
 
 
+def _fmt_modes(modes: Mapping[str, str | None]) -> str:
+    return "reasoning mode: " + ", ".join(f"{label} {mode or 'not given'}" for label, mode in modes.items())
+
+
 def format_h3(result: H3Result) -> str:
-    """One line per step, then the figures beside the verdict."""
+    """One line per step, then the figures beside the verdict. Every step, subset
+    step, generational and saturation line carries the two models' reasoning modes.
+    When H3 is not tested, the step differences are printed with no holds or FAILS
+    mark and no failing-steps line."""
+    tested = result.tested
     lines = [f"H3 on {READING_LABELS[result.reading]}: {result.verdict} "
              f"(second look: {result.gate['label']}; {result.gate['reason']})"]
+    if not tested:
+        lines.append("  H3 is not tested: the step differences below carry no mark")
     for s in result.steps:
-        lines.append(f"  {'holds' if s.holds else 'FAILS'}  {s.name}: {_fmt_diff(s.difference)}")
-    if result.failing_steps:
+        mark = f"{'holds' if s.holds else 'FAILS'}  " if tested else ""
+        lines.append(f"  {mark}{s.name}: {_fmt_diff(s.difference)} ({_fmt_modes(s.reasoning_mode)})")
+    if tested and result.failing_steps:
         lines.append("  failing steps: " + "; ".join(s.name for s in result.failing_steps))
     lines.append("Beside, not in the verdict:")
     for kind, steps in result.by_subset.items():
         for s in steps:
-            lines.append(f"  {kind}: {s.name}: {_fmt_diff(s.difference)}")
+            lines.append(f"  {kind}: {s.name}: {_fmt_diff(s.difference)} ({_fmt_modes(s.reasoning_mode)})")
     for s in result.faithfulness_steps:
-        lines.append(f"  faithfulness: {s.name}: {_fmt_diff(s.difference)}")
-    modes = ", ".join(f"{MODEL_LABELS[m]} {result.reasoning_modes.get(m) or 'not given'}" for m in GENERATIONAL)
+        lines.append(f"  faithfulness: {s.name}: {_fmt_diff(s.difference)} ({_fmt_modes(s.reasoning_mode)})")
+    gen_modes = _fmt_modes(_mode_pair(result, GENERATIONAL))
     for a, d in result.generational.items():
         lines.append(f"  generational, Sonnet 5.5 minus Sonnet 5 on {ANCHOR_LABELS[a]}: {_fmt_diff(d)} "
-                     f"(reasoning mode: {modes})")
+                     f"({gen_modes})")
+    sat_modes = _fmt_modes(_mode_pair(result, SATURATION_PAIR))
     for a, v in result.saturation.items():
         flag = "cross-model saturation finding" if v["within_one_se"] else "not within one SE"
-        lines.append(f"  Opus 5.5 minus Sonnet 5.5 on {ANCHOR_LABELS[a]}: {_fmt_diff(v['difference'])}: {flag}")
+        lines.append(f"  Opus 5.5 minus Sonnet 5.5 on {ANCHOR_LABELS[a]}: {_fmt_diff(v['difference'])}: {flag} "
+                     f"({sat_modes})")
     return "\n".join(lines)
 
 
@@ -609,12 +656,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     except Refused as e:
         print(f"REFUSED: {e}", file=sys.stderr)
         return EXIT_REFUSED
-    text = [format_h3(settled)]
+    banner = f"{NOT_REPORTED.upper()}; {REPORTED_BY}"
+    text = [banner, format_h3(settled)]
     text += [format_h3(r) for r in (audit, before) if r is not None]
-    text.append("Robustness: " + ("; ".join(robust["labels"]) or "no label (every compared ordering agrees)"))
+    if "not_given" in robust:
+        text.append(f"Robustness: {robust['not_given']}")
+    else:
+        text.append("Robustness: " + ("; ".join(robust["labels"]) or "no label (every compared ordering agrees)"))
+    text.append(banner)
     print("\n".join(text))
     if args.json_out:
-        payload = {r.reading: result_dict(r) for r in (settled, audit, before) if r is not None}
+        payload: dict[str, Any] = {"status": NOT_REPORTED, "reported_by": REPORTED_BY}
+        payload.update({r.reading: result_dict(r) for r in (settled, audit, before) if r is not None})
         payload["robustness"] = robust
         Path(args.json_out).write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return EXIT_OK

@@ -14,7 +14,7 @@ no case file, no dataset, no answer key and nothing under data/.
 
 The gated statistic. Unweighted Cohen's kappa between the two passes on per-item
 eligibility (eligible or not). It covers every reconciling item either pass labels
-on the cases, matched by reference within a case. An item one pass labels and the
+on the 54 cases, matched by reference within a case. An item one pass labels and the
 other omits counts as not eligible in the pass that omits it. An item counts as
 labeled in a pass when its eligibility answer is yes or no; a row left blank is
 an omission. The 95% CI is a percentile bootstrap of 10,000 resamples of cases,
@@ -31,8 +31,13 @@ that differs from the recorded seed is refused.
 The name. The subset earns the name Self-verified only when the point estimate is
 at least 0.70, and never the name Verified. When kappa is undefined (both passes
 put every item in one class, or no item is labeled) the subset keeps neither name
-and the reason is given. The statistic is labeled intra-rater (test-retest) kappa:
-it shows label stability only.
+and the reason is given. Kappa is always computed and printed, but the subset also
+keeps neither name, with the reason, when the passes do not hold the 54 cases the
+gated kappa covers, or when the sheet's timer data shows the second pass started less
+than 48 hours after the first pass's export (section 4: the author re-labels after at
+least 48 hours). When the timer data does not give that gap, the output warns that the
+48-hour gap is not verifiable; the name is not withheld on that ground alone. The
+statistic is labeled intra-rater (test-retest) kappa: it shows label stability only.
 
 Reported beside the gate, not gating: kappa for variance direction (unweighted)
 and for band and evidence state (quadratic-weighted, over the sheet's three ordered
@@ -41,9 +46,10 @@ whose variance, explained and unexplained amounts all match within $1; the cases
 whose labels differ (the queue for adjudication), by label; and the case count.
 
 Refused: two exports of one sheet (the same sheet id), a rater that differs
-between the passes, a case code the key does not hold, a key that does not match
-its export, passes over different cases, a malformed row and a seed that differs
-from the recorded one.
+between the passes, two key files that name different source files (or a key file
+that names none), a case code the key does not hold, a key that does not match its
+export, passes over different cases, a malformed row and a seed that differs from
+the recorded one.
 
 Exit codes: 0 the result printed (and written, with --out); 3 refused.
 """
@@ -103,6 +109,9 @@ VERSION_KEY = "dataset_version"
 LABELED_SUBSET_CASES = 54
 AMOUNT_TOLERANCE_CENTS = 100  # $1
 RELABEL_GAP_HOURS = 48
+GAP_NOT_VERIFIABLE = ("the 48-hour gap is not verifiable: the sheet's timer data does not give both the first "
+                      "pass's export time and a start time in the second pass (pre-registration section 4 asks "
+                      "the author to re-label after at least 48 hours)")
 
 
 class Refused(Exception):
@@ -127,6 +136,7 @@ class PassLabels:
     csv_sha256: str
     key_sha256: str
     warnings: list[str] = field(default_factory=list)
+    key_source: str = ""  # the case source file the key file names
 
 
 def _sha256(path: Path) -> str:
@@ -162,10 +172,25 @@ def read_key(path: str | Path) -> tuple[str, dict[str, str]]:
     return sid, codes
 
 
+def read_key_source(path: str | Path) -> str:
+    """The case source file a key file names (its "source" entry, as labeling_sheet.py
+    writes it). A key file that names none is refused."""
+    path = Path(path)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        raise Refused(f"{path.name}: not a readable key file ({type(e).__name__})") from e
+    source = data.get("source") if isinstance(data, dict) else None
+    if not isinstance(source, str) or not source.strip():
+        raise Refused(f"{path.name}: the key file names no source file")
+    return source
+
+
 def read_export(csv_path: str | Path, key_path: str | Path) -> PassLabels:
     """One pass: its CSV export decoded by its key file. Malformed rows are refused."""
     csv_path, key_path = Path(csv_path), Path(key_path)
     key_sid, codes = read_key(key_path)
+    key_source = read_key_source(key_path)
     try:
         text = csv_path.read_text(encoding="utf-8-sig")
     except (OSError, UnicodeDecodeError) as e:
@@ -290,7 +315,8 @@ def read_export(csv_path: str | Path, key_path: str | Path) -> PassLabels:
                 warnings.append(f"{where}: case {cid} holds references that differ only in letter case "
                                 f"({', '.join(sorted(refs))}); they are matched as written")
     return PassLabels(sheet_id=sid, rater=rater, exported_at_utc=stamp, cases=cases,
-                      csv_sha256=_sha256(csv_path), key_sha256=_sha256(key_path), warnings=warnings)
+                      csv_sha256=_sha256(csv_path), key_sha256=_sha256(key_path), warnings=warnings,
+                      key_source=key_source)
 
 
 def read_dataset_version(path: str | Path) -> dict[str, Any]:
@@ -484,6 +510,9 @@ def compare(first: PassLabels, second: PassLabels, *, seed: int,
     if first.rater != second.rater:
         raise Refused(f"the passes have different raters ({first.rater!r}, {second.rater!r}); "
                       "Branch B is one rater labeling twice")
+    if first.key_source != second.key_source:
+        raise Refused(f"the two key files name different source files ({first.key_source!r}, "
+                      f"{second.key_source!r}); both passes must label the same cases from one source")
     if set(first.cases) != set(second.cases):
         only1 = sorted(set(first.cases) - set(second.cases))
         only2 = sorted(set(second.cases) - set(first.cases))
@@ -540,16 +569,30 @@ def compare(first: PassLabels, second: PassLabels, *, seed: int,
                 for lab in ("eligibility", "variance_direction", "band", "evidence_state", "amounts")}
 
     warnings = list(first.warnings) + list(second.warnings)
+    withheld: list[str] = []
     if len(case_ids) != LABELED_SUBSET_CASES:
         warnings.append(f"the passes hold {len(case_ids)} cases; the labeled subset of pre-registration "
                         f"section 4 holds {LABELED_SUBSET_CASES}")
+        withheld.append(f"the passes hold {len(case_ids)} cases, not the {LABELED_SUBSET_CASES} cases the "
+                        "gated kappa covers (pre-registration section 4)")
     timing = _timing(first, second)
-    if timing["hours_from_first_export_to_second_start"] is not None \
-            and timing["hours_from_first_export_to_second_start"] < RELABEL_GAP_HOURS:
-        warnings.append("the second pass started less than 48 hours after the first pass was exported "
-                        "(pre-registration section 4 asks for at least 48 hours)")
+    gap = timing["hours_from_first_export_to_second_start"]
+    if gap is None:
+        timing["gap_verifiable"] = False
+        warnings.append(GAP_NOT_VERIFIABLE)
+    else:
+        timing["gap_verifiable"] = True
+        if gap < RELABEL_GAP_HOURS:
+            warnings.append("the second pass started less than 48 hours after the first pass was exported "
+                            "(pre-registration section 4 asks for at least 48 hours)")
+            withheld.append(f"the sheet's timer data shows the second pass started {gap} hours after the first "
+                            "pass was exported, less than the 48 hours of pre-registration section 4")
 
     named = subset_name(kappa, reason)
+    on_kappa = named["name"]
+    if withheld:
+        parts = list(withheld) + [named["reason"] if on_kappa is None else "the subset keeps neither name"]
+        named = {"name": None, "reason": "; ".join(parts)}
     return {
         "statistic": STATISTIC_LABEL,
         "rule": "pre-registration section 4, Branch B (decision D-R18; decision D-R19)",
@@ -557,6 +600,7 @@ def compare(first: PassLabels, second: PassLabels, *, seed: int,
             "kappa": _as_float(kappa), "kappa_exact": None if kappa is None else str(kappa),
             "undefined_reason": reason, "threshold": float(NAME_THRESHOLD),
             "name": named["name"], "name_reason": named["reason"],
+            "name_on_kappa_alone": on_kappa, "name_withheld_because": withheld,
             "items": len(all_pairs), "items_labeled_in_both": how.count("both"),
             "items_labeled_in_first_only": how.count("first_only"),
             "items_labeled_in_second_only": how.count("second_only"),
@@ -585,7 +629,7 @@ def compare(first: PassLabels, second: PassLabels, *, seed: int,
                              for r, a, b, h in per_case_items[c]]} for c in case_ids],
         "passes": {
             name: {"sheet_id": p.sheet_id, "rater": p.rater, "exported_at_utc": p.exported_at_utc,
-                   "csv_sha256": p.csv_sha256, "key_sha256": p.key_sha256}
+                   "csv_sha256": p.csv_sha256, "key_sha256": p.key_sha256, "key_source": p.key_source}
             for name, p in (("first", first), ("second", second))
         },
         "timing": timing,
@@ -605,7 +649,9 @@ def _parse_utc(s: str) -> datetime | None:
 
 def _timing(first: PassLabels, second: PassLabels) -> dict[str, Any]:
     """Hours from the first pass's export to the earliest case start of the second
-    pass, from the sheet's own timer rows. Shown, not enforced."""
+    pass, from the sheet's own timer rows. None when either time cannot be read.
+    compare withholds the name when the hours are below 48 and warns when they are
+    None."""
     exported = _parse_utc(first.exported_at_utc)
     starts = [t for t in (_parse_utc(c.first_start_utc) for c in second.cases.values()) if t is not None]
     hours = None

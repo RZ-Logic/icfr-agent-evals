@@ -27,7 +27,7 @@ KRIPPENDORFF = list(zip(
     [None, 3, 3, 3, 2, 3, 4, 2, 2, 5, 1, None],
     [1, 2, 3, 3, 2, 4, 4, 1, 2, 5, 1, None],
 ))
-CFG = {"model": "mock/grader", "reasoning_effort": "high", "response_caching": False}
+CFG = {"model": "openai/gpt-6-luna", "reasoning_effort": "high", "response_caching": False}  # step 1 pin
 
 
 def _ids(n, prefix="dev-mock"):
@@ -256,6 +256,23 @@ def test_validity_gate_passes_and_fails_on_the_smaller_lower_limit():
     assert bad["gating_lower_limit"] == bad["per_subdimension"][C]["icc_a1"]["ci_lower"] < 0.60
 
 
+def test_validity_gate_estimate_is_labeled_stratified():
+    ok = jt.validity_gate(_pass(CLOSE), _pass(HUMAN))
+    assert ok["estimate_label"] == jt.STRATIFIED_LABEL and ok["estimate_label"].startswith("stratified")
+
+
+def test_intra_rater_icc_is_icc_a1_labeled_intra_rater():
+    first = HUMAN
+    second = CLOSE
+    pairs = list(zip(first, second))
+    r = jt.intra_rater_icc(pairs)
+    base = jt.icc_a1(pairs)
+    assert r["agreement"] == "intra-rater (test-retest) agreement"
+    assert {k: v for k, v in r.items() if k != "agreement"} == base
+    assert r["form"] == "ICC(A,1)" and r["ci_lower"] is not None
+    assert "inter-rater" not in repr(r)
+
+
 def test_validity_gate_undefined_fails():
     flat = _pass([2] * 6)
     r = jt.validity_gate(flat, flat)
@@ -369,7 +386,7 @@ def test_run_test_retest_calls_passes_2_and_3_once_each():
         calls.append(number)
         return passes[number - 1]
 
-    rec = jt.run_test_retest(passes[0], score, grader_configs=[CFG] * 3, bootstrap_seed=5, resamples=100)
+    rec = jt.run_test_retest(passes[0], score, step=1, grader_configs=[CFG] * 3, bootstrap_seed=5, resamples=100)
     assert calls == [2, 3] and rec["passes"] == 3 and len(rec["scores"]) == 3
     assert rec["response_caching_disabled"] == [True, True, True] and rec["grader_configs"] == [CFG] * 3
     assert rec["bootstrap_seed"] == 5 and rec["alpha"]["passed"] and rec["pass_1"] == "acceptance-look scoring"
@@ -379,7 +396,7 @@ def test_run_test_retest_calls_passes_2_and_3_once_each():
 def test_run_test_retest_refuses_other_pass_counts(passes):
     p = _passes_from_units(AT_080)
     with pytest.raises(jt.Refused, match="exactly 3"):
-        jt.run_test_retest(p[0], lambda n: p[n - 1], grader_configs=[CFG] * 3, bootstrap_seed=1, passes=passes)
+        jt.run_test_retest(p[0], lambda n: p[n - 1], step=1, grader_configs=[CFG] * 3, bootstrap_seed=1, passes=passes)
 
 
 @pytest.mark.parametrize("configs", [
@@ -393,7 +410,49 @@ def test_run_test_retest_refuses_other_pass_counts(passes):
 def test_run_test_retest_refuses_bad_configs(configs):
     p = _passes_from_units(AT_080)
     with pytest.raises(jt.Refused):
-        jt.run_test_retest(p[0], lambda n: p[n - 1], grader_configs=configs, bootstrap_seed=1)
+        jt.run_test_retest(p[0], lambda n: p[n - 1], step=1, grader_configs=configs, bootstrap_seed=1)
+
+
+@pytest.mark.parametrize("bad, needle", [
+    ({"reasoning_effort": "low"}, "reasoning_effort='low'"),
+    ({"temperature": 0.0}, "temperature"),
+    ({"temperature": 0.7}, "temperature"),
+    ({"top_p": 0.9}, "top_p"),
+    ({"batch": True}, "batch"),
+    ({"model": "openai/gpt-6.1-terra"}, "not the step 1 pin"),
+])
+def test_run_test_retest_refuses_three_equal_configs_off_the_pin(bad, needle):
+    # Three equal configurations are refused when they are off the section 5 pin.
+    p = _passes_from_units(AT_080)
+    cfg = {**CFG, **bad}
+    with pytest.raises(jt.Refused, match=needle):
+        jt.run_test_retest(p[0], lambda n: p[n - 1], step=1, grader_configs=[cfg] * 3, bootstrap_seed=1)
+
+
+def test_run_test_retest_checks_the_pin_of_the_step_given():
+    p = _passes_from_units(AT_080)
+    step3 = {"model": "openai/gpt-6.1-sol", "reasoning_effort": "high", "batch": True, "response_caching": False}
+    rec = jt.run_test_retest(p[0], lambda n: p[n - 1], step=3, grader_configs=[step3] * 3, bootstrap_seed=1,
+                             resamples=50)
+    assert rec["grader_step"] == 3 and rec["grader_pin"] == {"reasoning_effort": "high", "batch": True}
+    with pytest.raises(jt.Refused, match="Batch API"):
+        no_batch = {k: v for k, v in step3.items() if k != "batch"}
+        jt.run_test_retest(p[0], lambda n: p[n - 1], step=3, grader_configs=[no_batch] * 3, bootstrap_seed=1)
+    with pytest.raises(jt.Refused, match="not the step 3 pin"):
+        jt.run_test_retest(p[0], lambda n: p[n - 1], step=3, grader_configs=[CFG] * 3, bootstrap_seed=1)
+    for step in (0, 4, True, None):
+        with pytest.raises(jt.Refused, match="ladder step"):
+            jt.run_test_retest(p[0], lambda n: p[n - 1], step=step, grader_configs=[CFG] * 3, bootstrap_seed=1)
+
+
+def test_run_test_retest_without_a_model_key_checks_the_config_fields():
+    p = _passes_from_units(AT_080)
+    cfg = {"reasoning_effort": "high", "response_caching": False}
+    rec = jt.run_test_retest(p[0], lambda n: p[n - 1], step=1, grader_configs=[cfg] * 3, bootstrap_seed=1,
+                             resamples=50)
+    assert rec["grader_pin"] == {"reasoning_effort": "high"}
+    with pytest.raises(jt.Refused, match="caching"):
+        jt.check_retest_config({"reasoning_effort": "high"}, 1)
 
 
 def test_run_test_retest_refuses_an_added_or_dropped_output():
@@ -403,7 +462,7 @@ def test_run_test_retest_refuses_an_added_or_dropped_output():
     for later in (dropped, added):
         with pytest.raises(jt.Refused, match="output ids differ"):
             jt.run_test_retest(p[0], lambda n, later=later: later if n == 2 else p[2],
-                               grader_configs=[CFG] * 3, bootstrap_seed=1)
+                               step=1, grader_configs=[CFG] * 3, bootstrap_seed=1)
 
 
 # --- Bias audit -------------------------------------------------------------------------------

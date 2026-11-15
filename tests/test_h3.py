@@ -297,6 +297,31 @@ def test_generational_delta_is_sonnet_5_5_minus_sonnet_5_with_reasoning_mode():
     assert "not given" in h3.format_h3(run(table()))
 
 
+def test_reasoning_modes_beside_every_step_subset_step_and_saturation_line():
+    modes = {HAIKU_5_5: "mode-h", SONNET_5: "mode-s5", SONNET_5_5: "mode-s55", OPUS_5_5: "mode-o"}
+    r = run(table(), reasoning_modes=modes)
+    text = h3.format_h3(r)
+    step_lines = [ln for ln in text.splitlines() if " <= " in ln]
+    assert len(step_lines) == 12 + 2 * 12 + 3          # verdict steps, edge and adversarial, faithfulness
+    for ln in step_lines:
+        assert "reasoning mode: " in ln
+    assert "Haiku 5.5 <= Sonnet 5 on correctness" in text
+    assert any("Haiku 5.5 mode-h, Sonnet 5 mode-s5" in ln for ln in step_lines)
+    assert any("Sonnet 5 mode-s5, Opus 5.5 mode-o" in ln for ln in step_lines)
+    sat = [ln for ln in text.splitlines() if "Opus 5.5 minus Sonnet 5.5" in ln]
+    assert len(sat) == 4 and all("Sonnet 5.5 mode-s55, Opus 5.5 mode-o" in ln for ln in sat)
+    d = h3.result_dict(r)
+    assert d["steps"][0]["reasoning_mode"] == {"Haiku 5.5": "mode-h", "Sonnet 5": "mode-s5"}
+    for steps in d["beside"]["by_subset"].values():
+        assert all(set(s["reasoning_mode"]) == {h3.MODEL_LABELS[s["lower"]], h3.MODEL_LABELS[s["higher"]]}
+                   for s in steps)
+    assert all(s["reasoning_mode"] for s in d["beside"]["faithfulness_steps"])
+    assert d["beside"]["saturation"][CORRECTNESS]["reasoning_mode"] == {"Sonnet 5.5": "mode-s55", "Opus 5.5": "mode-o"}
+    assert r.steps[0].as_dict()["reasoning_mode"] == {"Haiku 5.5": "mode-h", "Sonnet 5": "mode-s5"}
+    unset = h3.result_dict(run(table()))
+    assert unset["steps"][0]["reasoning_mode"] == {"Haiku 5.5": None, "Sonnet 5": None}
+
+
 # --- Second-look gate ----------------------------------------------------------------------------
 
 def test_review_not_confirmed_makes_h3_not_tested():
@@ -305,6 +330,30 @@ def test_review_not_confirmed_makes_h3_not_tested():
     assert not r.tested and r.holds is None and r.verdict == "not tested"
     assert r.gate["label"] == h3.NOT_CONFIRMED and "Opus 5.5" in r.gate["reason"]
     assert len(r.steps) == 12                         # figures still computed and reported
+
+
+def test_not_tested_prints_differences_without_marks_or_robustness_label():
+    look = {**ALL_CONFIRMED, OPUS_5_5: h3.NOT_CONFIRMED}
+    settled = run(table(_failing(CORRECTNESS, HAIKU_5_5, SONNET_5)), look)
+    audit = run(table(), look, reading=h3.AUDIT_ADJUSTED)
+    before = run(table(_failing(FABRICATION, SONNET_5, SONNET_5_5)), look, reading=h3.BEFORE_D_R9)
+    text = h3.format_h3(settled)
+    assert "not tested" in text
+    assert "holds  " not in text and "FAILS" not in text and "failing steps" not in text
+    assert "Haiku 5.5 <= Sonnet 5 on correctness: -" in text      # the difference is still printed
+    d = h3.result_dict(settled)
+    assert d["failing_steps"] == [] and all(s["holds"] is None for s in d["steps"])
+    assert all(s["holds"] is None for steps in d["beside"]["by_subset"].values() for s in steps)
+    assert d["steps"][0]["mean_exact"] == "-1"
+    out = h3.robustness_labels(settled, audit, before)
+    assert out["labels"] == [] and out["not_given"] == h3.ROBUSTNESS_NOT_GIVEN
+    assert out["audit_adjusted"]["compared"] is False and out["before_d_r9"]["compared"] is False
+
+
+def test_tested_steps_keep_their_marks():
+    text = h3.format_h3(run(table(_failing(CORRECTNESS, HAIKU_5_5, SONNET_5))))
+    assert "  FAILS  Haiku 5.5 <= Sonnet 5 on correctness" in text and "  holds  " in text
+    assert "failing steps: Haiku 5.5 <= Sonnet 5 on correctness" in text
 
 
 def test_review_not_confirmed_wins_over_second_look_empty():
@@ -501,7 +550,12 @@ def test_cli_reports_and_refuses(tmp_path, capsys):
     text = capsys.readouterr().out
     assert code == h3.EXIT_OK
     assert "H3 on review-settled" in text and h3.NOT_ROBUST_EXTRACTOR in text
+    lines = text.splitlines()
+    for ln in (lines[0], lines[-1]):
+        assert ln.lower().startswith("not a reported figure: computed from the tables given, with no freeze check")
+        assert "scripts/run_report.py" in ln
     payload = json.loads(out.read_text(encoding="utf-8"))
+    assert payload["status"] == "not a reported figure: computed from the tables given, with no freeze check"
     assert payload[h3.REVIEW_SETTLED]["holds"] is True
     assert payload["robustness"]["labels"] == [h3.NOT_ROBUST_EXTRACTOR]
     short = tmp_path / "short.json"
@@ -509,3 +563,15 @@ def test_cli_reports_and_refuses(tmp_path, capsys):
     assert h3.main(["--settled", str(short), "--second-look", str(look)]) == h3.EXIT_REFUSED
     assert "REFUSED" in capsys.readouterr().err
     assert h3.main(["--settled", str(tmp_path / "none.json"), "--second-look", str(look)]) == h3.EXIT_REFUSED
+
+
+def test_cli_not_tested_gives_no_marks_and_no_robustness_label(tmp_path, capsys):
+    settled, audit, look = tmp_path / "s.json", tmp_path / "a.json", tmp_path / "l.json"
+    settled.write_text(json.dumps(_json_table(table())), encoding="utf-8")
+    audit.write_text(json.dumps(_json_table(table(_failing(COMPLETENESS, SONNET_5, OPUS_5_5)))), encoding="utf-8")
+    look.write_text(json.dumps({**ALL_CONFIRMED, SONNET_5: h3.NOT_CONFIRMED}), encoding="utf-8")
+    assert h3.main(["--settled", str(settled), "--audit", str(audit), "--second-look", str(look)]) == h3.EXIT_OK
+    text = capsys.readouterr().out
+    assert "FAILS" not in text and "holds  " not in text
+    assert h3.NOT_ROBUST_EXTRACTOR not in text
+    assert f"Robustness: {h3.ROBUSTNESS_NOT_GIVEN}" in text
