@@ -489,6 +489,67 @@ def test_second_look_score_refuses_a_blind_check_drawn_from_an_edited_map(tmp_pa
     assert man["blinding"]["n"] == 4
 
 
+# --- The private record of an evaluation run, and the D-J count ---------------------------------
+
+def _rewrite_sealed(env, rel, change):
+    """Edit one sealed JSON file of a written packet and re-hash it in packet-meta.json."""
+    path = env.dir / rel
+    data = json.loads(path.read_text(encoding="utf-8"))
+    change(data)
+    rs.write_lf(path, json.dumps(data, indent=2) + "\n")
+    meta_path = env.dir / rs.PACKET_FILES["meta"]
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta["files"][rel] = rs.sha256_file(path)
+    rs.write_lf(meta_path, json.dumps(meta, indent=2) + "\n")
+
+
+def _on_eval(runs):
+    for info in runs.values():
+        info["split"], info["allow_evaluation_split"] = "eval", True
+
+
+def test_expanded_csv_is_refused_for_an_evaluation_split_packet(tmp_path, monkeypatch, capsys):
+    # Section 8: the private record sits in runs/reviews/<run-id>/, untracked and never
+    # pushed; only dev-split records may be committed in full.
+    env = build(tmp_path / "ev")
+    _rewrite_sealed(env, rs.PACKET_FILES["runs"], _on_eval)
+    assert rf.evaluation_split_runs(rf.load_record(str(env.dir), str(fill(env)))) == ["R1", "R2"]
+    expanded = tmp_path / "expanded.csv"
+    code, _, err = do_freeze(monkeypatch, capsys, env, None, "--expanded-csv", str(expanded))
+    assert code == 3 and "--expanded-csv is refused for a packet on the evaluation split" in err
+    assert not expanded.exists() and not (mdir(env) / "dev-test-run-manifest.json").exists()
+    # the same record freezes without the flag (the stub rebuild cannot hold the edited
+    # sealed/runs.json, so the byte-for-byte rebuild is set aside here)
+    monkeypatch.setattr(rf, "rederive_check", lambda rec, runs: [])
+    code, _, err = do_freeze(monkeypatch, capsys, env)
+    assert code == 0, err
+
+
+def test_expanded_csv_is_still_written_for_a_dev_packet(tmp_path, monkeypatch, capsys):
+    env = build(tmp_path / "dev")
+    assert rf.evaluation_split_runs(rf.load_record(str(env.dir), str(fill(env)))) == []
+    expanded = tmp_path / "expanded.csv"
+    code, _, err = do_freeze(monkeypatch, capsys, env, None, "--expanded-csv", str(expanded))
+    assert code == 0 and expanded.is_file(), err
+
+
+def test_narrative_only_wrong_counts_only_difficulty_bearing_units(tmp_path):
+    # Section 8 counts the narrative-only units of decision D-J, the unrouted, uncoded
+    # narratives of the 54 difficulty-bearing cases; a narrative-only read the packet added
+    # for a P12 citation omission on a synthetic case is listed apart in sealed/summary.json.
+    env = build(tmp_path, n_runs=2, narr_only=True)
+    ids = env.ids
+    verdicts = {ids["N_H"]: WRONG, ids["N_I"]: WRONG}
+    assert rf.narrative_only_wrong(rf.load_record(str(env.dir), str(fill(env, verdicts=verdicts)))) == {
+        "R1": 2, "R2": 1}
+    key = rp.NARRATIVE_ONLY_OUTSIDE_KEY
+    _rewrite_sealed(env, rs.PACKET_FILES["summary"], lambda d: d["totals"].__setitem__(key, [ids["N_I"]]))
+    assert rp.load_narrative_only_outside(env.dir) == (ids["N_I"],)
+    rec = rf.load_record(str(env.dir), str(fill(env, verdicts=verdicts)))
+    assert rf.validate_record(rec) == []
+    assert rf.narrative_only_wrong(rec) == {"R1": 1, "R2": 1}
+
+
 def test_new_source_text_follows_the_house_style():
     for path in (rf.SCRIPTS_DIR / "review_freeze.py", Path(__file__)):
         raw = path.read_bytes()

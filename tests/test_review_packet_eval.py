@@ -58,6 +58,18 @@ def _load_script():
 
 
 rp = _load_script()
+REAL_COMPOSITION_CHECK = rp.check_eval_composition
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _small_eval_logs_allowed():
+    """The mock evaluation-split logs here hold two or three cases, not the 200 of section
+    4, so the composition check is set aside for them; the composition tests below call the
+    real check (REAL_COMPOSITION_CHECK)."""
+    mp = pytest.MonkeyPatch()
+    mp.setattr(rp, "check_eval_composition", lambda log, name: None)
+    yield
+    mp.undo()
 
 
 # --- Hand-built logs ------------------------------------------------------------------------
@@ -353,14 +365,15 @@ def test_two_eval_runs_accepted(base_log, truths, tmp_path):
 
 # --- Carried epochs ---------------------------------------------------------------------------
 
-def _with_errored(truths, **errored):
-    """The good epochs plus epoch 3 of each case: errored, holding a planted route, an FM
-    code and the marker sentence, so any unit built from it would show."""
+def _with_errored(truths, fms=("FM-001",), **errored):
+    """The good epochs plus epoch 4 of each case: errored, holding a planted route and the
+    marker sentence, so any finding unit built from it would show. With fms the standard
+    case's errored epoch also holds those FM codes, which the code audit must still cover."""
     t, te = truths[STD], truths[EDGE]
     return _good_epochs(truths) + [
         E(STD, 3, answer(t, f"{S1} {S2}"), route(AMOUNT)),
         E(EDGE, 3, answer(te, "A hard case narrative read whole.")),
-        E(STD, 4, answer(t, f"{MARK} {S1}"), route(AMOUNT, "direction_negated: fell short", fms=("FM-001",)),
+        E(STD, 4, answer(t, f"{MARK} {S1}"), route(AMOUNT, "direction_negated: fell short", fms=fms),
           **errored),
         E(EDGE, 4, answer(te, MARK), **errored),
     ]
@@ -377,9 +390,9 @@ def _copy_epochs(truths):
 
 
 @pytest.mark.parametrize("eval_split", [True, False])
-def test_errored_epoch_carried_with_no_unit(base_log, truths, tmp_path, eval_split):
-    path = make_log(base_log, tmp_path / "err.eval", MODEL_A, _with_errored(truths, error="boom: provider error"),
-                    eval_split=eval_split)
+def test_errored_epoch_without_an_fm_code_carried_with_no_unit(base_log, truths, tmp_path, eval_split):
+    path = make_log(base_log, tmp_path / "err.eval", MODEL_A,
+                    _with_errored(truths, fms=(), error="boom: provider error"), eval_split=eval_split)
     p = rp.build_packet(rp.load_runs([("alpha", path)], SEED), run_id="carry", seed=SEED)
     sids = sorted({str(s.id) for s in read_eval_log(path).samples})
     assert [(c.run_id, c.sample_id, c.epoch, c.reason) for c in p.carried] == [
@@ -402,9 +415,36 @@ def test_errored_epoch_carried_with_no_unit(base_log, truths, tmp_path, eval_spl
     assert rows and not [r for r in rows if r["epoch"] == "4"]
 
 
+@pytest.mark.parametrize("eval_split", [True, False])
+def test_fm_coded_carried_epoch_gets_its_code_audit_and_no_finding(base_log, truths, tmp_path, eval_split):
+    # Section 8: the settlement refuses a record unless every FM-coded (epoch, code) has an
+    # audit row; section 6: the audit reads that epoch's narrative whole. The epoch is still
+    # carried as a failed trial and its routes build no finding.
+    path = make_log(base_log, tmp_path / "err.eval", MODEL_A, _with_errored(truths, error="boom: provider error"),
+                    eval_split=eval_split)
+    p = rp.build_packet(rp.load_runs([("alpha", path)], SEED), run_id="carry", seed=SEED)
+    edge, std = sorted({str(s.id) for s in read_eval_log(path).samples})
+    assert [(c.sample_id, c.epoch, c.reason) for c in p.carried] == [
+        (edge, 4, "sample error"), (std, 4, "sample error")]
+    on4 = sorted((m.sample_id, m.member_kind, m.fm_codes) for m in p.members if m.epoch == 4)
+    assert on4 == [(std, "fm_audit", ("FM-001",)), (std, "narrative", ("FM-001",))]
+    audits = [u for u in p.units if u.row_kind == "fm_audit"]
+    assert [u.fm_code for u in audits] == ["FM-001"]
+    narrative = next(u for u in p.units if u.unit_id == audits[0].narrative_unit_ids[0])
+    assert MARK in narrative.narrative and narrative.route_class == rs.NARRATIVE_CLASS_FM_CODED
+    assert not [u for u in p.units if u.row_kind == "finding" and "direction_negated" in " ".join(u.reasons)]
+    assert not [m for m in p.members if m.epoch == 4 and m.member_kind in rp.ROUTE_MEMBER_KINDS]
+    out = tmp_path / "packet"
+    rp.write_packet(p, str(out))
+    summary = json.loads((out / rs.PACKET_FILES["summary"]).read_text(encoding="utf-8"))
+    assert summary["R1"]["carried_failed_trials"] == 2 and summary["R1"]["fm_audit_rows"] == 1
+    blank = rs.read_rb7_csv(out / rs.PACKET_FILES["blank"])
+    assert [r["route_key"] for r in blank if r["row_kind"] == "fm_audit"] == ["FM-001"]
+
+
 def test_errored_epoch_leaves_no_trace_in_reviewer_files(base_log, truths, tmp_path):
-    err = make_log(base_log, tmp_path / "err.eval", MODEL_A, _with_errored(truths, error="boom: provider error"),
-                   eval_split=True)
+    err = make_log(base_log, tmp_path / "err.eval", MODEL_A,
+                   _with_errored(truths, fms=(), error="boom: provider error"), eval_split=True)
     same = make_log(base_log, tmp_path / "same.eval", MODEL_A, _copy_epochs(truths), eval_split=True)
     built = {}
     for name, path in (("err", err), ("same", same)):
@@ -493,6 +533,74 @@ def test_format_break_is_not_carried(base_log, truths, tmp_path):
     p = rp.build_packet(rp.load_runs([("alpha", path)], SEED), run_id="carry", seed=SEED)
     assert p.carried == ()
     assert [u.fm_code for u in p.units if u.row_kind == "fm_audit"] == ["FM-000"]
+
+
+# --- Composition: the evaluation split's 200 cases (section 4) ---------------------------------
+
+def _kind_samples(counts, k=4):
+    out = []
+    for kind, n in counts.items():
+        for i in range(n):
+            out += [SimpleNamespace(id=f"eval-mock-{kind}-{i:03d}", epoch=e, metadata={"truth": {"case_kind": kind}})
+                    for e in range(1, k + 1)]
+    return out
+
+
+def test_composition_of_the_evaluation_split():
+    assert rp.EVAL_COMPOSITION == {"standard": 146, "edge": 30, "adversarial": 24}
+    assert rp.eval_composition_gaps(_kind_samples({"standard": 146, "edge": 30, "adversarial": 24})) == []
+    short = rp.eval_composition_gaps(_kind_samples({"standard": 146, "edge": 29, "adversarial": 24}))
+    assert "it holds 199 cases, not 200" in short and "it holds 29 edge cases, not 30" in short
+    swapped = rp.eval_composition_gaps(_kind_samples({"standard": 145, "edge": 31, "adversarial": 24}))
+    assert swapped == ["it holds 31 edge cases, not 30", "it holds 145 standard cases, not 146"]
+    odd = rp.eval_composition_gaps(_kind_samples({"standard": 146, "edge": 30, "adversarial": 23, "other": 1}))
+    assert "it holds 1 other cases, not 0" in odd and "it holds 23 adversarial cases, not 24" in odd
+    mixed = _kind_samples({"standard": 146, "edge": 30, "adversarial": 24})
+    mixed[0].metadata = {"truth": {"case_kind": "edge"}}
+    assert any("names case kinds ['edge', 'standard']" in g for g in rp.eval_composition_gaps(mixed))
+
+
+def test_evaluation_log_without_the_200_cases_is_refused(base_log, truths, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(rp, "check_eval_composition", REAL_COMPOSITION_CHECK)
+    path = make_log(base_log, tmp_path / "ev.eval", MODEL_A, _good_epochs(truths), eval_split=True)
+    with pytest.raises(rp.Refused, match="does not hold its 200 cases") as e:
+        rp.load_runs([("alpha", path)], SEED)
+    assert "it holds 2 cases, not 200" in str(e.value)
+    out = tmp_path / "out"
+    assert _main(["--run", f"alpha={path}", "--out", out, "--seed", SEED, "--run-id", "eval-mock-run"]) == 3
+    assert not out.exists() and "200 cases" in capsys.readouterr().err
+    # a dev log keeps its own counts
+    dev = make_log(base_log, tmp_path / "dev.eval", MODEL_A, _good_epochs(truths))
+    assert rp.load_runs([("alpha", dev)], SEED)[0].run_id == "R1"
+
+
+# --- Narrative-only units outside the difficulty-bearing cases (section 8, D-J) ------------------
+
+def test_summary_lists_narrative_only_units_outside_the_hard_cases(base_log, truths, tmp_path):
+    # a P12 citation omission on an unrouted, uncoded epoch of a synthetic case adds a
+    # narrative-only read (D-R9); it is not one of the D-J units section 8 counts
+    t, te = truths[STD], truths[EDGE]
+    p12 = {"fabrication_anchor": ((), (), {"citation_omissions": ["W-1"]})}
+    eps = [E(STD, 1, answer(t, f"{S1} {S2}"), route(AMOUNT)), E(STD, 2, answer(t, "Names W-1 uncited."), p12),
+           E(EDGE, 1, answer(te, f"{S1} {S2}"), route(AMOUNT)), E(EDGE, 2, answer(te, "A hard case narrative."))]
+    path = make_log(base_log, tmp_path / "p12.eval", MODEL_A, eps)
+    p = rp.build_packet(rp.load_runs([("alpha", path)], SEED), run_id="dev-run", seed=SEED)
+    only = {u.case_id: u.unit_id for u in p.units if u.row_kind == "narrative" and u.route_class == "narrative_only"}
+    assert set(only) == {STD, EDGE}
+    assert p.narrative_only_outside == (only[STD],)
+    out = tmp_path / "packet"
+    rp.write_packet(p, str(out))
+    summary = json.loads((out / rs.PACKET_FILES["summary"]).read_text(encoding="utf-8"))
+    assert summary["totals"][rp.NARRATIVE_ONLY_OUTSIDE_KEY] == [only[STD]]
+    assert rp.load_packet(str(out)).narrative_only_outside == (only[STD],)
+    assert rp.load_narrative_only_outside(out) == (only[STD],)
+
+
+def test_summary_has_no_outside_key_without_such_units(base_log, truths, tmp_path):
+    path = make_log(base_log, tmp_path / "dev.eval", MODEL_A, _good_epochs(truths))
+    p = rp.build_packet(rp.load_runs([("alpha", path)], SEED), run_id="dev-run", seed=SEED)
+    assert p.narrative_only_outside == ()
+    assert rp.NARRATIVE_ONLY_OUTSIDE_KEY not in rp.summary(p)["totals"]
 
 
 # --- Dev behaviour and determinism ------------------------------------------------------------
