@@ -34,16 +34,33 @@ look is done and frozen by a second manifest commit"):
      record holds for it, the record names no run whose log is not given, and an
      evaluation-split run is recorded as one;
   2. the second-look freeze (review_freeze check_second_look_freeze).
-If a check fails, or no second look is given, the report prints only figures that read
-the log alone: the route-blind upper bound, the code-only extractor health figure with
-the routed-epoch rate and findings per routed epoch, citation-pass^4 with its counts, the
-format-break and errored-epoch counts, the code-caught FM counts and each model's routing
-rate. It states that the review-settled and audit-adjusted figures are withheld, and why,
-and never computes them. With both checks passing it prints, per worker and subset, every
-item of the section 8 run report list this repository can compute, the template baseline
-as a reference row and H3 (icfr_agent_evals/h3.py) on the review-settled, audit-adjusted
-and before-D-R9 readings with the second-look gate per worker. An item the repository
-cannot compute yet is printed as not available, with the reason.
+If a check fails, or no second look is given, the review-settled and audit-adjusted
+figures are withheld, the report says why, and it never computes them. On the evaluation
+split it then prints the withheld reasons and counts over all logs together only (epochs,
+errored epochs, format breaks and carried failed trials), with no model name, no run label
+and no per-model rate or score, in the text and the JSON alike (section 9: "Until the
+second look is frozen ... no per-model score the run prints is read, and the packet job
+prints counts only"); a gap names a worker log by its place in the --worker list. A dev
+rehearsal prints the figures that read the log alone: the route-blind upper bound, the
+code-only extractor health figure with the routed-epoch rate and findings per routed
+epoch, citation-pass^4 with its counts, the format-break and errored-epoch counts, the
+code-caught FM counts and each model's routing rate. With both checks passing it prints,
+per worker and subset, every item of the section 8 run report list this repository can
+compute, each review-settled and audit-adjusted figure labeled with the worker's
+second-look gate result (confirmed, review not confirmed, or second look empty, never
+confirmed), the template baseline as a reference row (its review-settled and
+audit-adjusted figures too when the record names its run; when it does not and its log
+routes, the row says it is not review-settled), each log's header revision commit beside
+the manifest's run commit, and H3 (icfr_agent_evals/h3.py) on the review-settled,
+audit-adjusted and before-D-R9 readings with the second-look gate per worker. On the
+evaluation split a missing archive URL or date prints an INCOMPLETE heading (the exit code
+is unchanged). An item the repository cannot compute yet, or a section 8 primary outcome
+this report does not print, is listed as not available, with the reason.
+
+Each worker row states the reasoning mode sent, read from the recorded model-call request
+of every evaluated-model ModelEvent (section 5), never from the run config; a worker log
+whose events record more than one mode is refused. An evaluation-split log that does not
+hold the 200 cases of section 4 (146 synthetic, 30 edge, 24 adversarial) is refused.
 
 A frozen record that passes both checks but does not cover a worker log
 (trials.RecordError) is refused, every gap counted.
@@ -51,7 +68,9 @@ A frozen record that passes both checks but does not cover a worker log
 Exit codes:
   0  report printed (the withheld path included)
   3  refused: a missing or unreadable log, an evaluation-split log without the unlock,
-     logs on different splits, a log that is not a whole successful run at k = 4, a
+     an evaluation-split log that does not hold the 200 cases of section 4, a worker log
+     whose model events record more than one reasoning mode, logs on different splits,
+     a log that is not a whole successful run at k = 4, a
      worker log off the section 5 run configuration, logs whose Task version or dataset
      content differ, two worker logs of one model, a template log that is not the
      template baseline (or a worker log that is), a record that passes both checks but
@@ -121,6 +140,22 @@ NOT_AVAILABLE: dict[str, str] = {
         "section 8 asks for a row that drops the extractor-crash and answer-key-mismatch epochs from every model's "
         "figures, but does not fix how a sample with a dropped epoch enters content-pass^4 at k = 4; the epochs "
         "such a row would drop are counted per model and route key instead"),
+    "the sample-level FM-007 count": (
+        "this report does not compute it; FM-007 is a Sample Consistency outcome (icfr_agent_evals/consistency.py), "
+        "which this report does not run"),
+    "Sample Consistency and the H4 line (section 2)": (
+        "this report does not run the Sample Consistency calibration or its per-arm ROC AUC with the DeLong "
+        "interval; icfr_agent_evals/consistency.py computes them from the logs"),
+    "the H1 verdict, and the H1 means under the rule before D-R9": (
+        "this report prints the review-settled and audit-adjusted anchor means per subset under D-R9 only and gives "
+        "no H1 verdict; trials.subset_anchor_means gives the means under the rule before D-R9"),
+    "the H2 count (section 2)": (
+        "this report prints no H2 line; trials.audited_code_counts gives the H2 codes on the adversarial cases that "
+        "the code audit rules real_error, from the frozen record"),
+    "FM-002 by direction and FM-008 per subset": (
+        "printed over all cases only, not per subset"),
+    "disagreement rate and resolution rate": (
+        "the disagreement queue is not in the run logs or the review record this report reads"),
 }
 # Unsettleable rows filed as an extractor or an answer-key defect: the epochs the sensitivity
 # row would drop (counted only; see NOT_AVAILABLE).
@@ -173,15 +208,55 @@ def _sha_file(path: str | Path) -> str:
     return h.hexdigest()
 
 
-def reasoning_mode(log: Any) -> str:
-    """The reasoning mode a log records: reasoning_effort and every other reasoning or
-    thinking field its plan config sets (section 2: the reasoning mode beside every delta).
-    roster.check_run_config has already checked the evaluated model's events carry the
-    same effort pin."""
-    config = getattr(getattr(log, "plan", None), "config", None)
-    fields = config.model_dump(exclude_none=True) if config is not None else {}
-    parts = [f"{k}={fields[k]}" for k in sorted(fields) if k.startswith("reasoning") or "thinking" in k]
-    return ", ".join(parts) if parts else "none recorded"
+NO_REQUEST = "no model-call request recorded"
+NO_REASONING_FIELD = "no reasoning_effort or thinking field sent"
+
+
+def _cj(obj: Any) -> str:
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
+
+
+def request_mode(request: Any) -> str:
+    """The reasoning mode one model-call request records as sent: the effort field
+    (output_config.effort, as the Anthropic provider sends reasoning_effort, or a
+    reasoning_effort or reasoning field) and every thinking field, as canonical JSON."""
+    if not isinstance(request, Mapping):
+        return NO_REQUEST
+    parts: list[str] = []
+    out_config = request.get("output_config")
+    if isinstance(out_config, Mapping) and "effort" in out_config:
+        parts.append(f"output_config.effort={_cj(out_config['effort'])}")
+    for key in sorted(request):
+        if key in ("reasoning_effort", "reasoning") or "thinking" in str(key):
+            parts.append(f"{key}={_cj(request[key])}")
+    return ", ".join(parts) if parts else NO_REASONING_FIELD
+
+
+def reasoning_modes_sent(log: Any) -> list[str]:
+    """The distinct reasoning modes the evaluated model's ModelEvents record as sent (role
+    None, the events roster.check_run_config reads), each read from the event's recorded
+    model-call request, never from the run config (section 5: "Every reported row states
+    the reasoning_effort and thinking fields actually sent, read from the logged
+    model-call request, not from the run config")."""
+    modes: set[str] = set()
+    for sample in getattr(log, "samples", None) or ():
+        for event in getattr(sample, "events", None) or ():
+            if getattr(event, "event", None) != "model" or getattr(event, "role", None) is not None:
+                continue
+            modes.add(request_mode(getattr(getattr(event, "call", None), "request", None)))
+    return sorted(modes)
+
+
+def reasoning_mode(log: Any, name: str = "worker") -> str:
+    """The one reasoning mode a worker log's evaluated-model events record as sent
+    (reasoning_modes_sent). Refused when the events disagree: one run sends one mode."""
+    modes = reasoning_modes_sent(log)
+    if not modes:
+        return "no model call of the evaluated model recorded"
+    if len(modes) > 1:
+        raise Refused(f"worker log {name}: its model events record {len(modes)} different reasoning modes as sent "
+                      f"({'; '.join(modes[:4])}); one run sends one mode (pre-registration section 5)")
+    return modes[0]
 
 
 def check_log(log: Any, role: str, name: str, max_tokens_pin: int | None = None) -> tuple[str, dict | None]:
@@ -194,6 +269,8 @@ def check_log(log: Any, role: str, name: str, max_tokens_pin: int | None = None)
         raise Refused(f"{role} log {name} has no samples; read it with header_only=False")
     try:
         split = rp.log_split(log, name)
+        if split == EVAL_SPLIT:  # section 4: 200 cases, 146 synthetic, 30 edge, 24 adversarial
+            rp.check_eval_composition(log, name)
     except rp.Refused as e:
         raise Refused(f"{role} log: {e}") from e
     from icfr_agent_evals.regression import refuse_partial_run
@@ -244,6 +321,7 @@ class LogInput:
         self.sha256 = sha256 if sha256 is not None else _sha_file(path)
         self.split = ""
         self.run_config: dict | None = None
+        self.reasoning_mode: str | None = None
 
     @property
     def name(self) -> str:
@@ -270,6 +348,8 @@ def check_inputs(workers: Sequence[LogInput], template: LogInput | None,
         raise Refused(f"duplicate worker label(s): {sorted(l for l, n in Counter(labels).items() if n > 1)}")
     for item in (*workers, *([template] if template is not None else [])):
         item.split, item.run_config = check_log(item.log, item.role, item.name, max_tokens_pin)
+        if item.role == "worker":
+            item.reasoning_mode = reasoning_mode(item.log, item.name)
     splits = {item.split for item in (*workers, *([template] if template is not None else []))}
     if len(splits) > 1:
         raise Refused(f"the logs sit on different splits {sorted(splits)}; one report reads one split, never a mix")
@@ -358,24 +438,26 @@ def check_first_record(checks: Checks, packet_dir: str | None, *, repo: Path, ma
         for rid, info in runs.items():
             by_eval[str((info or {}).get("eval_id"))].append(rid)
         given = set()
+        # Section 9: on the evaluation split a withheld report names no run label, so a gap
+        # names a worker log by its place in the --worker list.
+        shown = {w.label: (w.label if split != EVAL_SPLIT else str(i)) for i, w in enumerate(workers, start=1)}
         for item in (*workers, *([template] if template is not None else [])):
+            who = f"worker log {shown[item.label]}" if item.role == "worker" else "the template log"
             hits = by_eval.get(item.eval_id, [])
             if len(hits) > 1:
-                gaps.append(f"the record names {len(hits)} runs with the eval id of {item.label}")
+                gaps.append(f"the record names {len(hits)} runs with the eval id of {who}")
                 continue
             if not hits:
                 checks.run_ids[item.label] = None
                 if item.role == "worker":
-                    gaps.append(f"the record names no run with the eval id of worker log {item.label}")
+                    gaps.append(f"the record names no run with the eval id of {who}")
                 continue
             rid = hits[0]
             given.add(rid)
             checks.run_ids[item.label] = rid
             info = runs[rid] or {}
             if str(info.get("sha256")) != item.sha256:
-                gaps.append(f"worker log {item.label} does not hash to the SHA-256 the record holds for run {rid}"
-                            if item.role == "worker" else
-                            f"the template log does not hash to the SHA-256 the record holds for run {rid}")
+                gaps.append(f"{who} does not hash to the SHA-256 the record holds for run {rid}")
             recorded_split = EVAL_SPLIT if info.get("split") == EVAL_SPLIT else DEV_SPLIT
             if recorded_split != split:
                 gaps.append(f"the record holds run {rid} on the {recorded_split} split, the logs are on {split}")
@@ -397,9 +479,11 @@ def check_second_look(checks: Checks, second_look_dir: str | None, *, repo: Path
         checks.second_gaps.append("the second look cannot be checked without a first manifest frozen in a commit")
         return
     rf = load_review_freeze()
+    workers = len(rf.worker_run_ids(checks.record)) if checks.record is not None else None
     man, info, gaps = rf.check_second_look_freeze(
         repo=str(repo), first_manifest_path=checks.first_path, first_freeze_commit=checks.first_commit,
-        second_look_dir=second_look_dir, blind_check_dir=blind_check_dir, manifest=manifest, commit=commit)
+        second_look_dir=second_look_dir, blind_check_dir=blind_check_dir, manifest=manifest, commit=commit,
+        worker_runs=workers)
     checks.second_manifest, checks.second_info = man, info
     checks.second_gaps.extend(gaps)
 
@@ -434,9 +518,10 @@ def _present(rows: Mapping[str, Any]) -> list[str]:
     return [s for s in SUBSETS if s in rows]
 
 
-def pass_rows(report: trials.TrialReport) -> dict[str, dict[str, Any]]:
+def pass_rows(report: trials.TrialReport, label: str | None = None) -> dict[str, dict[str, Any]]:
     """Per subset: content-pass^4 with its Clopper-Pearson interval, and the same figure
-    under the rule before D-R9."""
+    under the rule before D-R9. A review-settled or audit-adjusted row also carries its
+    second-look label (section 8: confirmed, review not confirmed or second look empty)."""
     out: dict[str, dict[str, Any]] = {}
     for subset in SUBSETS:
         sub = sub_report(report, subset)
@@ -444,7 +529,24 @@ def pass_rows(report: trials.TrialReport) -> dict[str, dict[str, Any]]:
             continue
         old = trials.before_d_r9_figures({report.kind: sub})[report.kind]
         out[subset] = {**_rate_row(sub.passed, sub.n), "before_d_r9": _rate_row(old["passed"], old["n"])}
+        if label is not None:
+            out[subset]["second_look"] = label
     return out
+
+
+def second_look_label(gate_result: str | None, *, template: bool = False) -> str:
+    """The label every review-settled and audit-adjusted figure of a run carries (section 8:
+    figures are "published labeled review not confirmed" when the gate fails, and a run with
+    no second-look units is "labeled second look empty, never confirmed")."""
+    if template:
+        return "reference row, never a worker; not second-looked"
+    if gate_result == "confirmed":
+        return "second look confirmed"
+    if gate_result == "review not confirmed":
+        return "labeled review not confirmed"
+    if gate_result == "second look empty":
+        return "labeled second look empty, never confirmed"
+    return "no second-look result for this run, never confirmed"
 
 
 def anchor_rows(report: trials.TrialReport) -> dict[str, dict[str, Any]]:
@@ -512,6 +614,24 @@ def epoch_counts(log: Any) -> dict[str, dict[str, Any]]:
         row["findings_per_routed_epoch"] = row["findings"] / row["routed_epochs"] if row["routed_epochs"] else None
         row["fm_codes"] = dict(sorted(row["fm_codes"].items()))
     return {s: out[s] for s in SUBSETS if s in out}
+
+
+def log_totals(items: Sequence[LogInput]) -> dict[str, int]:
+    """Counts over every given log together, never per log or per model: epochs, errored
+    epochs, format-break epochs (an FM-000 parse failure without a sample error) and carried
+    epochs. What the withheld report prints on the evaluation split (section 9: until the
+    second look is frozen "no per-model score the run prints is read")."""
+    rp = load_review_packet()
+    out = {"logs": len(items), "epochs": 0, "errored_epochs": 0, "format_break_epochs": 0, "carried_epochs": 0}
+    for item in items:
+        for s in item.log.samples or ():
+            errored = getattr(s, "error", None) is not None
+            out["epochs"] += 1
+            out["errored_epochs"] += errored
+            out["format_break_epochs"] += (not errored and any(
+                (getattr(v, "metadata", None) or {}).get("format_break") for v in (s.scores or {}).values()))
+            out["carried_epochs"] += bool(rp.carried_reasons(s))
+    return out
 
 
 def log_only_block(item: LogInput) -> tuple[dict[str, Any], dict[str, trials.TrialReport]]:
@@ -640,16 +760,20 @@ def review_found_rows(settled: trials.TrialReport) -> dict[str, dict[str, Any]]:
 
 
 def record_block(item: LogInput, record: Any, run_id: str,
-                 log_reports: Mapping[str, trials.TrialReport]) -> tuple[dict[str, Any], dict[str, trials.TrialReport]]:
-    """Every review-settled and audit-adjusted figure of one worker run. Called only after
-    both freeze checks have passed. A record that does not cover the run is refused."""
+                 log_reports: Mapping[str, trials.TrialReport],
+                 label: str | None = None) -> tuple[dict[str, Any], dict[str, trials.TrialReport]]:
+    """Every review-settled and audit-adjusted figure of one run (a worker run, or the
+    template baseline as a reference row), each carrying `label` (second_look_label).
+    Called only after both freeze checks have passed. A record that does not cover the run
+    is refused."""
+    who = f"worker log {item.label}" if item.role == "worker" else "the template log"
     try:
         settled = trials.review_settled_trial(item.log, record, run_id=run_id)
         audit = trials.audit_adjusted_trial(item.log, record, run_id=run_id)
     except trials.RecordError as e:
         shown = "; ".join(e.gaps[:10])
         more = f"; and {len(e.gaps) - 10} more" if len(e.gaps) > 10 else ""
-        raise Refused(f"the frozen record does not cover worker log {item.label} (run {run_id}, "
+        raise Refused(f"the frozen record does not cover {who} (run {run_id}, "
                       f"{len(e.gaps)} gap(s)): {shown}{more}") from e
     kinds = {sid: _sample_kind(r) for sid, r in settled.samples.items()}
     codes = sorted({c for e in settled.epochs for c in e.failure_modes} |
@@ -657,7 +781,8 @@ def record_block(item: LogInput, record: Any, run_id: str,
     audited = trials.audited_code_counts(item.log, record, run_id=run_id, codes=tuple(codes), case_kinds=None)
     payload = {
         "run_id": run_id,
-        "figures": {trials.REVIEW_SETTLED: pass_rows(settled), trials.AUDIT_ADJUSTED: pass_rows(audit)},
+        "second_look_label": label,
+        "figures": {trials.REVIEW_SETTLED: pass_rows(settled, label), trials.AUDIT_ADJUSTED: pass_rows(audit, label)},
         "fm008_review_settled": list(settled.fm008),
         "anchor_means": {trials.REVIEW_SETTLED: anchor_rows(settled), trials.AUDIT_ADJUSTED: anchor_rows(audit)},
         "citation_pass4": citation_rows(log_reports[trials.ROUTE_BLIND], settled),
@@ -733,6 +858,36 @@ def freeze_block(checks: Checks, args: argparse.Namespace | None) -> dict[str, A
     }
 
 
+def missing_archive_items(freezes: Mapping[str, Any]) -> list[str]:
+    """What the run report lacks of section 8's "the archive URL and date go in the run
+    report", for both freeze commits."""
+    out = []
+    for name in ("first", "second"):
+        f = freezes.get(name) or {}
+        if not f.get("archive_url"):
+            out.append(f"the {name} freeze commit's archive URL")
+        if not f.get("archive_date"):
+            out.append(f"the {name} freeze commit's archive date")
+    return out
+
+
+def _same_commit(a: str, b: str) -> bool:
+    a, b = a.strip().lower(), b.strip().lower()
+    return bool(a) and bool(b) and (a.startswith(b) or b.startswith(a))
+
+
+def revision_commit_rows(items: Sequence[LogInput], run_commit: str) -> list[dict[str, Any]]:
+    """Each log's header revision commit beside the manifest's run commit (the commit that
+    scored the logs, section 8), flagged when they differ (a short hash matches its prefix)."""
+    rows = []
+    for item in items:
+        revision = getattr(getattr(item.log, "eval", None), "revision", None)
+        commit = str(getattr(revision, "commit", "") or "")
+        rows.append({"file_name": item.name, "revision_commit": commit, "run_commit": run_commit,
+                     "differs": not _same_commit(commit, run_commit)})
+    return rows
+
+
 def carried_by_run(packet_dir: str | None) -> dict[str, int] | None:
     """Per masked run id, the carried failed-trial count sealed/summary.json records."""
     if packet_dir is None:
@@ -759,7 +914,8 @@ def h3_block(workers: Sequence[LogInput], reports: Mapping[str, Mapping[str, tri
     settled = {w.model: reports[w.label][trials.REVIEW_SETTLED] for w in workers}
     audit = {w.model: reports[w.label][trials.AUDIT_ADJUSTED] for w in workers}
     second = {w.model: gates[w.label] for w in workers if gates.get(w.label)}
-    modes = {w.model: reasoning_mode(w.log) for w in workers}
+    modes = {w.model: w.reasoning_mode if w.reasoning_mode is not None else reasoning_mode(w.log, w.name)
+             for w in workers}
     try:
         out = h3.h3_from_reports(settled, audit, second, k=K, reasoning_modes=modes)
     except h3.Refused as e:
@@ -784,8 +940,9 @@ def _sub(subset: str) -> str:
     return f"{subset} ({note})" if note else subset
 
 
-def _figure_lines(kind: str, rows: Mapping[str, Any]) -> list[str]:
-    lines = [f"  {FIGURE_NAMES[kind]} content-pass^4, {FIGURE_ROLES[kind]}:"]
+def _figure_lines(kind: str, rows: Mapping[str, Any], label: str | None = None) -> list[str]:
+    tag = f"; {label}" if label else ""
+    lines = [f"  {FIGURE_NAMES[kind]} content-pass^4, {FIGURE_ROLES[kind]}{tag}:"]
     for subset in _present(rows):
         r = rows[subset]
         lines.append(f"    {_sub(subset)}: {_ci(r)}; under the rule before D-R9 {_ci(r['before_d_r9'])}")
@@ -826,18 +983,25 @@ def _mean_text(m: Mapping[str, Any]) -> str:
     return f"{m['mean']:.3f} [{m['ci95_low']:.3f}, {m['ci95_high']:.3f}]"
 
 
-def _record_lines(block: Mapping[str, Any]) -> list[str]:
-    lines: list[str] = []
-    for kind in RECORD_KINDS:
-        lines.extend(_figure_lines(kind, block["figures"][kind]))
-    lines.append(f"  FM-008 on the review-settled trial: {len(block['fm008_review_settled'])}")
-    lines.append("  anchor means, review-settled beside audit-adjusted (mean [normal 95% CI on the SE of per-sample "
-                 "epoch means]):")
+def _anchor_mean_lines(block: Mapping[str, Any], label: str | None) -> list[str]:
+    tag = f"; {label}" if label else ""
+    lines = ["  anchor means, review-settled beside audit-adjusted (mean [normal 95% CI on the SE of per-sample "
+             f"epoch means]){tag}:"]
     settled, audit = (block["anchor_means"][k] for k in RECORD_KINDS)
     for subset in _present(settled):
         for anchor in rel.TRIAL_ANCHORS:
             lines.append(f"    {_sub(subset)} {anchor}: review-settled {_mean_text(settled[subset][anchor])}, "
                          f"audit-adjusted {_mean_text(audit[subset][anchor])}")
+    return lines
+
+
+def _record_lines(block: Mapping[str, Any]) -> list[str]:
+    lines: list[str] = []
+    label = block.get("second_look_label")
+    for kind in RECORD_KINDS:
+        lines.extend(_figure_lines(kind, block["figures"][kind], label))
+    lines.append(f"  FM-008 on the review-settled trial: {len(block['fm008_review_settled'])}")
+    lines.extend(_anchor_mean_lines(block, label))
     for subset in _present(block["review_found"]):
         r = block["review_found"][subset]
         codes = ", ".join(f"{c} {n}" for c, n in r["codes"].items()) or "none"
@@ -891,11 +1055,20 @@ def _second_look_lines(sl: Mapping[str, Any], rid: str | None) -> list[str]:
 def format_report(payload: Mapping[str, Any]) -> str:
     lines: list[str] = []
     head = "RUN REPORT" if payload["split"] == EVAL_SPLIT else f"RUN REPORT ({REHEARSAL})"
-    lines.append(f"{head}: split {payload['split']}, {len(payload['workers'])} worker log(s), k = {K}; "
+    lines.append(f"{head}: split {payload['split']}, {payload['worker_logs']} worker log(s), k = {K}; "
                  f"dataset_sha256 {payload['fingerprint'].get('dataset_sha256')}")
+    if payload.get("incomplete"):
+        lines.append("INCOMPLETE: the run report lacks " + "; ".join(payload["incomplete"]) + " (pre-registration "
+                     "section 8: the archive URL and date go in the run report)")
     if payload["withheld"]:
         lines.append("Review-settled and audit-adjusted figures: " + WITHHELD)
         lines.extend(f"  why: {r}" for r in payload["withheld_reasons"])
+        if payload.get("totals") is not None:
+            t = payload["totals"]
+            lines.append(f"Counts only (pre-registration section 9: until the second look is frozen no per-model "
+                         f"score is read): over all {t['logs']} log(s) together, {t['epochs']} epochs; errored "
+                         f"{t['errored_epochs']}; format breaks {t['format_break_epochs']}; carried failed trials "
+                         f"{t['carried_epochs']}")
     else:
         fz = payload["freezes"]
         lines.append(f"First record frozen in {fz['first']['freeze_commit']}, second look frozen in "
@@ -903,7 +1076,7 @@ def format_report(payload: Mapping[str, Any]) -> str:
                      f"{fz['settlement_commit']} (HEAD)")
     for label, w in payload["workers"].items():
         lines.append(f"== Worker {label}: {w['model']} | eval_id {w['eval_id']} | {w['file_name']} sha256 "
-                     f"{w['sha256']} | reasoning mode {w['reasoning_mode']}")
+                     f"{w['sha256']} | reasoning mode sent (from the model-call requests) {w['reasoning_mode']}")
         lines.extend(_figure_lines(trials.ROUTE_BLIND, w["log"]["figures"][trials.ROUTE_BLIND]))
         lines.append("  extractor health (not a capability result):")
         lines.extend("  " + x for x in _figure_lines(trials.CODE_ONLY, w["log"]["figures"][trials.CODE_ONLY]))
@@ -923,10 +1096,20 @@ def format_report(payload: Mapping[str, Any]) -> str:
     if t is not None:
         lines.append(f"== Template baseline (reference row, no model): eval_id {t['eval_id']} | {t['file_name']} "
                      f"sha256 {t['sha256']}")
+        if t.get("record") is not None:
+            for kind in RECORD_KINDS:
+                lines.extend(_figure_lines(kind, t["record"]["figures"][kind], t["record"]["second_look_label"]))
+            lines.extend(_anchor_mean_lines(t["record"], t["record"]["second_look_label"]))
+        elif t.get("not_review_settled") is not None:
+            n = t["not_review_settled"]
+            lines.append(f"  review-settled and audit-adjusted: this row is not review-settled; the frozen record "
+                         f"does not name the template run, and its log routes {n['routed_epochs']} epoch(s) with "
+                         f"{n['findings']} finding(s) over {n['epochs']} epochs")
         lines.extend(_figure_lines(trials.ROUTE_BLIND, t["log"]["figures"][trials.ROUTE_BLIND]))
         lines.extend(_figure_lines(trials.CODE_ONLY, t["log"]["figures"][trials.CODE_ONLY]))
         lines.extend(_citation_lines(t["log"]["citation_pass4"]))
-        lines.append("  anchor means as the route-blind trial settles them (the template has no review):")
+        lines.append("  anchor means as the route-blind trial settles them" +
+                     (":" if t.get("record") is not None else " (no review-settled reading of this row here):"))
         for subset in _present(t["anchor_means_route_blind"]):
             for anchor, m in t["anchor_means_route_blind"][subset].items():
                 lines.append(f"    {_sub(subset)} {anchor}: {_mean_text(m)}")
@@ -957,6 +1140,10 @@ def format_report(payload: Mapping[str, Any]) -> str:
                 lines.append(f"  {rel_path} {digest}")
         for log in fz["first"].get("logs") or ():
             lines.append(f"  log {log.get('file_name')} sha256 {log.get('sha256')} eval_id {log.get('eval_id')}")
+        for r in payload.get("revision_commits") or ():
+            flag = "DIFFERS from the run commit" if r["differs"] else "same commit"
+            lines.append(f"  log {r['file_name']} header revision commit {r['revision_commit'] or 'none recorded'} "
+                         f"beside the manifest's run commit {r['run_commit'] or 'none recorded'}: {flag}")
         hb = payload["h3"]
         lines.append("== H3 (section 2)")
         if not hb["computed"]:
@@ -996,32 +1183,54 @@ def build_report(workers: Sequence[LogInput], template: LogInput | None, *, pack
     withheld = not checks.passed
     payload: dict[str, Any] = {
         "split": split, "rehearsal": split != EVAL_SPLIT, "fingerprint": fingerprint, "withheld": withheld,
-        "withheld_reasons": checks.reasons() if withheld else [], "workers": {}, "template": None,
-        "not_available": dict(NOT_AVAILABLE),
+        "withheld_reasons": checks.reasons() if withheld else [], "worker_logs": len(workers), "workers": {},
+        "template": None, "not_available": dict(NOT_AVAILABLE),
     }
+    if withheld and split == EVAL_SPLIT:
+        # Section 9: "Until the second look is frozen ... no per-model score the run prints is
+        # read, and the packet job prints counts only." Totals over every log together, with no
+        # model name, no run label and no per-model rate or score.
+        payload["totals"] = log_totals([*workers, *([template] if template is not None else [])])
+        payload["freezes"] = None  # its log list names files; the withheld JSON holds reasons and totals only
+        return format_report(payload), payload
     reports: dict[str, dict[str, trials.TrialReport]] = {}
     carried = carried_by_run(packet_dir) if not withheld else None
     second_look = second_look_block(second_look_dir, checks) if not withheld else None
     gates: dict[str, str | None] = {}
     for w in workers:
         log_payload, log_reports = log_only_block(w)
+        mode = w.reasoning_mode if w.reasoning_mode is not None else reasoning_mode(w.log, w.name)
         entry: dict[str, Any] = {"model": w.model, "eval_id": w.eval_id, "file_name": w.name, "sha256": w.sha256,
-                                 "reasoning_mode": reasoning_mode(w.log), "run_config": w.run_config,
+                                 "reasoning_mode": mode, "reasoning_modes_sent": [mode], "run_config": w.run_config,
                                  "log": log_payload, "record": None}
         if not withheld:
             rid = checks.run_ids[w.label]
-            rec_payload, rec_reports = record_block(w, checks.record, rid, log_reports)
-            entry["record"] = rec_payload
-            entry["carried_in_packet"] = (carried or {}).get(rid)
             entry["second_look"] = (second_look["runs"] or {}).get(rid)
             gates[w.label] = ((entry["second_look"] or {}).get("gate") or {}).get("result")
+            rec_payload, rec_reports = record_block(w, checks.record, rid, log_reports,
+                                                    label=second_look_label(gates[w.label]))
+            entry["record"] = rec_payload
+            entry["carried_in_packet"] = (carried or {}).get(rid)
             reports[w.label] = rec_reports
         payload["workers"][w.label] = entry
     if template is not None:
         log_payload, log_reports = log_only_block(template)
         payload["template"] = {"model": template.model, "eval_id": template.eval_id, "file_name": template.name,
-                               "sha256": template.sha256, "log": log_payload,
+                               "sha256": template.sha256, "log": log_payload, "record": None,
                                "anchor_means_route_blind": anchor_rows(log_reports[trials.ROUTE_BLIND])}
+        if not withheld:
+            # Section 6 and section 8: the template baseline is a reference row beside every
+            # model, and every table that reports one of the three figures reports all three.
+            rid = checks.run_ids.get(template.label)
+            if rid is not None:
+                rec_payload, _ = record_block(template, checks.record, rid, log_reports,
+                                              label=second_look_label(None, template=True))
+                payload["template"]["record"] = rec_payload
+            elif log_payload["epochs"].get(ALL, {}).get("routed_epochs"):
+                every = log_payload["epochs"][ALL]
+                payload["template"]["not_review_settled"] = {
+                    "reason": "the frozen record does not name the template run, and its log routes",
+                    "routed_epochs": every["routed_epochs"], "findings": every["findings"], "epochs": every["epochs"]}
     if not withheld:
         first = checks.first_manifest or {}
         payload["run"] = {"review_hours": first.get("review_hours"), "sittings": len(first.get("sittings") or ()),
@@ -1030,6 +1239,10 @@ def build_report(workers: Sequence[LogInput], template: LogInput | None, *, pack
         payload["second_look"] = second_look
         payload["freezes"] = freeze_block(checks, args)
         payload["h3"] = h3_block(workers, reports, gates)
+        payload["revision_commits"] = revision_commit_rows([*workers, *([template] if template else [])],
+                                                           str(first.get("run_commit") or ""))
+        if split == EVAL_SPLIT:
+            payload["incomplete"] = missing_archive_items(payload["freezes"])
     else:
         payload["freezes"] = freeze_block(checks, args) if checks.first_manifest is not None else None
     return format_report(payload), payload

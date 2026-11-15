@@ -34,7 +34,11 @@ and pushes the manifest. At least 48 hours later `second-look-draw` checks the f
 commit (through git_commit_info, which runs only `git show`) and writes a second-look
 packet with fresh unit ids; `second-look-score` reports intra-rater agreement only.
 `validate` and `freeze` refuse a packet whose recorded whole-narrative scope is not hard
-or all (D-J, option b): a routed-scope packet is never frozen.
+or all (D-J, option b): a routed-scope packet is never frozen. `freeze` refuses
+--expanded-csv for a packet whose runs are on the evaluation split: that file holds run
+labels, sample ids, routed sentences and verdicts, and section 8 keeps an evaluation
+run's private record in runs/reviews/<run-id>/, untracked and never pushed (only
+dev-split records may be committed in full).
 
 check_second_look_freeze is the check scripts/run_report.py runs on the second-look freeze
 before it computes any review-settled or audit-adjusted figure (pre-registration section 8):
@@ -886,6 +890,13 @@ def _inside(child: Path, parent: Path) -> bool:
         return False
 
 
+def evaluation_split_runs(rec: Record) -> list[str]:
+    """The run ids sealed/runs.json records on the evaluation split (review_packet writes
+    split "eval" for such a run only)."""
+    return sorted(rid for rid, info in (rec.runs or {}).items()
+                  if isinstance(info, dict) and info.get("split") == "eval")
+
+
 def freeze(packet_dir: str, filled: str, runs: Sequence[tuple[str, str]], *, reviewer: str, freeze_date: str,
            run_commit: str, sittings: Sequence[tuple[str, str]], manifest_dir: str = DEFAULT_MANIFEST_DIR,
            expanded_csv: str | None = None) -> tuple[Path, str]:
@@ -918,6 +929,12 @@ def freeze(packet_dir: str, filled: str, runs: Sequence[tuple[str, str]], *, rev
         gaps.append(f"{manifest_path.name} already exists; a manifest is never overwritten")
     if expanded_csv is not None and Path(expanded_csv).exists():
         gaps.append("--expanded-csv path already exists")
+    if expanded_csv is not None and evaluation_split_runs(rec):
+        # Section 8: the private record of an evaluation run sits in runs/reviews/<run-id>/,
+        # untracked and never pushed; only dev-split records may be committed in full.
+        gaps.append("--expanded-csv is refused for a packet on the evaluation split: it writes run labels, "
+                    "sample ids, routed sentences and verdicts outside the private record (pre-registration "
+                    "section 8; only dev-split records may be committed in full)")
     gaps.extend(rederive_check(rec, runs))
     if gaps:
         raise Refused(gaps)
@@ -1390,11 +1407,16 @@ def narrative_only_wrong(rec: Record) -> dict[str, int]:
     reported beside the gate, labeled not second-looked (pre-registration section 8,
     decision D-R19). A unit belongs to every worker run holding one of its narrative
     members, as a second-look unit does, so a narrative two worker runs carry counts in
-    each. The template baseline is never a worker run."""
+    each. The template baseline is never a worker run. Only the D-J units count: the
+    unrouted, uncoded narratives of the difficulty-bearing cases. A narrative-only unit on
+    any other case (a read added for a P12 citation omission on a synthetic case, decision
+    D-R9) is left out, as the packet's sealed/summary.json lists it."""
     verdicts = _verdict_of(rec)
+    packet_dir = getattr(rec, "packet_dir", None)
+    outside = set(load_review_packet().load_narrative_only_outside(packet_dir)) if packet_dir else set()
     wrong = {uid for uid, u in rec.units.items()
              if u.get("row_kind") == "narrative" and u.get("route_class") == rs.NARRATIVE_CLASS_ONLY
-             and verdicts.get(uid) == "wrong"}
+             and verdicts.get(uid) == "wrong" and uid not in outside}
     out: dict[str, int] = {}
     for run in worker_run_ids(rec):
         out[run] = len({m["unit_id"] for m in rec.members
@@ -1647,10 +1669,53 @@ def check_second_look_private_files(second_look_dir: str | Path, manifest: Mappi
     return gaps
 
 
+def _second_look_timing_and_blinding_gaps(pr: Any, repo_path: Path, first_full: str | None,
+                                          second_look_dir: str | Path, man: Mapping[str, Any],
+                                          worker_runs: int | None) -> list[str]:
+    """Section 8: the second look is drawn at least 48 hours after the first freeze commit,
+    read from the draw time second-look-meta.json records (hashed in the manifest), and a
+    full run of four worker runs carries its blinding check in the second-look freeze."""
+    gaps: list[str] = []
+    meta_path = Path(second_look_dir) / SECOND_LOOK_META_FILE
+    if first_full and meta_path.is_file():
+        shown = pr._git(repo_path, "show", "-s", "--format=%cI", first_full)
+        first_time: datetime | None = None
+        if shown.returncode == 0:
+            try:
+                first_time = _utc(datetime.fromisoformat(shown.stdout.decode("utf-8", errors="replace").strip()))
+            except ValueError:
+                first_time = None
+        if first_time is None:
+            gaps.append("the first freeze commit's time cannot be read, so the second-look draw time cannot be "
+                        "checked")
+        else:
+            try:
+                meta = _read_json(meta_path)
+                draw_time = _utc(datetime.fromisoformat(str((meta or {}).get("draw_time", ""))))
+            except (Refused, ValueError, AttributeError):
+                draw_time = None
+            if draw_time is None:
+                gaps.append("second-look-meta.json records no readable draw time")
+            elif draw_time - first_time < MIN_GAP:
+                gaps.append("second-look-meta.json records a draw less than 48 hours after the first freeze commit "
+                            "(pre-registration section 8: at least 48 hours after the freeze)")
+    runs = worker_runs if worker_runs is not None else len(man.get("runs") or {})
+    if runs >= FULL_RUN_WORKER_RUNS:
+        files = man.get("private_files") if isinstance(man.get("private_files"), dict) else {}
+        if man.get("blinding") is None:
+            gaps.append(f"the record holds {runs} worker runs, a full run, but the second-look manifest holds no "
+                        f"blinding result (pre-registration section 8)")
+        if not any(str(rel).startswith(BLIND_CHECK_PREFIX) for rel in files):
+            gaps.append(f"the record holds {runs} worker runs, a full run, but the second-look manifest lists no "
+                        f"blinding-check file")
+    return gaps
+
+
 def check_second_look_freeze(*, repo: str, first_manifest_path: str | Path, first_freeze_commit: str,
                              second_look_dir: str | Path, blind_check_dir: str | Path | None = None,
                              manifest: str | Path | None = None,
-                             commit: str | None = None) -> tuple[dict | None, dict, list[str]]:
+                             commit: str | None = None,
+                             worker_runs: int | None = None) -> tuple[dict | None, dict, list[str]]:
     """The second-look freeze of pre-registration section 8 ("No review-settled or
     audit-adjusted figure of a pre-registered evaluation run or tagged release run is
     computed or read until its second look is done and frozen by a second manifest
@@ -1669,6 +1734,11 @@ def check_second_look_freeze(*, repo: str, first_manifest_path: str | Path, firs
     D-R16; freeze_commit_gaps, with no minimum age), and that commit is a descendant of
     the first freeze commit and an ancestor of HEAD; `commit`, when given, must name it;
     and every private file it lists hashes to it (check_second_look_private_files).
+    The draw time in the hashed second-look-meta.json is at least 48 hours after the
+    first freeze commit ("At least 48 hours after the freeze"), and when the record holds
+    four worker runs (`worker_runs`, else the runs the manifest lists) the manifest holds
+    a blinding result and lists the blinding-check files ("On a full run, at that commit
+    the reviewer names the likely worker model for 40 random units").
     The second-look result file must also agree with the manifest's public per-run
     results. Returns (the manifest or None, {"path", "sha256", "commit"}, gaps).
 
@@ -1745,6 +1815,7 @@ def check_second_look_freeze(*, repo: str, first_manifest_path: str | Path, firs
                 gaps.append(f"git cannot tell whether second-look commit {full[:12]} descends from the first "
                             f"freeze commit")
     gaps.extend(check_second_look_private_files(second_look_dir, man, blind_check_dir))
+    gaps.extend(_second_look_timing_and_blinding_gaps(pr, repo_path, first_full, second_look_dir, man, worker_runs))
     result_path = Path(second_look_dir) / SECOND_LOOK_RESULT_FILE
     if result_path.is_file():
         try:

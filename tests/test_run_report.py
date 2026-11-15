@@ -76,6 +76,18 @@ rr = _load()
 pr = rr.load_pilot_report()
 rf = rr.load_review_freeze()
 rp = rr.load_review_packet()
+REAL_COMPOSITION_CHECK = rp.check_eval_composition
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _small_eval_logs_allowed():
+    """The mock evaluation-split logs here hold 3 or 55 cases, not the 200 of section 4, so
+    the composition check is set aside for them; the composition tests below put the real
+    check back (REAL_COMPOSITION_CHECK)."""
+    mp = pytest.MonkeyPatch()
+    mp.setattr(rp, "check_eval_composition", lambda log, name: None)
+    yield
+    mp.undo()
 
 
 @pytest.fixture(autouse=True)
@@ -368,18 +380,29 @@ def no_record_figures(monkeypatch):
     monkeypatch.setattr(rr, "record_block", boom)
 
 
+NAMES_NEVER_SHOWN = ("alpha", "beta", "gamma", HAIKU, SONNET5, SONNET55, OPUS)
+
+
 def assert_withheld(text, payload, why):
+    """The withheld path on the evaluation split (section 9): the reasons and counts over all
+    logs together only, with no model name, no run label and no per-model rate or score."""
     assert payload["withheld"] is True
     assert "Review-settled and audit-adjusted figures: withheld" in text
     assert any(why in r for r in payload["withheld_reasons"]), payload["withheld_reasons"]
-    for kind in ("review_settled", "audit_adjusted"):
-        assert f"{rr.FIGURE_NAMES[kind]} content-pass^4, {rr.FIGURE_ROLES[kind]}" not in text
-    assert "anchor means, review-settled" not in text and "second-look gate" not in text and "== H3" not in text
-    for w in payload["workers"].values():
-        assert w["record"] is None
-        assert w["log"]["figures"]["route_blind"]["all"]["n"] == 3
-    assert "route-blind content-pass^4" in text and "code-only content-pass^4" in text
-    assert "citation-pass^4" in text and "format breaks" in text
+    shown = text.split("== Not available", 1)[0]  # the not-available list names items, never a figure
+    for kind in ("review_settled", "audit_adjusted", "route_blind", "code_only"):
+        assert f"{rr.FIGURE_NAMES[kind]} content-pass^4" not in shown
+    assert "anchor means" not in shown and "second-look gate" not in shown and "== H3" not in shown
+    assert "citation-pass^4" not in shown and "routing rate" not in shown and "== Worker" not in shown
+    assert "Template baseline" not in shown
+    assert payload["workers"] == {} and payload["template"] is None
+    t = payload["totals"]
+    assert t["epochs"] == 12 * t["logs"] and t["errored_epochs"] == 1 and t["carried_epochs"] == 1
+    assert t["format_break_epochs"] == 0
+    assert "Counts only" in text and f"over all {t['logs']} log(s) together, {t['epochs']} epochs; errored 1" in text
+    body = json.dumps(payload, default=str).lower()
+    for name in NAMES_NEVER_SHOWN:
+        assert name.lower() not in text.lower() and name.lower() not in body, name
 
 
 def test_full_path_with_both_checks_passing(small, small_logs):
@@ -421,6 +444,39 @@ def test_full_path_with_both_checks_passing(small, small_logs):
     assert set(rs.RECORD_FILES.values()) <= set(files) and set(rs.PACKET_FILES.values()) <= set(files)
     assert payload["freezes"]["second"]["commit"] == git(small.repo, "rev-parse", "HEAD")
     json.dumps(payload, default=str)
+    # section 8: each worker's gate result labels its review-settled and audit-adjusted figures
+    assert alpha["second_look_label"] == "second look confirmed"
+    for kind in ("review_settled", "audit_adjusted"):
+        assert {r["second_look"] for r in alpha["figures"][kind].values()} == {"second look confirmed"}
+        assert f"{rr.FIGURE_NAMES[kind]} content-pass^4, {rr.FIGURE_ROLES[kind]}; second look confirmed:" in text
+    assert "epoch means]); second look confirmed:" in text
+    assert "second_look" not in payload["workers"]["alpha"]["log"]["figures"]["route_blind"]["all"]
+    # section 8: the archive URL and date go in the run report; the second freeze's are missing
+    assert payload["incomplete"] == ["the second freeze commit's archive URL", "the second freeze commit's archive date"]
+    assert text.splitlines()[1].startswith("INCOMPLETE: the run report lacks the second freeze commit's archive URL")
+    # each log's header revision commit beside the manifest's run commit (a783322 here)
+    revs = payload["revision_commits"]
+    assert [r["file_name"] for r in revs] == ["alpha.eval", "beta.eval", "template.eval"]
+    assert all(r["run_commit"] == "a783322" and r["differs"] is not None for r in revs)
+    for r in revs:
+        assert r["differs"] == (not r["revision_commit"].startswith("a783322"))
+        assert f"log {r['file_name']} header revision commit" in text
+    # the template row is not in this record and does not route: no review line for it
+    assert payload["template"]["record"] is None and "not_review_settled" not in payload["template"]
+    # section 8 primary outcomes this report does not print are listed, with the reason
+    for item in ("the sample-level FM-007 count", "Sample Consistency and the H4 line (section 2)",
+                 "the H1 verdict, and the H1 means under the rule before D-R9", "the H2 count (section 2)",
+                 "disagreement rate and resolution rate"):
+        assert item in payload["not_available"] and f"  {item}: not available; " in text
+
+
+def test_full_path_with_every_archive_given_is_complete(small, small_logs):
+    commit_second(small)
+    args = SimpleNamespace(first_archive="https://web.archive.org/web/1/x", first_archive_date=DAY,
+                           second_archive="https://web.archive.org/web/2/y", second_archive_date=LATER_DAY)
+    text, payload = report(small, *small_items(small_logs), args=args)
+    assert payload["withheld"] is False and payload["incomplete"] == [] and "INCOMPLETE" not in text
+    assert "archive https://web.archive.org/web/2/y" in text
 
 
 def test_cli_prints_and_writes_json(small, small_logs, capsys, tmp_path):
@@ -535,7 +591,8 @@ def test_withheld_when_the_record_does_not_name_a_worker_log(small, small_logs, 
                               small_logs["template"])
     no_record_figures(monkeypatch)
     text, payload = report(small, workers, template)
-    assert_withheld(text, payload, "names no run with the eval id of worker log gamma")
+    # on the evaluation split a gap names the worker log by its place, never by its label
+    assert_withheld(text, payload, "names no run with the eval id of worker log 3")
 
 
 def test_first_record_check_runs_the_package_checks(small, small_logs, monkeypatch):
@@ -609,6 +666,126 @@ def test_second_look_private_files_need_the_blinding_folder_when_listed(small):
                for g in rf.check_second_look_private_files(small.d2, man, small.d2))
 
 
+def test_second_look_check_needs_the_blinding_check_on_a_full_run(small):
+    # section 8: "On a full run, at that commit the reviewer names the likely worker model"
+    commit_second(small)
+    assert check(small)[2] == []
+    _, _, gaps = check(small, worker_runs=4)
+    assert any("holds 4 worker runs, a full run, but the second-look manifest holds no blinding result" in g
+               for g in gaps), gaps
+    assert any("lists no blinding-check file" in g for g in gaps), gaps
+
+
+def test_second_look_check_refuses_a_draw_within_48_hours_of_the_first_freeze(small):
+    # section 8: "At least 48 hours after the freeze", read from the hashed draw time
+    meta_path = small.d2 / rf.SECOND_LOOK_META_FILE
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    first_time = datetime.fromisoformat(git(small.repo, "show", "-s", "--format=%cI", small.first))
+    meta["draw_time"] = (first_time + timedelta(hours=47)).isoformat()
+    rs.write_lf(meta_path, json.dumps(meta, indent=2, ensure_ascii=False) + "\n")
+    path = small.repo / second_rel()
+    man = json.loads(path.read_text(encoding="utf-8"))
+    man["private_files"][rf.SECOND_LOOK_META_FILE] = rs.sha256_file(meta_path)
+    rs.write_lf(path, json.dumps(man, indent=2, ensure_ascii=False) + "\n")
+    commit_second(small)
+    _, _, gaps = check(small)
+    assert any("draw less than 48 hours after the first freeze commit" in g for g in gaps), gaps
+    assert not any("does not hash" in g for g in gaps), gaps
+    # the drawn second look (three days after the freeze) passes: test_second_look_check_passes...
+
+
+# --- The template baseline: a reference row beside every model (section 6 and section 8) ------------
+
+def test_template_in_the_record_gets_its_review_settled_and_audit_adjusted_figures(small_logs, tmp_path):
+    env = freeze_first(tmp_path / "run", {k: small_logs[k] for k in ("alpha", "beta", "template")})
+    draw_second(env)
+    score_second(env)
+    commit_second(env)
+    text, payload = report(env, *small_items(small_logs))
+    assert payload["withheld"] is False, payload["withheld_reasons"]
+    t = payload["template"]["record"]
+    assert t is not None and t["second_look_label"] == "reference row, never a worker; not second-looked"
+    for kind in ("review_settled", "audit_adjusted"):
+        assert set(t["figures"][kind]) == {"all", "synthetic", "edge", "adversarial", "difficulty_bearing"}
+    assert t["figures"]["review_settled"]["all"]["passed"] == 3
+    block = text.split("== Template baseline", 1)[1].split("== Run", 1)[0]
+    for kind in ("review_settled", "audit_adjusted", "route_blind", "code_only"):
+        assert f"{rr.FIGURE_NAMES[kind]} content-pass^4" in block, kind
+    assert "anchor means, review-settled beside audit-adjusted" in block
+    # never a worker: no second look, no H3 entry, not among the workers
+    assert set(payload["workers"]) == {"alpha", "beta"} and set(payload["second_look"]["runs"]) == {
+        payload["workers"]["alpha"]["record"]["run_id"], payload["workers"]["beta"]["record"]["run_id"]}
+
+
+def test_template_that_routes_outside_the_record_is_not_review_settled(small, small_logs, base_log, tmp_path):
+    commit_second(small)
+    routed = make_log(base_log, tmp_path / "template.eval", "none/none", SMALL, plan_for("west"),
+                      task="icfr_agent_evals/variance_commentary_template_baseline")
+    workers, _ = small_items(small_logs)
+    template = rr.LogInput("template", routed, read_eval_log(routed), "template")
+    text, payload = report(small, workers, template)
+    assert payload["withheld"] is False, payload["withheld_reasons"]
+    n = payload["template"]["not_review_settled"]
+    assert payload["template"]["record"] is None and (n["routed_epochs"], n["findings"], n["epochs"]) == (3, 3, 12)
+    assert ("this row is not review-settled; the frozen record does not name the template run, and its log routes "
+            "3 epoch(s) with 3 finding(s) over 12 epochs") in text
+
+
+# --- The reasoning mode, read from the model-call requests (section 5) --------------------------------
+
+def _model_event(request, role=None):
+    return SimpleNamespace(event="model", role=role, call=SimpleNamespace(request=request))
+
+
+SENT = {"model": "m", "max_tokens": 48000, "output_config": {"effort": "high"},
+        "thinking": {"type": "adaptive", "display": "summarized"}, "messages": []}
+
+
+def test_reasoning_mode_is_read_from_each_request_as_sent():
+    log = SimpleNamespace(plan=SimpleNamespace(config=SimpleNamespace(reasoning_effort="low")), samples=[
+        SimpleNamespace(events=[_model_event(SENT), SimpleNamespace(event="score")]),
+        SimpleNamespace(events=[_model_event(dict(SENT)), _model_event({"model": "g"}, role="grader")]),
+    ])
+    want = 'output_config.effort="high", thinking={"display":"summarized","type":"adaptive"}'
+    assert rr.reasoning_modes_sent(log) == [want]
+    assert rr.reasoning_mode(log) == want  # the plan config's effort is never read
+    assert rr.request_mode({"reasoning_effort": "high"}) == 'reasoning_effort="high"'
+    assert rr.request_mode({"model": "m"}) == rr.NO_REASONING_FIELD
+    assert rr.request_mode(None) == rr.NO_REQUEST
+
+
+def test_a_worker_log_whose_events_disagree_is_refused(base_log, small_logs, tmp_path, capsys):
+    unit = SimpleNamespace(samples=[SimpleNamespace(events=[_model_event(SENT)]),
+                                    SimpleNamespace(events=[_model_event({**SENT, "thinking": {"type": "enabled"}})])])
+    with pytest.raises(rr.Refused, match="2 different reasoning modes"):
+        rr.reasoning_mode(unit, "x.eval")
+
+    def one_thinks(log):
+        event = next(e for e in log.samples[0].events if e.event == "model" and e.role is None)
+        event.call.request = {**event.call.request, "thinking": {"type": "adaptive", "display": "summarized"}}
+
+    bad = make_log(base_log, tmp_path / "mixed.eval", SONNET5, SMALL, plan_for("east"), mutate=one_thinks)
+    assert rr.main(["--worker", f"alpha={bad}", "--template", small_logs["template"]]) == 3
+    assert "different reasoning modes" in capsys.readouterr().err
+
+
+# --- The evaluation split's 200 cases (section 4) -------------------------------------------------
+
+def test_evaluation_logs_without_the_200_cases_are_refused(small_logs, base_log, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(rp, "check_eval_composition", REAL_COMPOSITION_CHECK)
+    assert rr.main(["--worker", f"alpha={small_logs['alpha']}", "--template", small_logs["template"]]) == 3
+    err = capsys.readouterr().err
+    assert "does not hold its 200 cases" in err and "it holds 3 cases, not 200" in err
+    workers, template = small_items(small_logs)
+    with pytest.raises(rr.Refused, match="200 cases"):
+        rr.check_inputs(workers[:1], None)
+    with pytest.raises(rr.Refused, match="template log: log template.eval is on the evaluation split"):
+        rr.check_log(template.log, "template", "template.eval")
+    # dev rehearsal logs keep their own counts
+    dev = make_log(base_log, tmp_path / "dev.eval", SONNET5, dev_cases(), plan_for("east"), split="dev")
+    assert rr.check_inputs(items({"gamma": dev})[0], None)[0] == "dev"
+
+
 # --- Logs the report refuses ---------------------------------------------------------------------
 
 @pytest.mark.parametrize("flag", [ABSENT, False, "true", 1])
@@ -632,6 +809,13 @@ def test_dev_logs_run_as_a_labeled_rehearsal(base_log, tmp_path, monkeypatch):
     no_record_figures(monkeypatch)
     text, payload = rr.build_report(*items({"gamma": dev}, tmpl))
     assert payload["rehearsal"] is True and text.startswith(f"RUN REPORT ({rr.REHEARSAL})")
+    # a dev rehearsal keeps the full block of figures that read the log alone
+    assert payload["withheld"] is True and "totals" not in payload
+    assert payload["workers"]["gamma"]["log"]["figures"]["route_blind"]["all"]["n"] == 3
+    for section in ("== Worker gamma", "route-blind content-pass^4", "code-only content-pass^4", "citation-pass^4",
+                    "routing rate", "Template baseline (reference row"):
+        assert section in text, section
+    assert "INCOMPLETE" not in text
 
 
 def test_worker_log_off_the_run_configuration_is_refused(base_log, small_logs, tmp_path, capsys):
@@ -719,7 +903,16 @@ def test_h3_is_tested_under_second_look_empty(full_drawn, full_logs, tmp_path):
     assert settled["verdict"] == "holds" and settled["n_cases"] == 54
     assert set(hb["readings"]) == {"review_settled", "audit_adjusted", "review_settled_before_d_r9"}
     modes = settled["beside"]["reasoning_modes"]
-    assert set(modes.values()) == {"reasoning_effort=high"}
+    # read from each model-call request as sent; the mock requests carry no reasoning field
+    assert set(modes.values()) == {rr.NO_REASONING_FIELD}
+    assert payload["workers"]["alpha"]["reasoning_modes_sent"] == [rr.NO_REASONING_FIELD]
+    # a full run of four worker runs carries its blinding check; the second-look check holds it
+    assert payload["second_look"]["blinding"] is not None
+    for label, w in payload["workers"].items():
+        want = "labeled second look empty, never confirmed" if label == "delta" else "second look confirmed"
+        assert w["record"]["second_look_label"] == want
+        assert {r["second_look"] for r in w["record"]["figures"]["review_settled"].values()} == {want}
+    assert "; labeled second look empty, never confirmed:" in text
     assert "H3 on review-settled anchor scores" in text and "second look empty" in text
     b = payload["second_look"]["blinding"]
     assert b["n"] == 40 and "blinding check: named correctly" in text
@@ -738,6 +931,10 @@ def test_review_not_confirmed_makes_h3_not_tested(full_drawn, full_logs, tmp_pat
     text, payload = report(env, *full_items(full_logs))
     assert payload["withheld"] is False, payload["withheld_reasons"]
     assert payload["workers"]["beta"]["second_look"]["gate"]["result"] == "review not confirmed"
+    beta_rec = payload["workers"]["beta"]["record"]
+    assert beta_rec["second_look_label"] == "labeled review not confirmed"
+    assert {r["second_look"] for r in beta_rec["figures"]["audit_adjusted"].values()} == {"labeled review not confirmed"}
+    assert "; labeled review not confirmed:" in text
     settled = payload["h3"]["readings"]["review_settled"]
     assert settled["verdict"] == "not tested" and settled["holds"] is None
     assert "Sonnet 5" in settled["second_look"]["reason"] and "review not confirmed" in settled["second_look"]["reason"]
@@ -816,15 +1013,48 @@ def test_a_narrative_member_on_a_carried_epoch_is_a_gap():
         trials.review_settled_trial(samples, rec, k=4)
 
 
-def test_an_fm_coded_carried_epoch_needs_an_audit_row_only_when_the_packet_built_one():
-    fm =SimpleNamespace(value=0, metadata={"failure_modes": ["FM-001"], "requires_human_review": False,
-                                            "review_reasons": [], "details": {"structured_points": 3}})
-    samples = hard_samples(correctness=fm)
+FM001 = SimpleNamespace(value=0, metadata={"failure_modes": ["FM-001"], "requires_human_review": False,
+                                           "review_reasons": [], "details": {"structured_points": 3}})
+
+
+def test_an_fm_coded_carried_epoch_needs_its_audit_row_and_its_narrative_read():
+    # Section 8: the settlement refuses a record unless every FM-coded (epoch, code) has an
+    # audit row; section 6: the audit reads that epoch's narrative whole. A carried epoch is
+    # no exception, and it stays a failed trial whatever the rows say.
+    samples = hard_samples(correctness=FM001)
     rec = carried_record(samples, [entry()])
-    assert trials.review_settled_trial(samples, rec, k=4).pass_k == {"h": 0}
+    with pytest.raises(trials.RecordError) as e:
+        trials.review_settled_trial(samples, rec, k=4)
+    assert "h epoch 2: no audit row for FM-001" in e.value.gaps
+    assert "h epoch 2: no whole-narrative member" in e.value.gaps
     rec.audit("h", 2, "FM-001", verdict=None)
+    rec.narrative("h", 2)
     with pytest.raises(trials.RecordError, match="h epoch 2: audit verdict None for FM-001"):
         trials.review_settled_trial(samples, rec, k=4)
+    done = carried_record(samples, [entry()])
+    done.audit("h", 2, "FM-001", verdict="extractor_error")
+    done.narrative("h", 2, "wrong", ("amount",))
+    for trial in (trials.review_settled_trial, trials.audit_adjusted_trial):
+        rep = trial(samples, done, k=4)
+        e2 = next(e for e in rep.samples["h"].epochs if e.epoch == 2)
+        assert rep.pass_k == {"h": 0} and not e2.success and e2.reasons[0] == "sample error"
+        assert not any("whole-narrative" in r for r in e2.reasons)  # review never settles a carried epoch
+
+
+def test_audited_code_counts_never_reads_a_missing_carried_audit_row_as_real_error():
+    samples = hard_samples(correctness=FM001)
+    rec = carried_record(samples, [entry()])
+    with pytest.raises(trials.RecordError, match="no audit row for FM-001"):
+        trials.audited_code_counts(samples, rec, k=4, case_kinds=None)
+    counts = trials.audited_code_counts(samples, rec, k=4, case_kinds=None, require_complete=False)
+    assert counts == {"real_error": {}, "extractor_error": {}, trials.NOT_AUDITED: {"FM-001": 1}}
+    rec.audit("h", 2, "FM-001")
+    rec.narrative("h", 2)
+    assert trials.audited_code_counts(samples, rec, k=4, case_kinds=None) == {
+        "real_error": {"FM-001": 1}, "extractor_error": {}}
+    # an epoch nothing carried reads as before
+    clean = [sample("c", e, kind="adversarial") for e in range(1, 5)]
+    assert trials.audited_code_counts(clean, record_for(clean), k=4) == {"real_error": {}, "extractor_error": {}}
 
 
 def test_unscored_epoch_is_carried_with_its_reason():

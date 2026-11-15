@@ -21,7 +21,10 @@ FM-coded epochs only; all adds every epoch of every case. On every scope, every 
 holding a code-found (P12) citation omission is read whole too, as a narrative-only
 unit where it is not routed (owner decision D-R9, 2026-11-11). Each sweep finding's
 looked-up facts show whether the case file holds the flagged name exactly as written
-(the scorer's `in_case_file` flag, D-R9).
+(the scorer's `in_case_file` flag, D-R9). When any narrative-only unit sits on a case
+that is not difficulty-bearing (such a P12 read, or scope all), sealed/summary.json
+lists those units under totals, so the count of narrative-only units section 8 asks for
+(decision D-J, the 54 difficulty-bearing cases) can leave them out.
 
 What this script never does: it never sets, suggests or pre-selects a verdict; it
 never shows a comparison between a worker claim and the case file (facts come from
@@ -50,21 +53,33 @@ Errored and unscored epochs (pre-registration section 6: "Parse failures (FM-000
 errors and unscored epochs count as failed trials whatever review finds ... and
 review never settles them"). An epoch with a sample error, or with a trial anchor
 that is missing or not a finite number (the test trials.py applies), is carried as
-a failed trial with no review unit: no finding, narrative, narrative-only or audit
-unit is built from it, and nothing about it reaches reviewer/. sealed/summary.json
-records each one under totals.carried_failed_trials (run id, sample id, epoch and
-the reason, in the words trials.py uses) with a count per run, so the settlement
-code and the run report can count it. The key is written when the packet carries
-an epoch or reads the evaluation split. A format break (FM-000) is not carried: it
-keeps its audit unit and its whole-narrative read. A log missing an epoch, or one
-regression.refuse_partial_run refuses, is still refused as structurally incomplete.
+a failed trial: no finding unit is built from it, and without an FM code no unit at
+all, so nothing about it reaches reviewer/. A carried epoch that still holds an FM
+code gets the mandatory code audit like any FM-coded epoch (section 6, one audit row
+per (FM-coded epoch, code), and the reader "reads that epoch's narrative whole";
+section 8, the settlement refuses a record unless "every FM-coded (epoch, code) has
+an audit row"): its audit units and its whole-narrative read (the narrative, or the
+raw completion when the output did not parse, as for a format break) are built, and
+it stays a failed trial. sealed/summary.json records each carried epoch under
+totals.carried_failed_trials (run id, sample id, epoch and the reason, in the words
+trials.py uses) with a count per run, so the settlement code and the run report can
+count it. The key is written when the packet carries an epoch or reads the
+evaluation split. A format break (FM-000) is not carried: it keeps its audit unit and
+its whole-narrative read. A log missing an epoch, or one regression.refuse_partial_run
+refuses, is still refused as structurally incomplete.
+
+Composition (pre-registration section 4: the evaluation split is 200 cases, 146
+synthetic, 30 edge and 24 adversarial). An evaluation-split log is refused unless its
+samples hold exactly that composition, each case's kind read from its sample metadata
+(truth.case_kind) as trials.py reads it. A dev log keeps its own counts.
 
 Exit codes:
   0  packet written; stdout prints totals only
   3  refused (nothing written): a missing or unreadable log, a log whose status is
      not success, a log on a split other than dev or an unlocked eval, a dev log
-     regression.refuse_evaluation_split refuses, logs on different splits, logs
-     whose content fingerprints differ, a sample missing an epoch, a sample without
+     regression.refuse_evaluation_split refuses, an evaluation-split log that does not
+     hold the 200 cases of section 4, logs on different splits, logs whose content
+     fingerprints differ, a sample missing an epoch, a sample without
      truth or fixture metadata, a duplicate or malformed label, an --out that exists
      and is not empty, a malformed run id or one naming a model word, a help
      request, or any argument error
@@ -103,6 +118,9 @@ EVAL_SPLIT = consistency.EVALUATION_SPLIT
 UNLOCK_ARG = "allow_evaluation_split"
 # sealed/summary.json: one entry per carried epoch under totals, and a count under each run.
 CARRIED_KEY = "carried_failed_trials"
+# sealed/summary.json totals: the narrative-only units of cases that are not difficulty-bearing,
+# which section 8's count of narrative-only units (decision D-J) leaves out.
+NARRATIVE_ONLY_OUTSIDE_KEY = "narrative_only_units_not_difficulty_bearing"
 # The reasons trials.py gives the same epoch (trials._settle), so the two can be matched.
 SAMPLE_ERROR_REASON = "sample error"
 UNSCORED_REASON = "{anchor} unscored or non-numeric"
@@ -134,10 +152,15 @@ class Refused(Exception):
     """An input the packet builder will not read; exit 3, nothing written."""
 
 
+# Pre-registration section 4: the evaluation split's 200 cases by kind (truth.case_kind).
+EVAL_COMPOSITION: dict[str, int] = {"standard": 146, "edge": 30, "adversarial": 24}
+
+
 @dataclass(frozen=True)
 class CarriedEpoch:
-    """An errored or unscored epoch: a failed trial with no review unit (pre-registration
-    section 6). Kept under sealed/ only; reviewer/ shows nothing about it."""
+    """An errored or unscored epoch: a failed trial with no finding unit (pre-registration
+    section 6). This record is kept under sealed/ only. When the epoch holds an FM code,
+    its audit units and whole-narrative read are built as for any FM-coded epoch."""
     run_id: str
     sample_id: str
     epoch: int
@@ -210,6 +233,9 @@ class Packet:
     case_facts: Mapping[str, tuple[FactBlock, ...]]
     case_inputs: Mapping[str, str]   # the case file text the worker saw (sample input), per case
     carried: tuple[CarriedEpoch, ...] = ()   # sorted by (run_id, sample_id, epoch); sealed/ only
+    # Narrative-only units on a case that is not difficulty-bearing (the P12 reads of decision
+    # D-R9, or scope all): not the D-J units section 8 counts. Sorted; sealed/ only.
+    narrative_only_outside: tuple[str, ...] = ()
 
 
 # --- Small helpers ----------------------------------------------------------------------------
@@ -429,6 +455,34 @@ def carried_reasons(sample: Any) -> tuple[str, ...]:
     return tuple(reasons)
 
 
+def eval_composition_gaps(samples: Sequence[Any]) -> list[str]:
+    """How these samples depart from the evaluation split's 200 cases (EVAL_COMPOSITION,
+    pre-registration section 4); [] when they hold exactly that composition. A case's kind
+    is read from its sample metadata (truth.case_kind), as trials.py reads it; a case whose
+    epochs name different kinds, or no kind, is a gap."""
+    kinds: dict[str, set] = defaultdict(set)
+    for s in samples:
+        kinds[str(s.id)].add(tr._case_kind(s))
+    gaps = [f"case {sid} names case kinds {sorted(str(k) for k in ks)}" for sid, ks in sorted(kinds.items())
+            if len(ks) != 1 or None in ks]
+    counts = Counter(next(iter(ks)) for ks in kinds.values() if len(ks) == 1 and None not in ks)
+    want_total = sum(EVAL_COMPOSITION.values())
+    if len(kinds) != want_total:
+        gaps.append(f"it holds {len(kinds)} cases, not {want_total}")
+    for kind in sorted(set(EVAL_COMPOSITION) | set(counts)):
+        if counts.get(kind, 0) != EVAL_COMPOSITION.get(kind, 0):
+            gaps.append(f"it holds {counts.get(kind, 0)} {kind} cases, not {EVAL_COMPOSITION.get(kind, 0)}")
+    return gaps
+
+
+def check_eval_composition(log: Any, name: str) -> None:
+    """Refuse an evaluation-split log that does not hold the 200 cases of section 4."""
+    gaps = eval_composition_gaps(log.samples or ())
+    if gaps:
+        raise Refused(f"log {name} is on the evaluation split but does not hold its 200 cases (146 synthetic, "
+                      f"30 edge, 24 adversarial; pre-registration section 4): {'; '.join(gaps[:5])}")
+
+
 def _check_log(log: Any, name: str) -> str:
     """Refuse a log the packet will not read; return its split (log_split)."""
     if getattr(log, "status", None) != "success":
@@ -436,6 +490,8 @@ def _check_log(log: Any, name: str) -> str:
     split = log_split(log, name)
     if log.samples is None:
         raise Refused(f"log {name} has no samples")
+    if split == EVAL_SPLIT:
+        check_eval_composition(log, name)
     try:
         regression.refuse_partial_run(log)
     except GateError as e:
@@ -569,7 +625,9 @@ def build_packet(runs: Sequence[RunInput], *, run_id: str, seed: int,
                  fm_epoch_routes: str = "findings") -> Packet:
     """Group every run's routes, narratives and FM codes into review units. Pure apart
     from one stderr line per unlisted route key; never sets a verdict. An errored or
-    unscored epoch (carried_reasons) builds no unit and is listed in Packet.carried."""
+    unscored epoch (carried_reasons) is listed in Packet.carried and builds no finding
+    unit; when it holds an FM code it gets its audit units and its whole-narrative read,
+    as any FM-coded epoch does (section 6, the mandatory code audit)."""
     if scope not in rs.WHOLE_NARRATIVE_SCOPES:
         raise Refused(f"unknown whole-narrative scope {scope!r}")
     if fm_epoch_routes not in rs.FM_EPOCH_ROUTE_MODES:
@@ -594,15 +652,18 @@ def build_packet(runs: Sequence[RunInput], *, run_id: str, seed: int,
         skip: set[tuple[str, int]] = set()
         for s in log.samples:
             sid, ep = str(s.id), int(s.epoch)
+            trial = trials[(sid, ep)]
             why = carried_reasons(s)
             if why:  # a failed trial whatever review finds; review never settles it (section 6)
                 carried.append(CarriedEpoch(run.run_id, sid, ep, "; ".join(why)))
                 skip.add((sid, ep))
-                continue
+                if not trial.failure_modes:
+                    continue
+                # Still FM-coded: the mandatory code audit covers it (section 6 and section 8),
+                # with no finding unit (its routes are skipped below).
             parse = scoring.parse_worker_output(_completion(s))
             parsed = parse.parsed if parse.ok else None
             text = str(parsed.get("narrative", "")) if parsed is not None else _completion(s)
-            trial = trials[(sid, ep)]
             epochs[(run.run_id, sid, ep)] = _Epoch(run.run_id, s, sid, ep, tuple(trial.failure_modes), parsed, text)
             case_inputs.setdefault(sid, _input_text(s.input))
             case_meta.setdefault(sid, s.metadata)
@@ -644,8 +705,11 @@ def build_packet(runs: Sequence[RunInput], *, run_id: str, seed: int,
     class_of = {ident: rs.epoch_narrative_class(ident in routed_for_class, bool(e.fm_codes))
                 for ident, e in epochs.items()}
     in_scope: list[tuple[str, str, int]] = []
+    carried_ids = {(c.run_id, c.sample_id, c.epoch) for c in carried}
     for ident, e in epochs.items():
-        if (scope == "all" or ident in routed or e.fm_codes or (scope == "hard" and hard_case[e.case_id])
+        if ident in carried_ids:  # a carried epoch here holds an FM code: its audit's narrative read
+            in_scope.append(ident)
+        elif (scope == "all" or ident in routed or e.fm_codes or (scope == "hard" and hard_case[e.case_id])
                 or _p12_omissions(e.sample)):  # D-R9: every epoch with a code-found citation omission
             in_scope.append(ident)
 
@@ -746,6 +810,9 @@ def build_packet(runs: Sequence[RunInput], *, run_id: str, seed: int,
         case_order=case_order, units=units, members=_sort_members(members),
         case_facts=case_facts, case_inputs={cid: case_inputs[cid] for cid in sorted(case_ids)},
         carried=_sort_carried(carried),
+        narrative_only_outside=tuple(sorted(
+            uid for uid, u in built.items() if u.row_kind == "narrative"
+            and u.route_class == rs.NARRATIVE_CLASS_ONLY and not hard_case[u.case_id])),
     )
 
 
@@ -948,6 +1015,8 @@ def summary(packet: Packet) -> dict:
     totals = _counts(packet.members)
     if carried:
         totals[CARRIED_KEY] = [c.as_dict() for c in packet.carried]
+    if packet.narrative_only_outside:  # absent when none, so a packet without such units keeps its bytes
+        totals[NARRATIVE_ONLY_OUTSIDE_KEY] = list(packet.narrative_only_outside)
     totals.update({
         "finding_units": sum(1 for u in packet.units if u.row_kind == "finding"),
         "narrative_units": sum(1 for u in packet.units if u.row_kind == "narrative"),
@@ -1625,7 +1694,18 @@ def load_packet(packet_dir: str) -> Packet:
         case_facts={k: case_facts[k] for k in sorted(case_facts)},
         case_inputs={k: case_inputs[k] for k in sorted(case_inputs)},
         carried=load_carried(packet_dir),
+        narrative_only_outside=load_narrative_only_outside(packet_dir),
     )
+
+
+def load_narrative_only_outside(packet_dir: str | Path) -> tuple[str, ...]:
+    """The narrative-only unit ids sealed/summary.json records as not difficulty-bearing
+    (NARRATIVE_ONLY_OUTSIDE_KEY); () when the key or the file is absent."""
+    path = Path(packet_dir) / rs.PACKET_FILES["summary"]
+    if not path.is_file():
+        return ()
+    totals = (json.loads(path.read_text(encoding="utf-8")) or {}).get("totals") or {}
+    return tuple(sorted(str(u) for u in totals.get(NARRATIVE_ONLY_OUTSIDE_KEY) or ()))
 
 
 def load_carried(packet_dir: str) -> tuple[CarriedEpoch, ...]:

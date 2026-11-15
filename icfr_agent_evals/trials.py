@@ -44,14 +44,18 @@ whole-narrative read. A log scored before D-R9 is refused (reliability.scored_be
 
 Carried epochs (pre-registration section 6 and section 13, decision D-R19): an epoch
 with a sample error, or with a trial anchor missing or not a finite number, fails every
-figure whatever review finds, and the review packet builds no unit from it. It lists
-each one in sealed/summary.json under totals.carried_failed_trials. When the record
-carries that list (a `carried` attribute, or the summary file in its packet_dir), the
-record check needs no finding row and no whole-narrative row for such an epoch, and no
-audit row when the packet built no audit unit for it. The epochs code finds this way
-must be the epochs the list names, with the same reason, or the record is refused. The
-epoch still fails in the settlement with its own reason. A record without the list is
-read exactly as before.
+figure whatever review finds, and the review packet builds no finding unit from it. It
+lists each one in sealed/summary.json under totals.carried_failed_trials. A carried
+epoch that still holds an FM code gets the mandatory code audit like any FM-coded epoch
+(section 6 and section 8: every FM-coded (epoch, code) has an audit row): the packet
+builds its audit units and its whole-narrative read, and the record check needs those
+rows. When the record carries that list (a `carried` attribute, or the summary file in
+its packet_dir), the record check needs no finding row for a carried epoch and no
+whole-narrative row for one without an FM code. The epochs code finds this way must be
+the epochs the list names, with the same reason, or the record is refused. The epoch
+still fails in the settlement with its own reason, and its narrative record settles
+nothing there (review never settles it). A record without the list is read exactly as
+before.
 
 Imports of settlement and regression are made inside functions, so regression.py may
 import this module at load time without an import cycle.
@@ -124,6 +128,8 @@ CITATION_OMISSION = "citation_omission"
 NOT_REVIEWED = "not_reviewed"
 NONE_WRONG = "none_wrong"
 REAL_ERROR, EXTRACTOR_ERROR = rs.AUDIT_VERDICTS
+# audited_code_counts: a code on a carried epoch with no audit row, counted apart (never real_error).
+NOT_AUDITED = "not_audited"
 D_H_MODE = "findings"                      # review_schema.FM_EPOCH_ROUTE_MODES, ruled D-H
 D_J_SCOPES: frozenset[str] = frozenset({"hard", "all"})  # whole-narrative scopes that meet D-J (b)
 OFF_CONTRACT_AMOUNT, OFF_CONTRACT_BAND, OFF_CONTRACT_PERIOD = "variance_amount_usd", "materiality_band", "period"
@@ -590,14 +596,14 @@ def _record_gaps(view: _RecordView, record: Any, facts: Mapping[tuple[str, int],
     """Every way the record fails to cover this run's log (section 8: the settlement
     refuses a record unless every finding, every narrative in scope and every
     FM-coded (epoch, code) has exactly one row). An epoch the packet carried as a failed
-    trial (_carried_skip) needs no finding or whole-narrative row, and no audit row when
-    the packet built no audit unit for it."""
+    trial (_carried_skip) needs no finding row. When it holds an FM code it needs an audit
+    row per code and its whole-narrative row, as any FM-coded epoch does (section 6, the
+    mandatory code audit); without one it needs neither."""
     from . import settlement
 
     gaps = list(view.gaps)
     carried, carried_gaps = _carried_skip(view, record, facts)
     gaps.extend(carried_gaps)
-    audited_epochs = {(sid, ep) for (sid, ep, _code) in view.audits}
     meta = getattr(record, "meta", None) or {}
     if meta.get("fm_epoch_routes", D_H_MODE) != D_H_MODE:
         gaps.append(f"packet fm_epoch_routes is {meta.get('fm_epoch_routes')!r}; D-H needs {D_H_MODE!r}")
@@ -606,11 +612,11 @@ def _record_gaps(view: _RecordView, record: Any, facts: Mapping[tuple[str, int],
     expected: set[tuple[str, int, str]] = set()
     for ident, f in sorted(facts.items()):
         sid, ep = ident
-        # A carried epoch has no finding or narrative unit (a finding member on it is a gap
-        # below, as for any route the log does not give), and needs an audit row only when
-        # the packet built an audit unit for it.
+        # A carried epoch has no finding unit (a finding member on it is a gap below, as for
+        # any route the log does not give). When it holds an FM code it gets the audit and
+        # its whole-narrative read like any FM-coded epoch; without one, no narrative unit.
         is_carried = ident in carried
-        if is_carried and ident in view.narratives:
+        if is_carried and not f.codes and ident in view.narratives:
             gaps.append(f"{sid} epoch {ep}: the record reads the narrative of an epoch the packet carried")
         for key, reasons in (() if is_carried else f.findings):
             expected.add((sid, ep, key))
@@ -624,7 +630,7 @@ def _record_gaps(view: _RecordView, record: Any, facts: Mapping[tuple[str, int],
                 gaps.append(f"{sid} epoch {ep}: finding {got.unit_id} has no verdict")
             elif got.verdict not in settlement.allowed_verdicts(key, reasons):
                 gaps.append(f"{sid} epoch {ep}: verdict {got.verdict!r} is not allowed for {key!r}")
-        if not is_carried and _narrative_required(f):
+        if (f.codes if is_carried else _narrative_required(f)):
             n = view.narratives.get(ident, "absent")
             if n == "absent":
                 gaps.append(f"{sid} epoch {ep}: no whole-narrative member")
@@ -636,7 +642,7 @@ def _record_gaps(view: _RecordView, record: Any, facts: Mapping[tuple[str, int],
                 gaps.append(f"{sid} epoch {ep}: a whole-narrative error type is not one of ERROR_TYPES")
             elif n[0] == WRONG and not n[1]:
                 gaps.append(f"{sid} epoch {ep}: a whole-narrative wrong names no error type")
-        for code in (f.codes if not is_carried or ident in audited_epochs else ()):
+        for code in f.codes:
             a = view.audits.get((sid, ep, code), "absent")
             if a == "absent":
                 gaps.append(f"{sid} epoch {ep}: no audit row for {code}")
@@ -925,8 +931,9 @@ def _reviewed(kind: str, log_or_samples: Any, record: Any, *, k: int | None, run
             got = view.findings.get((sid, ep, key))
             return got.verdict if got is not None and got.verdict else NOT_REVIEWED  # unreviewed fails (D-K)
 
-        narrative = view.narratives.get(ident)
-        # A carried epoch fails on its own reason; review never read it (section 6).
+        # A carried epoch fails on its own reason and review never settles it (section 6): the
+        # whole-narrative row its code audit needs is checked above and settles nothing here.
+        narrative = None if ident in carried else view.narratives.get(ident)
         required = _narrative_required(f) and ident not in carried
         removed: frozenset[str] = frozenset()
         if kind == AUDIT_ADJUSTED:
@@ -1138,7 +1145,10 @@ def audited_code_counts(log_or_samples: Any, record: Any, *, k: int | None = Non
                         require_complete: bool = True) -> dict[str, dict[str, int]]:
     """Per audit verdict, the (sample, epoch) count of each code (H2: only the codes
     the audit rules real_error count, D-N; extractor_error is reported beside). By
-    default the H2 codes on adversarial cases; case_kinds=None counts every case."""
+    default the H2 codes on adversarial cases; case_kinds=None counts every case. A code
+    on a carried epoch (an errored or unscored epoch) with no audit row is never counted
+    real_error: it is counted apart under NOT_AUDITED, a key present only when it counts
+    one (section 2: H2 counts only codes the mandatory code audit rules real_error)."""
     k = _k_of(log_or_samples, k)
     log = log_or_samples if hasattr(log_or_samples, "eval") else None
     rid = resolve_run_id(record, log, run_id)
@@ -1149,11 +1159,19 @@ def audited_code_counts(log_or_samples: Any, record: Any, *, k: int | None = Non
         if gaps:
             raise RecordError(gaps)
     out: dict[str, Counter] = {REAL_ERROR: Counter(), EXTRACTOR_ERROR: Counter()}
+    not_audited: Counter = Counter()
     for (sid, ep), f in facts.items():
         if case_kinds is not None and f.case_kind not in case_kinds:
             continue
         for code in dict.fromkeys(f.codes):
             if code in codes:
-                verdict = view.audits.get((sid, ep, code)) or REAL_ERROR
+                verdict = view.audits.get((sid, ep, code))
+                if not verdict and carried_reason(f):  # a carried epoch, whatever the record lists
+                    not_audited[code] += 1
+                    continue
+                verdict = verdict or REAL_ERROR
                 out[verdict if verdict in out else REAL_ERROR][code] += 1
-    return {v: dict(sorted(c.items())) for v, c in out.items()}
+    result = {v: dict(sorted(c.items())) for v, c in out.items()}
+    if not_audited:
+        result[NOT_AUDITED] = dict(sorted(not_audited.items()))
+    return result
