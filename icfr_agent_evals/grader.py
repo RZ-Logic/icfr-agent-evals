@@ -24,7 +24,10 @@ What this module does:
   - check_grader_config, check_grader_event and check_grader_log check what a call
     recorded against the pin. They reuse the grader branch of roster's run-config
     check (roster._check_generate with grader=True) and add one rule the pin fixes:
-    batch is True at steps 2 and 3 and unset at step 1.
+    batch is True at steps 2 and 3 and unset at step 1. check_grader_log also refuses
+    a call whose resolved model string differs from TAG_TIME_RESOLVED[step] or from the
+    other calls in the log, or is not recorded: section 5 makes any change a
+    vendor-change event (check_resolved, the same rule the live check applies).
 
 This module holds no grader prompt and no rubric wording. The caller passes the
 messages. The prompt is written in the judge-development step (pre-registration
@@ -163,9 +166,41 @@ def grader_events(log: Any) -> list[tuple[Any, Any]]:
     return found
 
 
+def check_resolved(summaries: Sequence[Mapping[str, Any]], step: int) -> None:
+    """Raise roster.RunConfigError unless every grader call resolved to the string the
+    step's alias returned at the tag-time live call (TAG_TIME_RESOLVED[step]).
+
+    Section 5: the resolved model string is logged on every response, and any change is
+    a vendor-change event. So a call that recorded no resolved string, a call whose
+    string differs from TAG_TIME_RESOLVED[step], and a log whose calls resolved to more
+    than one string are each refused, as the live check refuses them. Pure."""
+    expected = TAG_TIME_RESOLVED[step]
+    seen = sorted({str(s.get("resolved") or "") for s in summaries})
+    if len(seen) > 1:
+        raise roster.RunConfigError(
+            f"run config: the step {step} grader calls resolved to more than one model string "
+            f"({', '.join(repr(r) for r in seen)}); a change is a vendor-change event (pre-registration section 5)"
+        )
+    for s in summaries:
+        resolved = str(s.get("resolved") or "")
+        where = f"grader call {s.get('model')} (sample {s.get('sample_id')}, epoch {s.get('epoch')})"
+        if not resolved:
+            raise roster.RunConfigError(
+                f"run config: {where} recorded no resolved model string; section 5 logs it on every response, "
+                f"so a vendor change cannot be ruled out"
+            )
+        if resolved != expected:
+            raise roster.RunConfigError(
+                f"run config: {where} resolved to {resolved!r}, not {expected!r} as at the tag-time live call; "
+                f"a change is a vendor-change event (pre-registration section 5)"
+            )
+
+
 def check_grader_log(log: Any, step: int) -> list[dict[str, Any]]:
     """Raise roster.RunConfigError unless a finished EvalLog holds grader calls and every
-    one of them is on the step's pin (check_grader_event).
+    one of them is on the step's pin (check_grader_event) and resolved to the tag-time
+    string (check_resolved: a call off TAG_TIME_RESOLVED[step], a call with no resolved
+    string, or calls that disagree with each other are refused as vendor-change events).
 
     log: a full EvalLog (samples and events read, not header_only).
 
@@ -184,6 +219,7 @@ def check_grader_log(log: Any, step: int) -> list[dict[str, Any]]:
         summary = check_grader_event(event, step)
         summary.update(sample_id=sample.id, epoch=sample.epoch)
         summaries.append(summary)
+    check_resolved(summaries, step)
     return summaries
 
 

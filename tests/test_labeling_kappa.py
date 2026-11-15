@@ -85,6 +85,14 @@ def write_pass(tmp: Path, tag: str, sheet_id: str, cases: list[dict], rater: str
     return cp, kp
 
 
+def pad54(cases: list[dict]) -> list[dict]:
+    """The cases plus filler cases with no reconciling item, up to the 54 cases of
+    section 4. A filler case adds no item, so the kappa is unchanged."""
+    have = {c["case_id"] for c in cases}
+    fill = [case(f"mock-fill-{i:03d}", []) for i in range(54)]
+    return cases + [c for c in fill if c["case_id"] not in have][:54 - len(cases)]
+
+
 def run_pair(tmp: Path, first_cases, second_cases, *, seed: int = 7, resamples: int = 500, **kw):
     a = LK.read_export(*write_pass(tmp, "p1", "aaaa111111", first_cases))
     b = LK.read_export(*write_pass(tmp, "p2", "bbbb222222", second_cases, **kw))
@@ -149,7 +157,9 @@ def test_perfect_agreement(tmp_path):
     r = run_pair(tmp_path, cases, cases)
     g = r["gate"]
     assert g["kappa"] == 1.0 and g["kappa_exact"] == "1"
-    assert g["name"] == "Self-verified"
+    # Two cases, not the 54 of section 4: kappa is printed, the name is withheld.
+    assert g["name"] is None and g["name_on_kappa_alone"] == "Self-verified"
+    assert "the passes hold 2 cases, not the 54 cases" in g["name_reason"]
     assert g["items"] == 5 and g["items_labeled_in_both"] == 5 and g["agreed_items"] == 5
     assert g["ci"]["ci_upper"] == 1.0
     assert r["disagreed_cases"]["on_eligibility"]["count"] == 0
@@ -227,17 +237,17 @@ def _items(yy: int, yn: int, ny: int, nn: int):
 
 def test_threshold_exactly_070_earns_the_name(tmp_path):
     f, s = _items(4, 1, 1, 9)  # kappa = 70 / 100 exactly
-    first = [case("mock-case-001", f[:8]), case("mock-case-002", f[8:])]
-    second = [case("mock-case-001", s[:8]), case("mock-case-002", s[8:])]
+    first = pad54([case("mock-case-001", f[:8]), case("mock-case-002", f[8:])])
+    second = pad54([case("mock-case-001", s[:8]), case("mock-case-002", s[8:])])
     g = run_pair(tmp_path, first, second)["gate"]
     assert g["kappa_exact"] == "7/10"
-    assert g["name"] == "Self-verified"
+    assert g["name"] == "Self-verified" and g["name_withheld_because"] == []
 
 
 def test_just_below_070_keeps_neither_name(tmp_path):
     f, s = _items(4, 2, 1, 8)
-    first = [case("mock-case-001", f)]
-    second = [case("mock-case-001", s)]
+    first = pad54([case("mock-case-001", f)])
+    second = pad54([case("mock-case-001", s)])
     g = run_pair(tmp_path, first, second)["gate"]
     assert Fraction(g["kappa_exact"]) < Fraction(7, 10)
     assert g["name"] is None and "below 0.70" in g["name_reason"]
@@ -550,6 +560,62 @@ def test_case_count_warning_and_relabel_gap(tmp_path):
     assert not any("48 hours" in w for w in r["warnings"])
 
 
+def test_name_withheld_when_the_second_pass_started_within_48_hours(tmp_path):
+    cases = pad54(_cases())
+    r = run_pair(tmp_path, cases, cases, first_start="2026-11-21T10:00:00.000Z")
+    g = r["gate"]
+    assert g["kappa"] == 1.0                                   # still computed and printed
+    assert g["name"] is None and g["name_on_kappa_alone"] == "Self-verified"
+    assert "started 24.0 hours after the first pass was exported" in g["name_reason"]
+    assert len(g["name_withheld_because"]) == 1 and r["timing"]["gap_verifiable"] is True
+    r = run_pair(tmp_path, cases, cases, first_start="2026-11-22T10:00:00.000Z")
+    assert r["gate"]["name"] == "Self-verified" and r["gate"]["name_withheld_because"] == []
+
+
+def test_short_case_count_and_short_gap_both_give_their_reasons(tmp_path):
+    g = run_pair(tmp_path, _cases(), _cases(), first_start="2026-11-20T12:00:00.000Z")["gate"]
+    assert g["name"] is None and len(g["name_withheld_because"]) == 2
+    assert "2 cases" in g["name_reason"] and "2.0 hours" in g["name_reason"]
+
+
+def test_unverifiable_gap_warns_and_does_not_withhold_the_name_alone(tmp_path):
+    cases = pad54(_cases())
+    r = run_pair(tmp_path, cases, cases, first_start="")
+    assert r["timing"]["hours_from_first_export_to_second_start"] is None
+    assert r["timing"]["gap_verifiable"] is False
+    assert LK.GAP_NOT_VERIFIABLE in r["warnings"]
+    assert "the 48-hour gap is not verifiable" in LK.GAP_NOT_VERIFIABLE
+    assert r["gate"]["name"] == "Self-verified"
+    assert "warning: the 48-hour gap is not verifiable" in LK.format_summary(r)
+
+
+def _rewrite_source(key_path: Path, source):
+    data = json.loads(key_path.read_text(encoding="utf-8"))
+    if source is None:
+        data.pop("source")
+    else:
+        data["source"] = source
+    key_path.write_text(json.dumps(data), encoding="utf-8")
+
+
+def test_refuses_key_files_that_name_different_source_files(tmp_path):
+    c1, k1 = write_pass(tmp_path, "p1", "aaaa111111", _cases())
+    c2, k2 = write_pass(tmp_path, "p2", "bbbb222222", _cases())
+    _rewrite_source(k2, "made-up-other")
+    a, b = LK.read_export(c1, k1), LK.read_export(c2, k2)
+    assert a.key_source == "made-up" and b.key_source == "made-up-other"
+    with pytest.raises(LK.Refused, match="different source files"):
+        LK.compare(a, b, seed=1, resamples=10)
+
+
+@pytest.mark.parametrize("source", [None, "", 5])
+def test_refuses_a_key_file_that_names_no_source(tmp_path, source):
+    c1, k1 = write_pass(tmp_path, "p1", "aaaa111111", _cases())
+    _rewrite_source(k1, source)
+    with pytest.raises(LK.Refused, match="names no source file"):
+        LK.read_export(c1, k1)
+
+
 def test_no_warning_at_54_cases(tmp_path):
     cases = [case(f"mock-case-{i:03d}", [("R-1", "yes" if i % 2 else "no")]) for i in range(54)]
     r = run_pair(tmp_path, cases, cases, resamples=50)
@@ -603,8 +669,8 @@ def test_cli_refuses_the_same_export_twice(tmp_path):
 
 
 def test_main_in_process(tmp_path, capsys):
-    c1, k1 = write_pass(tmp_path, "p1", "aaaa111111", _cases())
-    c2, k2 = write_pass(tmp_path, "p2", "bbbb222222", _cases())
+    c1, k1 = write_pass(tmp_path, "p1", "aaaa111111", pad54(_cases()))
+    c2, k2 = write_pass(tmp_path, "p2", "bbbb222222", pad54(_cases()))
     vf = version_file(tmp_path, seed=1)
     assert LK.main(["--first", str(c1), str(k1), "--second", str(c2), str(k2), "--dataset-version", str(vf)]) == 0
     out = capsys.readouterr().out

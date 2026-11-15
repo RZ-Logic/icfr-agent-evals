@@ -476,6 +476,38 @@ def test_log_check_refuses_an_unfinished_or_header_only_log(mock_logs):
         grader.check_grader_log(log.model_copy(update={"samples": None}), 1)
 
 
+@pytest.mark.parametrize("step", STEPS)
+def test_log_check_flags_a_resolved_string_off_the_tag_time_one(step, mock_logs):
+    log = _on_pin(mock_logs[step], step, resolved=grader.TAG_TIME_RESOLVED[step] + "-2027-01-01")
+    with pytest.raises(RunConfigError, match="vendor-change event"):
+        grader.check_grader_log(log, step)
+
+
+def test_log_check_flags_a_call_with_no_resolved_string(mock_logs):
+    log = _on_pin(mock_logs[1], 1, resolved="")
+    with pytest.raises(RunConfigError, match="no resolved model string"):
+        grader.check_grader_log(log, 1)
+
+
+def test_log_check_flags_calls_that_resolve_to_different_strings(mock_logs):
+    log = _on_pin(mock_logs[1], 1)
+    sample = log.samples[0]
+    extra = _model_events(log)[0].model_copy(deep=True)
+    extra.output.model = "gpt-6-luna-2027-01-01"
+    sample.events.append(extra)
+    with pytest.raises(RunConfigError, match="more than one model string"):
+        grader.check_grader_log(log, 1)
+
+
+def test_resolved_check_on_made_up_summaries():
+    good = {"model": PINS[2], "resolved": "gpt-6.1-terra", "sample_id": "dev-mock-001", "epoch": 1}
+    grader.check_resolved([good, {**good, "epoch": 2}], 2)
+    with pytest.raises(RunConfigError, match="more than one model string"):
+        grader.check_resolved([good, {**good, "resolved": "gpt-6.1-terra-b"}], 2)
+    with pytest.raises(RunConfigError, match="not 'gpt-6.1-sol'"):
+        grader.check_resolved([good], 3)
+
+
 def test_event_check_refuses_another_role():
     with pytest.raises(RunConfigError, match="not a grader call"):
         grader.check_grader_event(SimpleNamespace(role="calibrator", model=PINS[1]), 1)

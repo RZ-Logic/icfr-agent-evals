@@ -31,9 +31,12 @@ Statistics:
 
 Gates (pre-registration section 7):
   - validity_gate: ICC(A,1) grader versus human on the calibration subset passes
-    only when the smaller lower limit is at least 0.60. The kappa gate applies only
+    only when the smaller lower limit is at least 0.60. The estimate is labeled
+    stratified. The kappa gate applies only
     to binary checks the rubric defines at rubric lock; rubric.BINARY_CHECKS is
     empty, so it does not apply, and a non-empty set is refused here.
+  - intra_rater_icc: the author's first-pass grades against the re-grade, ICC(A,1)
+    with its McGraw-Wong interval, labeled intra-rater (test-retest) agreement.
   - reliability_gate: ICC(A,1) grader versus calibrator on the full calibrator
     sample passes only when the smaller lower limit is at least 0.60. The signed
     mean of grader minus calibrator with its paired 95% interval is reported and is
@@ -44,7 +47,9 @@ Gates (pre-registration section 7):
     the judge remedy order and never triggers a grader change.
   - retest_alpha and run_test_retest: the grader scores the calibration subset
     exactly 3 times at an acceptance look, the acceptance-look scoring counted as
-    the first. Ordinal alpha passes at 0.80 or above. An undefined alpha is reported
+    the first, each pass with response caching recorded off and its grader
+    configuration on the ladder step's pin (grader.check_grader_config). Ordinal
+    alpha passes at 0.80 or above. An undefined alpha is reported
     as undefined beside raw agreement and fails the gate.
   - bias_audit: per sub-dimension, a perturbed pass's shift is the mean over the
     subset's outputs of the perturbed score minus the mean of that output's three
@@ -56,8 +61,8 @@ Gates (pre-registration section 7):
     leniency are exact fractions, so a value at the threshold is never flipped by
     float error.
 
-A call that breaks a written rule (a pass count other than 3, cached responses, an
-unpinned grader configuration, mismatched output ids, a score outside 0 to 3) raises
+A call that breaks a written rule (a pass count other than 3, cached responses, a
+grader configuration off the step's pin, mismatched output ids, a score outside 0 to 3) raises
 Refused and computes nothing.
 """
 
@@ -92,6 +97,10 @@ BIAS_PASSES: tuple[str, ...] = (OPTION_ORDER_REVERSED, OPTION_ORDER_PERMUTED, LA
 REMEDY_NOTE = ("outside the judge remedy order: computed from evaluation-split generations, it never "
                "triggers a grader change (pre-registration section 7, decision D-R19)")
 KAPPA_NOTE = "does not apply: the rubric defines no binary checks at rubric lock (pre-registration section 7)"
+STRATIFIED_LABEL = ("stratified: the calibration subset is stratified so every score level appears at "
+                    "least 4 times per sub-dimension, so the estimate is labeled stratified "
+                    "(pre-registration sections 4 and 7)")
+INTRA_RATER_LABEL = "intra-rater (test-retest) agreement"
 
 Pass = Mapping[str, Mapping[str, int]]
 
@@ -546,7 +555,16 @@ def validity_gate(grader: Pass, human: Pass, *, subdimensions: Sequence[str] | N
     names, per = _two_rater(grader, human, subdimensions, ("grader", "human"), confidence)
     gate = lower_limit_gate({n: per[n]["icc_a1"] for n in names}, ICC_LOWER_LIMIT)
     return {"gate": "validity", "statistic": "ICC(A,1) grader versus human", "subdimensions": list(names),
-            "per_subdimension": per, **gate, "kappa_gate": KAPPA_NOTE}
+            "per_subdimension": per, **gate, "kappa_gate": KAPPA_NOTE, "estimate_label": STRATIFIED_LABEL}
+
+
+def intra_rater_icc(matrix: Sequence[Sequence[Any]], *, confidence: float = CONFIDENCE) -> dict[str, Any]:
+    """ICC(A,1) of the author's first-pass grades against the author's re-grade on one
+    LLM-graded sub-dimension, with its two-sided McGraw-Wong interval (icc_a1). The intra-rater
+    check of pre-registration section 7: reported as intra-rater (test-retest) agreement, never
+    as agreement between two raters. matrix: one row per output, the first-pass grade then the
+    re-grade."""
+    return {**icc_a1(matrix, confidence=confidence), "agreement": INTRA_RATER_LABEL}
 
 
 def reliability_gate(grader: Pass, calibrator: Pass, *, subdimensions: Sequence[str] | None = None,
@@ -633,17 +651,55 @@ def retest_alpha(passes: Sequence[Pass], *, bootstrap_seed: int, resamples: int 
             "note": "a stability screen: no reliance claim rests on it alone (pre-registration section 7)"}
 
 
-def run_test_retest(acceptance_look: Pass, score_pass: Callable[[int], Pass], *, grader_configs: Sequence[Mapping[str, Any]],
-                    bootstrap_seed: int, passes: int = RETEST_PASSES, resamples: int = DEFAULT_BOOTSTRAP_RESAMPLES,
-                    subdimensions: Sequence[str] | None = None, confidence: float = CONFIDENCE) -> dict[str, Any]:
+CONFIG_CACHING_KEY = "response_caching"
+CONFIG_MODEL_KEY = "model"
+
+
+def check_retest_config(cfg: Any, step: Any, *, label: str = "pass") -> dict[str, Any]:
+    """Refuse a test-retest pass's grader configuration that is off the section 5 pin.
+
+    cfg: the configuration the pass recorded, as data. It must record response caching
+    disabled ("response_caching": False). It may name the grader model ("model"), which must
+    then be the step's pin (grader.grader_pin). Every other key is a GenerateConfig field and
+    the set must pass grader.check_grader_config(fields, step), which compares it with
+    roster.grader_generate_config_args(step): reasoning_effort on the pin, no sampling
+    parameter, batch as the step pins it. Returns the GenerateConfig fields."""
+    from . import grader, roster
+
+    if isinstance(step, bool) or step not in roster.GRADER_STEPS:
+        raise Refused(f"the grader ladder step must be one of {roster.GRADER_STEPS}, got {step!r} "
+                      "(pre-registration section 5)")
+    if not isinstance(cfg, Mapping):
+        raise Refused(f"{label}: the grader configuration must be a mapping")
+    if cfg.get(CONFIG_CACHING_KEY) is not False:
+        raise Refused(f"{label}: response caching must be recorded as disabled (\"{CONFIG_CACHING_KEY}\": False) "
+                      "for test-retest runs (pre-registration sections 5 and 7)")
+    model = cfg.get(CONFIG_MODEL_KEY)
+    if model is not None and model != grader.grader_pin(step):
+        raise Refused(f"{label}: the grader model {model!r} is not the step {step} pin {grader.grader_pin(step)!r} "
+                      "(pre-registration section 5)")
+    fields = {k: v for k, v in cfg.items() if k not in (CONFIG_CACHING_KEY, CONFIG_MODEL_KEY)}
+    try:
+        return grader.check_grader_config(fields, step, where=f"test-retest {label}")
+    except roster.RunConfigError as e:
+        raise Refused(f"{label}: the grader configuration is off the step {step} pin "
+                      f"{roster.grader_generate_config_args(step)} ({e})") from e
+
+
+def run_test_retest(acceptance_look: Pass, score_pass: Callable[[int], Pass], *, step: int,
+                    grader_configs: Sequence[Mapping[str, Any]], bootstrap_seed: int, passes: int = RETEST_PASSES,
+                    resamples: int = DEFAULT_BOOTSTRAP_RESAMPLES, subdimensions: Sequence[str] | None = None,
+                    confidence: float = CONFIDENCE) -> dict[str, Any]:
     """The exactly-3-pass test-retest runner (pre-registration section 7, decision D-R19).
 
     acceptance_look is pass 1. score_pass(2) and score_pass(3) score passes 2 and 3; it is called
-    exactly twice, in that order. grader_configs holds the grader configuration of each of the 3
-    passes as data; each must record response caching disabled ("response_caching": False) and all
-    3 must be equal (the configuration pinned, pre-registration section 5). Any pass count other
-    than 3 is refused, as is a later pass whose output ids or sub-dimensions differ from pass 1.
-    The record holds every pass, so nothing is added or dropped after the look."""
+    exactly twice, in that order. step is the grader ladder step of the acceptance look.
+    grader_configs holds the grader configuration of each of the 3 passes as data; each must record
+    response caching disabled ("response_caching": False) and be on the step's pin
+    (check_retest_config: grader.check_grader_config against roster.grader_generate_config_args),
+    and all 3 must be equal (the configuration pinned, pre-registration sections 5 and 7). Any pass
+    count other than 3 is refused, as is a later pass whose output ids or sub-dimensions differ from
+    pass 1. The record holds every pass, so nothing is added or dropped after the look."""
     if isinstance(passes, bool) or passes != RETEST_PASSES:
         raise Refused(f"test-retest runs exactly {RETEST_PASSES} passes at each acceptance look, got {passes!r} "
                       "(pre-registration section 7, decision D-R19)")
@@ -652,11 +708,7 @@ def run_test_retest(acceptance_look: Pass, score_pass: Callable[[int], Pass], *,
     if len(configs) != RETEST_PASSES:
         raise Refused(f"one grader configuration per pass is needed, {RETEST_PASSES} in all; got {len(configs)}")
     for i, cfg in enumerate(configs, start=1):
-        if not isinstance(cfg, Mapping):
-            raise Refused(f"pass {i}: the grader configuration must be a mapping")
-        if cfg.get("response_caching") is not False:
-            raise Refused(f"pass {i}: response caching must be recorded as disabled (\"response_caching\": False) "
-                          "for test-retest runs (pre-registration sections 5 and 7)")
+        check_retest_config(cfg, step, label=f"pass {i}")
     if any(dict(cfg) != dict(configs[0]) for cfg in configs[1:]):
         raise Refused("the grader configuration differs between passes; it is pinned for every pass "
                       "(pre-registration sections 5 and 7)")
@@ -669,7 +721,10 @@ def run_test_retest(acceptance_look: Pass, score_pass: Callable[[int], Pass], *,
         scored.append(result)
     stats = retest_alpha(scored, bootstrap_seed=bootstrap_seed, resamples=resamples,
                          subdimensions=names, confidence=confidence)
+    from . import roster
+
     return {"passes": RETEST_PASSES, "pass_1": "acceptance-look scoring", "scores": scored,
+            "grader_step": step, "grader_pin": roster.grader_generate_config_args(step),
             "grader_configs": [dict(c) for c in configs], "response_caching_disabled": [True] * RETEST_PASSES,
             "bootstrap_seed": bootstrap_seed, "alpha": stats}
 
