@@ -324,11 +324,23 @@ def test_pool_keeps_a_text_one_run_wrote_twice_once():
     assert rf.blind_check_pool(rec) == [("u1", "R1"), ("u3", "R2")]
 
 
-def test_pool_judges_the_same_text_on_different_cases_apart():
-    # case-a: X is shared by two runs, so it names no one model there; case-b: X is R1's alone
+def test_pool_drops_a_text_another_run_wrote_on_a_case_that_does_not_qualify():
+    # decision D-R20, ruling 4: case-a does not qualify (X is shared by two runs there), but R2
+    # wrote X on it, so X on case-b (R1's alone) has no single right answer and leaves the pool
     rec = pool_record([("u1", "case-a", "X", ["R1"]), ("u2", "case-a", "X", ["R2"]),
-                       ("u3", "case-b", "X", ["R1"])])
-    assert rf.blind_check_pool(rec) == [("u3", "R1")]
+                       ("u3", "case-b", "X", ["R1"]), ("u4", "case-c", "Y", ["R2"])])
+    assert rf.blind_check_pool(rec) == [("u4", "R2")]
+    # one unit two runs carry on case-a also takes X out on case-b
+    rec = pool_record([("u1", "case-a", "X", ["R1", "R2"]), ("u3", "case-b", "X", ["R1"])])
+    assert rf.blind_check_pool(rec) == []
+
+
+@pytest.mark.parametrize("blank", ["", " ", "\n\t "])
+def test_pool_never_takes_an_empty_or_whitespace_text(blank):
+    # an errored epoch with nothing returned shows nothing to name (decision D-R20)
+    rec = pool_record([("u1", "case-a", blank, ["R1"]), ("u2", "case-b", blank, ["R1"]),
+                       ("u3", "case-c", "Y", ["R2"])])
+    assert rf.blind_check_pool(rec) == [("u3", "R2")]
 
 
 def test_pool_drops_a_text_that_qualifies_under_different_runs_on_different_cases():
@@ -348,10 +360,11 @@ def test_pool_keeps_a_text_that_qualifies_under_one_run_on_several_cases_once():
     rec = pool_record([("u7", "case-c", "X", ["R1"]), ("u9", "case-a", "X", ["R1"]), ("u2", "case-b", "X", ["R1"]),
                        ("u5", "case-d", "W", ["R2"])])
     assert rf.blind_check_pool(rec) == [("u5", "R2"), ("u9", "R1")]
-    # a case where X is shared by two runs does not qualify and does not count as a different run
+    # a case where X is shared by two runs does not qualify, but R2 still wrote X there, so X
+    # leaves the pool on every case (decision D-R20, ruling 4)
     rec = pool_record([("u1", "case-a", "X", ["R1"]), ("u2", "case-b", "X", ["R1"]), ("u3", "case-b", "X", ["R2"]),
                        ("u4", "case-c", "X", ["R1"])])
-    assert rf.blind_check_pool(rec) == [("u1", "R1")]
+    assert rf.blind_check_pool(rec) == []
 
 
 def test_pool_compares_the_displayed_text_exactly():
@@ -415,16 +428,16 @@ def test_blind_check_draw_shows_no_text_twice(tmp_path, monkeypatch, capsys):
     sheet = rs.read_csv(d3 / rf.BLIND_CHECK_CSV, rf.BLIND_CHECK_COLUMNS)
     texts = [r["narrative"] for r in sheet]
     assert len(texts) == len(set(texts))
-    # case-s names no one model, case-t names R1; text p qualifies under R1 on case-p and
-    # under R2 on case-q, so it leaves the pool (decision D-R20); text r qualifies under R2 on
-    # two cases and is shown once
-    assert sorted(texts) == sorted([text("a"), text("b"), text("shared"), text("r")])
+    # the shared text: R2 wrote it on case-s, so on case-t (R1's alone) it has no single right
+    # answer and leaves the pool; text p qualifies under R1 on case-p and under R2 on case-q, so
+    # it leaves too (decision D-R20); text r qualifies under R2 on two cases and is shown once
+    assert sorted(texts) == sorted([text("a"), text("b"), text("r")])
     mapping = {m["check_id"]: m for m in rs.read_csv(d3 / rf.BLIND_CHECK_MAP, rf.BLIND_CHECK_MAP_COLUMNS)}
     by_text = {r["narrative"]: mapping[r["check_id"]]["run_label"] for r in sheet}
-    assert by_text[text("shared")] == "alpha" and by_text[text("r")] == "beta"
+    assert by_text[text("r")] == "beta"
     meta = json.loads((d3 / rf.BLIND_CHECK_META).read_text(encoding="utf-8"))
-    assert meta["pool"] == 4 and meta["drawn"] == 4
-    assert "only 4 narrative text(s)" in capsys.readouterr().err
+    assert meta["pool"] == 3 and meta["drawn"] == 3
+    assert "only 3 narrative text(s)" in capsys.readouterr().err
 
 
 def _scored_blind_check(env, tmp_path, capsys):
@@ -457,7 +470,7 @@ def test_check_blind_check_folder_rebuilds_the_pool(tmp_path, monkeypatch, capsy
     first = rf.load_frozen_record(str(env.dir))
     first_sha = rs.sha256_file(mdir(env) / "dev-test-run-manifest.json")
     gaps, result = rf.check_blind_check_folder(first, d3, first_sha, "abcdef1")
-    assert gaps == [] and result["n"] == 4
+    assert gaps == [] and result["n"] == 3  # text a, text b and text r (decision D-R20)
     meta_path, map_path, csv_path = d3 / rf.BLIND_CHECK_META, d3 / rf.BLIND_CHECK_MAP, d3 / rf.BLIND_CHECK_CSV
     kept = {p: p.read_bytes() for p in (meta_path, map_path, csv_path)}
     # a map row moved to the other run, rehashed in the meta: refused by the rebuild
@@ -482,6 +495,16 @@ def test_check_blind_check_folder_rebuilds_the_pool(tmp_path, monkeypatch, capsy
     # a reviewer sheet showing text p, which qualifies under two runs on two cases (decision D-R20)
     sheet = rs.read_csv(csv_path, rf.BLIND_CHECK_COLUMNS)
     sheet[0] = dict(sheet[0], narrative=text("p"))
+    rs.write_csv(csv_path, rf.BLIND_CHECK_COLUMNS, sheet)
+    _rehash(d3, rf.BLIND_CHECK_CSV)
+    gaps, result = rf.check_blind_check_folder(first, d3, first_sha, "abcdef1")
+    assert result is None and any("blind-check.csv differs from the rebuild" in g for g in gaps)
+    for p, b in kept.items():
+        p.write_bytes(b)
+    # a reviewer sheet showing the shared text, which R2 wrote on case-s, a case that does not
+    # qualify: out of the pool, so refused by the rebuild (decision D-R20, ruling 4)
+    sheet = rs.read_csv(csv_path, rf.BLIND_CHECK_COLUMNS)
+    sheet[0] = dict(sheet[0], narrative=text("shared"))
     rs.write_csv(csv_path, rf.BLIND_CHECK_COLUMNS, sheet)
     _rehash(d3, rf.BLIND_CHECK_CSV)
     gaps, result = rf.check_blind_check_folder(first, d3, first_sha, "abcdef1")
@@ -520,7 +543,7 @@ def test_second_look_score_refuses_a_blind_check_drawn_from_an_edited_map(tmp_pa
     (d3 / rf.BLIND_CHECK_META).write_bytes(meta_kept)
     assert rf.main(score_argv(env, filled, "--blind-check-dir", str(d3))) == 0, capsys.readouterr().err
     man = json.loads((mdir(env) / "dev-test-run-second-look-manifest.json").read_text(encoding="utf-8"))
-    assert man["blinding"]["n"] == 4
+    assert man["blinding"]["n"] == 3
 
 
 # --- The private record of an evaluation run, and the D-J count ---------------------------------
