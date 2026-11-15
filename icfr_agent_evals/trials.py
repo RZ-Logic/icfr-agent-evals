@@ -57,6 +57,23 @@ still fails in the settlement with its own reason, and its narrative record sett
 nothing there (review never settles it). A record without the list is read exactly as
 before.
 
+Errored epochs are format breaks (decision D-R20, 2026-11-15; section 9: "A missing or
+refused generation stays a format break, and review never settles it"). An epoch with a
+sample error carries FM-000 here (epoch_codes), whatever its scorers recorded: it counts
+in every FM count, fails its trial, scores 0 on every anchor in every figure and mean, needs
+its FM-000 audit row and its whole-narrative read, and the audit-adjusted figure keeps it
+whatever the audit rules (D-R5). H2 counts it only when the audit rules it real_error.
+The scorer files are not changed: the code is added at the settlement and counting level,
+and the epoch keeps its carried reason. An unscored epoch with no sample error is not a
+format break: it stays a failed trial with its carried reason, as before.
+
+Defect sensitivity row (decision D-R20; section 8, the row "that drops the extractor-crash
+and answer-key-mismatch epochs from every model's figures"): defect_epochs reads, from the
+log, the epochs holding an unsettleable route whose settlement-table row files an extractor
+or an answer-key defect, and defect_dropped gives a figure without them: a sample passes
+when all its remaining epochs pass, and a sample whose epochs are all dropped leaves the
+row. It is a sensitivity row, never the score of record.
+
 Imports of settlement and regression are made inside functions, so regression.py may
 import this module at load time without an import cycle.
 """
@@ -138,6 +155,20 @@ OFF_CONTRACT_AMOUNT, OFF_CONTRACT_BAND, OFF_CONTRACT_PERIOD = "variance_amount_u
 CARRIED_KEY = "carried_failed_trials"
 SAMPLE_ERROR_REASON = "sample error"
 UNSCORED_REASON = "{anchor} unscored or non-numeric"
+# Decision D-R20: the reason an errored epoch's FM-000 gives in the settlement.
+ERRORED_FORMAT_BREAK_REASON = ("format break (FM-000): an errored epoch (a sample error, not a parse failure) "
+                               "fails whatever review finds (decision D-R20)")
+
+
+def epoch_codes(sample: Any, codes: Iterable[str]) -> tuple[str, ...]:
+    """The FM codes of one (sample, epoch) at the settlement and counting level: the codes
+    its scorers recorded, with FM-000 added first on an epoch with a sample error (decision
+    D-R20: an errored epoch is a format break). An epoch with no sample error keeps its
+    codes exactly."""
+    codes = tuple(dict.fromkeys(str(c) for c in codes))
+    if getattr(sample, "error", None) is None or FORMAT_BREAK_CODE in codes:
+        return codes
+    return (FORMAT_BREAK_CODE, *codes)
 
 
 class RecordError(ValueError):
@@ -397,7 +428,7 @@ def _collect(samples: Iterable[Any], k: int) -> tuple[rel.ReliabilityReport, dic
         extractions = cdet.get("narrative_extractions") or []
         facts[ident] = _Facts(
             sample_id=t.sample_id, epoch=t.epoch, sample=s, error=getattr(s, "error", None) is not None,
-            anchors=anchors, codes=tuple(t.failure_modes), findings=tuple(findings),
+            anchors=anchors, codes=epoch_codes(s, t.failure_modes), findings=tuple(findings),
             unsettleable=tuple(unsettleable), code_trial=t,
             structured_points=_numeric(cdet.get("structured_points")),
             citation_omissions=len(omissions) if isinstance(omissions, (list, tuple)) else 0,
@@ -756,7 +787,9 @@ def _settle(f: _Facts, *, finding_verdict: Callable[[str], str], narrative: tupl
     for a in rel.TRIAL_ANCHORS:
         if anchors[a] is None:
             reasons.append(f"{a} unscored or non-numeric")
-    if FORMAT_BREAK_CODE in f.codes:
+    if f.error and FORMAT_BREAK_CODE in f.codes:
+        reasons.append(ERRORED_FORMAT_BREAK_REASON)
+    elif FORMAT_BREAK_CODE in f.codes:
         reasons.append("format break (FM-000): a parse failure fails whatever review finds")
     if remaining:
         reasons.append(f"FM codes {sorted(set(remaining))} (codes final)")
@@ -851,6 +884,10 @@ def _settle(f: _Facts, *, finding_verdict: Callable[[str], str], narrative: tupl
         v = anchors[a]
         if v is not None and v != FULL_MARKS:
             reasons.append(f"{a} settled {v:g}")
+    if f.error:
+        # Decision D-R20: an errored epoch is a format break, 0 on every anchor (section 6),
+        # in every figure and mean, whatever its scorers recorded.
+        anchors = {a: 0.0 for a in rel.TRIAL_ANCHORS}
     return EpochResult(
         sample_id=f.sample_id, epoch=f.epoch, success=not reasons, reasons=tuple(reasons), anchors=anchors,
         failure_modes=tuple(dict.fromkeys(remaining)), removed_codes=removed_codes,
@@ -1175,3 +1212,75 @@ def audited_code_counts(log_or_samples: Any, record: Any, *, k: int | None = Non
     if not_audited:
         result[NOT_AUDITED] = dict(sorted(not_audited.items()))
     return result
+
+
+# --- The defect sensitivity row (decision D-R20) --------------------------------------------
+
+DEFECT_DROPPED_LABEL = ("sensitivity row (decision D-R20): content-pass^4 with the extractor-defect and "
+                        "answer-key-defect epochs dropped; never the score of record")
+
+
+def defect_on_correct() -> tuple[str, ...]:
+    """The settlement-table effects that file an unsettleable route as a scorer or a
+    dataset defect: an extractor defect or an answer-key defect."""
+    from . import settlement
+
+    return (settlement.ON_CORRECT_EXTRACTOR, settlement.ON_CORRECT_ANSWER_KEY)
+
+
+def is_defect_route(route_key: str, reasons: Sequence[str]) -> bool:
+    """True when a route's settlement-table rows include an unsettleable row filed as an
+    extractor defect or an answer-key defect (read from the table, never by row id)."""
+    from . import settlement
+
+    try:
+        rows = settlement.rows_for(route_key, [str(r) for r in reasons])
+    except ValueError:
+        return False
+    return any(not r.settleable and r.on_correct in defect_on_correct() for r in rows)
+
+
+def defect_epochs(log_or_samples: Any, *, k: int | None = None) -> dict[tuple[str, int], tuple[str, ...]]:
+    """(sample id, epoch) -> the route keys of its unsettleable routes the settlement table
+    files as an extractor or an answer-key defect, from the log alone. These are the epochs
+    the section 8 sensitivity row drops (decision D-R20)."""
+    k = _k_of(log_or_samples, k)
+    _, facts = _collect(_samples_of(log_or_samples), k)
+    out: dict[tuple[str, int], tuple[str, ...]] = {}
+    for ident, f in sorted(facts.items()):
+        keys = tuple(key for key, reasons in f.unsettleable if is_defect_route(key, reasons))
+        if keys:
+            out[ident] = keys
+    return out
+
+
+def defect_dropped(report: TrialReport, drop: Iterable[tuple[str, int]]) -> dict[str, Any]:
+    """The section 8 sensitivity row on one trial report (decision D-R20): every epoch in
+    `drop` is left out; a sample passes when all its remaining epochs pass (and it holds
+    epochs 1 to k); a sample whose epochs are all dropped leaves the row. Clopper-Pearson
+    interval on the new denominator, the same row under the rule before D-R9, the count of
+    samples scored on fewer than k epochs and the count that left the row."""
+    drop = set(drop)
+    k = report.k
+    per: dict[str, int] = {}
+    old: dict[str, int] = {}
+    fewer = left = dropped = 0
+    for sid, r in report.samples.items():
+        kept = [e for e in r.epochs if (sid, e.epoch) not in drop]
+        dropped += len(r.epochs) - len(kept)
+        if not kept:
+            left += 1
+            continue
+        fewer += len(kept) < k
+        whole = sorted(e.epoch for e in r.epochs) == list(range(1, k + 1))
+        per[sid] = int(whole and all(e.success for e in kept))
+        old[sid] = int(bool(per[sid]) and not any(_fails_before_d_r9(e) for e in kept))
+    passed, n, old_passed = sum(per.values()), len(per), sum(old.values())
+    return {
+        "label": DEFECT_DROPPED_LABEL, "kind": report.kind, "passed": passed, "n": n,
+        "rate": passed / n if n else None, "ci95": list(clopper_pearson(passed, n)),
+        "before_d_r9": {"passed": old_passed, "n": n, "rate": old_passed / n if n else None,
+                        "ci95": list(clopper_pearson(old_passed, n))},
+        "dropped_epochs": dropped, "samples_fewer_than_k": fewer, "samples_left_row": left,
+        "per_sample": per,
+    }

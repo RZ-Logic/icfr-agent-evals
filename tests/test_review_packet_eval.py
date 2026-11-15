@@ -299,7 +299,7 @@ def test_eval_log_with_unlock_accepted(base_log, truths, tmp_path, capsys):
     assert [u for u in p.units if u.row_kind == "finding"]
     out = tmp_path / "packet"
     assert _main(["--run", f"alpha={path}", "--out", out, "--seed", SEED, "--run-id", "eval-mock-run"]) == 0
-    assert "carried failed trials (errored or unscored epochs, no review unit): 0" in capsys.readouterr().out
+    assert "carried failed trials (errored or unscored epochs, no finding unit): 0" in capsys.readouterr().out
     runs_json = json.loads((out / rs.PACKET_FILES["runs"]).read_text(encoding="utf-8"))
     assert runs_json["R1"]["split"] == "eval" and runs_json["R1"]["allow_evaluation_split"] is True
     summary = json.loads((out / rs.PACKET_FILES["summary"]).read_text(encoding="utf-8"))
@@ -379,47 +379,47 @@ def _with_errored(truths, fms=("FM-001",), **errored):
     ]
 
 
-def _copy_epochs(truths):
-    """The same log with each errored epoch 4 replaced by a copy of epoch 1: the units it
-    builds are exactly the units of the errored log, if the errored epochs build none."""
-    t, te = truths[STD], truths[EDGE]
-    eps = _good_epochs(truths)
-    eps += [E(STD, 3, answer(t, f"{S1} {S2}"), route(AMOUNT)), E(EDGE, 3, answer(te, "A hard case narrative read whole."))]
-    eps += [E(STD, 4, answer(t, f"{S1} {S2}"), route(AMOUNT)), E(EDGE, 4, answer(te, f"{S1} {S2}"), route(AMOUNT))]
-    return eps
-
-
 @pytest.mark.parametrize("eval_split", [True, False])
-def test_errored_epoch_without_an_fm_code_carried_with_no_unit(base_log, truths, tmp_path, eval_split):
+def test_errored_epoch_is_a_format_break_with_its_audit_and_narrative_read(base_log, truths, tmp_path, eval_split):
+    # Decision D-R20 (section 9: "A missing or refused generation stays a format break, and
+    # review never settles it"): an errored epoch carries FM-000. It stays carried as a failed
+    # trial and its routes build no finding, but it gets its FM-000 audit unit and its
+    # whole-narrative read like any FM-000 epoch: the raw completion, never a parsed output.
     path = make_log(base_log, tmp_path / "err.eval", MODEL_A,
                     _with_errored(truths, fms=(), error="boom: provider error"), eval_split=eval_split)
     p = rp.build_packet(rp.load_runs([("alpha", path)], SEED), run_id="carry", seed=SEED)
-    sids = sorted({str(s.id) for s in read_eval_log(path).samples})
+    log = read_eval_log(path)
+    sids = sorted({str(s.id) for s in log.samples})
     assert [(c.run_id, c.sample_id, c.epoch, c.reason) for c in p.carried] == [
         ("R1", sid, 4, "sample error") for sid in sids]
-    assert not [m for m in p.members if m.epoch == 4]
-    assert not [u for u in p.units if MARK in u.narrative or "direction_negated" in " ".join(u.reasons)]
-    assert not [u for u in p.units if u.row_kind == "fm_audit"]
-    # the hard case's epochs 1 to 3 and the standard case's routed epochs still get their
-    # narrative reads; epoch 4 adds none (sids[0] is the hard case in both namings)
-    edge, std = sids
-    assert {(m.sample_id, m.epoch) for m in p.members if m.member_kind == "narrative"} == {
-        (edge, 1), (edge, 2), (edge, 3), (std, 1), (std, 3)}
+    on4 = sorted((m.sample_id, m.member_kind, m.fm_codes, m.route_class) for m in p.members if m.epoch == 4)
+    assert on4 == sorted([(sid, "fm_audit", ("FM-000",), "") for sid in sids]
+                         + [(sid, "narrative", ("FM-000",), rs.NARRATIVE_CLASS_FM_CODED) for sid in sids])
+    assert not [u for u in p.units if u.row_kind == "finding" and "direction_negated" in " ".join(u.reasons)]
+    audits = [u for u in p.units if u.row_kind == "fm_audit"]
+    assert [u.fm_code for u in audits] == ["FM-000", "FM-000"]
+    assert {u.fm_reasons for u in audits} == {(rp.ERRORED_EVIDENCE,)}
+    completions = {str(s.id): s.output.completion for s in log.samples if s.epoch == 4}
+    for a in audits:
+        narrative = next(u for u in p.units if u.unit_id == a.narrative_unit_ids[0])
+        assert narrative.parsed_ok is False and narrative.structured == {}
+        assert narrative.narrative == completions[narrative.case_id] and MARK in narrative.narrative
     out = tmp_path / "packet"
     rp.write_packet(p, str(out))
     summary = json.loads((out / rs.PACKET_FILES["summary"]).read_text(encoding="utf-8"))
     assert summary["totals"]["carried_failed_trials"] == [
         {"run_id": "R1", "sample_id": sid, "epoch": 4, "reason": "sample error"} for sid in sids]
-    assert summary["R1"]["carried_failed_trials"] == 2
-    rows = rs.read_csv(out / rs.PACKET_FILES["members"], rs.MEMBER_COLUMNS)
-    assert rows and not [r for r in rows if r["epoch"] == "4"]
+    assert summary["R1"]["carried_failed_trials"] == 2 and summary["R1"]["fm_audit_rows"] == 2
+    blank = rs.read_rb7_csv(out / rs.PACKET_FILES["blank"])
+    assert [r["route_key"] for r in blank if r["row_kind"] == "fm_audit"] == ["FM-000", "FM-000"]
 
 
 @pytest.mark.parametrize("eval_split", [True, False])
 def test_fm_coded_carried_epoch_gets_its_code_audit_and_no_finding(base_log, truths, tmp_path, eval_split):
     # Section 8: the settlement refuses a record unless every FM-coded (epoch, code) has an
     # audit row; section 6: the audit reads that epoch's narrative whole. The epoch is still
-    # carried as a failed trial and its routes build no finding.
+    # carried as a failed trial and its routes build no finding. An errored epoch also
+    # carries FM-000 (decision D-R20), beside the codes its scorers recorded.
     path = make_log(base_log, tmp_path / "err.eval", MODEL_A, _with_errored(truths, error="boom: provider error"),
                     eval_split=eval_split)
     p = rp.build_packet(rp.load_runs([("alpha", path)], SEED), run_id="carry", seed=SEED)
@@ -427,35 +427,37 @@ def test_fm_coded_carried_epoch_gets_its_code_audit_and_no_finding(base_log, tru
     assert [(c.sample_id, c.epoch, c.reason) for c in p.carried] == [
         (edge, 4, "sample error"), (std, 4, "sample error")]
     on4 = sorted((m.sample_id, m.member_kind, m.fm_codes) for m in p.members if m.epoch == 4)
-    assert on4 == [(std, "fm_audit", ("FM-001",)), (std, "narrative", ("FM-001",))]
+    assert on4 == [(edge, "fm_audit", ("FM-000",)), (edge, "narrative", ("FM-000",)),
+                   (std, "fm_audit", ("FM-000",)), (std, "fm_audit", ("FM-001",)),
+                   (std, "narrative", ("FM-000", "FM-001"))]
     audits = [u for u in p.units if u.row_kind == "fm_audit"]
-    assert [u.fm_code for u in audits] == ["FM-001"]
-    narrative = next(u for u in p.units if u.unit_id == audits[0].narrative_unit_ids[0])
+    assert sorted(u.fm_code for u in audits) == ["FM-000", "FM-000", "FM-001"]
+    fm001 = next(u for u in audits if u.fm_code == "FM-001")
+    narrative = next(u for u in p.units if u.unit_id == fm001.narrative_unit_ids[0])
     assert MARK in narrative.narrative and narrative.route_class == rs.NARRATIVE_CLASS_FM_CODED
     assert not [u for u in p.units if u.row_kind == "finding" and "direction_negated" in " ".join(u.reasons)]
     assert not [m for m in p.members if m.epoch == 4 and m.member_kind in rp.ROUTE_MEMBER_KINDS]
     out = tmp_path / "packet"
     rp.write_packet(p, str(out))
     summary = json.loads((out / rs.PACKET_FILES["summary"]).read_text(encoding="utf-8"))
-    assert summary["R1"]["carried_failed_trials"] == 2 and summary["R1"]["fm_audit_rows"] == 1
+    assert summary["R1"]["carried_failed_trials"] == 2 and summary["R1"]["fm_audit_rows"] == 3
     blank = rs.read_rb7_csv(out / rs.PACKET_FILES["blank"])
-    assert [r["route_key"] for r in blank if r["row_kind"] == "fm_audit"] == ["FM-001"]
+    assert sorted(r["route_key"] for r in blank if r["row_kind"] == "fm_audit") == ["FM-000", "FM-000", "FM-001"]
 
 
-def test_errored_epoch_leaves_no_trace_in_reviewer_files(base_log, truths, tmp_path):
+def test_errored_epoch_shows_its_completion_but_never_its_error(base_log, truths, tmp_path):
+    # Decision D-R20: the reviewer reads the errored epoch's raw completion whole, as for any
+    # format break; the error text (which can name the model), its routes and the masked run
+    # never reach reviewer/.
     err = make_log(base_log, tmp_path / "err.eval", MODEL_A,
                    _with_errored(truths, fms=(), error="boom: provider error"), eval_split=True)
-    same = make_log(base_log, tmp_path / "same.eval", MODEL_A, _copy_epochs(truths), eval_split=True)
-    built = {}
-    for name, path in (("err", err), ("same", same)):
-        p = rp.build_packet(rp.load_runs([("alpha", path)], SEED), run_id="carry", seed=SEED)
-        rp.write_packet(p, str(tmp_path / name))
-        built[name] = _reviewer_texts(tmp_path / name)
-    # byte for byte the reviewer side of a log whose errored epochs are clean copies
-    assert built["err"] == built["same"]
-    assert built["err"]
-    for rel, text in built["err"].items():
-        for trace in (MARK, "boom", "provider error", "direction_negated", MODEL_A):
+    p = rp.build_packet(rp.load_runs([("alpha", err)], SEED), run_id="carry", seed=SEED)
+    rp.write_packet(p, str(tmp_path / "err"))
+    texts = _reviewer_texts(tmp_path / "err")
+    assert texts and any(MARK in t for t in texts.values())
+    assert any(rp.ERRORED_EVIDENCE in t for t in texts.values())
+    for rel, text in texts.items():
+        for trace in ("boom", "provider error", "direction_negated", MODEL_A):
             assert trace not in text, (rel, trace)
         assert not re.search(r"(?<![A-Za-z0-9])R1(?![A-Za-z0-9])", text), rel
 
@@ -485,7 +487,11 @@ def test_errored_epoch_with_no_scores_carried(base_log, truths, tmp_path):
     p = rp.build_packet(rp.load_runs([("alpha", path)], SEED), run_id="carry", seed=SEED)
     assert len(p.carried) == 1
     assert p.carried[0].reason == "sample error; " + "; ".join(f"{a} unscored or non-numeric" for a in TRIAL_ANCHORS)
-    assert not [m for m in p.members if m.epoch == 3 and m.sample_id == p.carried[0].sample_id]
+    # decision D-R20: nothing came back, so its FM-000 audit reads an empty narrative
+    on3 = [m for m in p.members if m.epoch == 3 and m.sample_id == p.carried[0].sample_id]
+    assert sorted((m.member_kind, m.fm_codes) for m in on3) == [("fm_audit", ("FM-000",)), ("narrative", ("FM-000",))]
+    narrative = next(u for u in p.units if u.unit_id == next(m.unit_id for m in on3 if m.member_kind == "narrative"))
+    assert narrative.narrative == "" and narrative.parsed_ok is False
 
 
 def test_carried_reasons_agree_with_trials(base_log, truths, tmp_path):
@@ -509,9 +515,12 @@ def test_carried_reasons_agree_with_trials(base_log, truths, tmp_path):
         assert flagged == ((e.sample_id, e.epoch) in carried), e
 
 
-def test_case_with_every_epoch_carried_is_not_shown(base_log, truths, tmp_path):
+def test_case_with_every_epoch_unscored_is_not_shown(base_log, truths, tmp_path):
+    # an unscored epoch with no sample error is not a format break (decision D-R20): it builds
+    # no unit, so a case with nothing else is not shown
     t = truths[THIRD]
-    eps = _good_epochs(truths) + [E(THIRD, 1, answer(t, MARK), error="boom"), E(THIRD, 2, answer(t, MARK), error="boom")]
+    eps = _good_epochs(truths) + [E(THIRD, 1, answer(t, MARK), drop=("completeness_anchor",)),
+                                  E(THIRD, 2, answer(t, MARK), values={"correctness_anchor": math.nan})]
     path = make_log(base_log, tmp_path / "all.eval", MODEL_A, eps, eval_split=True)
     log = read_eval_log(path)
     third = next(str(s.id) for s in log.samples if truth_of(s.metadata).case_id == THIRD)
@@ -522,6 +531,22 @@ def test_case_with_every_epoch_carried_is_not_shown(base_log, truths, tmp_path):
     rp.write_packet(p, str(out))
     for rel, text in _reviewer_texts(out).items():
         assert third not in text and MARK not in text, rel
+
+
+def test_case_with_every_epoch_errored_shows_its_format_breaks_only(base_log, truths, tmp_path):
+    # decision D-R20: every errored epoch is a format break with its FM-000 audit and its read
+    t = truths[THIRD]
+    eps = _good_epochs(truths) + [E(THIRD, 1, answer(t, MARK), error="boom"), E(THIRD, 2, answer(t, MARK), error="boom")]
+    path = make_log(base_log, tmp_path / "all.eval", MODEL_A, eps, eval_split=True)
+    log = read_eval_log(path)
+    third = next(str(s.id) for s in log.samples if truth_of(s.metadata).case_id == THIRD)
+    p = rp.build_packet(rp.load_runs([("alpha", path)], SEED), run_id="carry", seed=SEED, scope="all")
+    assert third in p.case_order
+    assert {(c.sample_id, c.epoch) for c in p.carried} == {(third, 1), (third, 2)}
+    kinds = sorted((m.member_kind, m.fm_codes) for m in p.members if m.sample_id == third)
+    assert kinds == [("fm_audit", ("FM-000",))] * 2 + [("narrative", ("FM-000",))] * 2
+    units = [u for u in p.units if u.case_id == third]
+    assert sorted(u.row_kind for u in units) == ["fm_audit", "fm_audit", "narrative"]  # one text, read once
 
 
 def test_format_break_is_not_carried(base_log, truths, tmp_path):
@@ -630,7 +655,7 @@ def test_dev_log_with_error_now_carried(base_log, truths, tmp_path, capsys):
     path = make_log(base_log, tmp_path / "dev-err.eval", MODEL_A, eps)
     out = tmp_path / "packet"
     assert _main(["--run", f"alpha={path}", "--out", out, "--seed", SEED, "--run-id", "dev-run"]) == 0
-    assert "carried failed trials (errored or unscored epochs, no review unit): 1" in capsys.readouterr().out
+    assert "carried failed trials (errored or unscored epochs, no finding unit): 1" in capsys.readouterr().out
     summary = json.loads((out / rs.PACKET_FILES["summary"]).read_text(encoding="utf-8"))
     assert summary["totals"]["carried_failed_trials"] == [
         {"run_id": "R1", "sample_id": STD, "epoch": 3, "reason": "sample error"}]
@@ -676,6 +701,61 @@ def test_load_carried_tolerates_absent_key(tmp_path):
     got = rp.load_carried(str(tmp_path))
     assert [(c.run_id, c.sample_id) for c in got] == [("R1", "eval-mock-009"), ("R2", "eval-mock-002")]
     assert got[0].as_dict() == rows[1]
+
+
+# --- The template baseline in the packet (decision D-R20) ----------------------------------------
+
+TEMPLATE_TASK = "icfr_agent_evals/variance_commentary_template_baseline"
+
+
+def _as_template(log):
+    log.eval.task = TEMPLATE_TASK
+
+
+def test_template_run_gets_units_like_a_worker_run(base_log, truths, tmp_path):
+    # The template run's epochs build findings, narrative reads (the narrative-only reads of
+    # the difficulty-bearing cases included) and audit units exactly as a worker run's do.
+    eps = _good_epochs(truths)
+    worker = make_log(base_log, tmp_path / "w.eval", MODEL_A, eps, eval_split=True)
+    tmpl = make_log(base_log, tmp_path / "t.eval", "none/none", copy.deepcopy(eps), eval_split=True,
+                    mutate=_as_template)
+    p = rp.build_packet(rp.load_runs([("alpha", worker), ("template", tmpl)], SEED), run_id="tmpl", seed=SEED)
+    rid = {r.label: r.run_id for r in p.runs}
+    assert [rp.is_template_run(r) for r in p.runs if r.label == "template"] == [True]
+
+    def shape(run_id):
+        return sorted((m.sample_id, m.epoch, m.member_kind, m.route_class, m.fm_codes, m.unit_id)
+                      for m in p.members if m.run_id == run_id)
+
+    assert shape(rid["template"]) == shape(rid["alpha"])  # one log's twin: the same units
+    hard = next(str(s.id) for s in read_eval_log(tmpl).samples if truth_of(s.metadata).case_id == EDGE)
+    only = [m for m in p.members if m.run_id == rid["template"] and m.route_class == rs.NARRATIVE_CLASS_ONLY]
+    assert [(m.sample_id, m.epoch) for m in only] == [(hard, 2)]
+    out = tmp_path / "packet"
+    rp.write_packet(p, str(out))
+    runs_json = json.loads((out / rs.PACKET_FILES["runs"]).read_text(encoding="utf-8"))
+    assert runs_json[rid["template"]]["template_baseline"] is True
+    assert runs_json[rid["alpha"]]["template_baseline"] is False
+    assert [rp.is_template_run(r) for r in rp.load_packet(str(out)).runs if r.label == "template"] == [True]
+
+
+def test_second_look_subset_never_brings_in_template_epochs(base_log, truths, tmp_path):
+    # A drawn narrative unit the template run shares with a worker run (the same text and
+    # fields) brings the worker's epochs into the second look, never the template's.
+    eps = _good_epochs(truths)
+    worker = make_log(base_log, tmp_path / "w.eval", MODEL_A, eps, eval_split=True)
+    tmpl = make_log(base_log, tmp_path / "t.eval", "none/none", copy.deepcopy(eps), eval_split=True,
+                    mutate=_as_template)
+    p = rp.build_packet(rp.load_runs([("alpha", worker), ("template", tmpl)], SEED), run_id="tmpl", seed=SEED)
+    rid = {r.label: r.run_id for r in p.runs}
+    out = tmp_path / "packet"
+    rp.write_packet(p, str(out))
+    for packet in (p, rp.load_packet(str(out))):
+        shared = sorted({m.unit_id for m in packet.members if m.member_kind == "narrative"})
+        assert {m.run_id for m in packet.members if m.unit_id in shared} == {rid["alpha"], rid["template"]}
+        sub, _ = rp.subset_packet(packet, shared, seed=SEED + 1)
+        assert sub.members and {m.run_id for m in sub.members} == {rid["alpha"]}
+        assert [u for u in sub.units if u.row_kind == "finding"]
 
 
 def test_public_text_rules():

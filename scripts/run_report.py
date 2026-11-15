@@ -53,9 +53,21 @@ audit-adjusted figures too when the record names its run; when it does not and i
 routes, the row says it is not review-settled), each log's header revision commit beside
 the manifest's run commit, and H3 (icfr_agent_evals/h3.py) on the review-settled,
 audit-adjusted and before-D-R9 readings with the second-look gate per worker. On the
-evaluation split a missing archive URL or date prints an INCOMPLETE heading (the exit code
-is unchanged). An item the repository cannot compute yet, or a section 8 primary outcome
-this report does not print, is listed as not available, with the reason.
+evaluation split a missing archive URL or date prints an INCOMPLETE heading, and so does a
+frozen record that does not name the template run (decision D-R20: the template baseline
+goes in the review packet); the exit code is unchanged. An item the repository cannot
+compute yet, or a section 8 primary outcome this report does not print, is listed as not
+available, with the reason.
+
+Decision D-R20 (2026-11-15). An errored epoch is a format break (FM-000): it counts in the
+FM counts by code and subset and in the format-break rate, with the count of errored epochs
+printed beside FM-000 (an API error rather than a parse failure), and it scores 0 on every
+anchor in every mean (icfr_agent_evals/trials.py). An unscored epoch with no sample error
+stays a failed trial and is counted on its own. Beside each run's review-settled and
+audit-adjusted figures the report prints the section 8 sensitivity row that drops the
+epochs whose unsettleable route the settlement table files as an extractor or an
+answer-key defect, per subset, with the samples scored on fewer than 4 epochs and the
+samples that left the row; it is never the score of record.
 
 Each worker row states the reasoning mode sent, read from the recorded model-call request
 of every evaluated-model ModelEvent (section 5), never from the run config; a worker log
@@ -136,10 +148,6 @@ NOT_AVAILABLE: dict[str, str] = {
     "the name the 54-case labeled subset earns (Verified, Self-verified or neither)": (
         "it follows from the labeling record and its kappa, which this report does not read; the subset is printed "
         "as difficulty_bearing"),
-    "the unsettleable-route sensitivity row": (
-        "section 8 asks for a row that drops the extractor-crash and answer-key-mismatch epochs from every model's "
-        "figures, but does not fix how a sample with a dropped epoch enters content-pass^4 at k = 4; the epochs "
-        "such a row would drop are counted per model and route key instead"),
     "the sample-level FM-007 count": (
         "this report does not compute it; FM-007 is a Sample Consistency outcome (icfr_agent_evals/consistency.py), "
         "which this report does not run"),
@@ -157,9 +165,9 @@ NOT_AVAILABLE: dict[str, str] = {
     "disagreement rate and resolution rate": (
         "the disagreement queue is not in the run logs or the review record this report reads"),
 }
-# Unsettleable rows filed as an extractor or an answer-key defect: the epochs the sensitivity
-# row would drop (counted only; see NOT_AVAILABLE).
-DEFECT_ON_CORRECT: tuple[str, ...] = (settlement.ON_CORRECT_EXTRACTOR, settlement.ON_CORRECT_ANSWER_KEY)
+# Unsettleable rows filed as an extractor or an answer-key defect: the epochs the section 8
+# sensitivity row drops (decision D-R20; trials.defect_epochs and trials.defect_dropped).
+DEFECT_ON_CORRECT: tuple[str, ...] = trials.defect_on_correct()
 
 
 class Refused(Exception):
@@ -534,6 +542,26 @@ def pass_rows(report: trials.TrialReport, label: str | None = None) -> dict[str,
     return out
 
 
+def defect_rows(report: trials.TrialReport, drop: Mapping[tuple[str, int], Any],
+                label: str | None = None) -> dict[str, dict[str, Any]]:
+    """Per subset: the section 8 sensitivity row that drops this run's extractor-defect and
+    answer-key-defect epochs (decision D-R20; trials.defect_dropped), with its
+    Clopper-Pearson interval on the new denominator, the same row under the rule before
+    D-R9, the samples scored on fewer than 4 epochs and the samples that left the row. A
+    sensitivity row, never the score of record."""
+    out: dict[str, dict[str, Any]] = {}
+    for subset in SUBSETS:
+        sub = sub_report(report, subset)
+        if not sub.n:
+            continue
+        row = trials.defect_dropped(sub, drop)
+        out[subset] = {k: row[k] for k in ("passed", "n", "rate", "ci95", "before_d_r9", "dropped_epochs",
+                                           "samples_fewer_than_k", "samples_left_row")}
+        if label is not None:
+            out[subset]["second_look"] = label
+    return out
+
+
 def second_look_label(gate_result: str | None, *, template: bool = False) -> str:
     """The label every review-settled and audit-adjusted figure of a run carries (section 8:
     figures are "published labeled review not confirmed" when the gate fails, and a run with
@@ -583,33 +611,54 @@ def _kind_of_sample(sample: Any) -> str | None:
     return str(truth.get("case_kind")) if isinstance(truth, Mapping) and truth.get("case_kind") else None
 
 
+def _parse_failure(sample: Any) -> bool:
+    """A format break the scorers recorded: an FM-000 parse failure on an epoch without a
+    sample error."""
+    return getattr(sample, "error", None) is None and any(
+        (getattr(v, "metadata", None) or {}).get("format_break") for v in (getattr(sample, "scores", None) or {}).values())
+
+
+def _epoch_kinds(sample: Any, carried: bool) -> tuple[bool, bool, bool]:
+    """(format break, errored, unscored) for one epoch. Decision D-R20: an errored epoch is a
+    format break (FM-000), counted in the format-break figures beside the parse failures. An
+    unscored epoch (a carried epoch with no sample error) is not a format break."""
+    errored = getattr(sample, "error", None) is not None
+    return errored or _parse_failure(sample), errored, carried and not errored
+
+
 def epoch_counts(log: Any) -> dict[str, dict[str, Any]]:
-    """Per subset, from the log alone: epochs, format-break epochs (an FM-000 parse failure
-    without a sample error), errored epochs, carried epochs (review_packet carried_reasons:
-    a sample error or an unscored trial anchor, a failed trial with no review unit), routed
-    epochs (any section 10(c) route, settleable or not), settleable findings, the routing
-    rate (routed epochs over epochs, also the extractor-health routed-epoch rate), findings
-    per routed epoch and the code-caught FM counts by code, (epoch, code) once each."""
+    """Per subset, from the log alone: epochs, format-break epochs (FM-000: a parse failure
+    or, decision D-R20, an errored epoch) with the format-break rate and, beside it, how many
+    of them are errored epochs (an API error rather than a parse failure), errored epochs,
+    unscored epochs (a trial anchor missing or not numeric, no sample error), carried epochs
+    (review_packet carried_reasons: a sample error or an unscored trial anchor, a failed
+    trial with no finding unit), routed epochs (any section 10(c) route, settleable or not),
+    settleable findings, the routing rate (routed epochs over epochs, also the
+    extractor-health routed-epoch rate), findings per routed epoch and the code-caught FM
+    counts by code, (epoch, code) once each, FM-000 on an errored epoch included."""
     rp = load_review_packet()
     _, facts = trials._collect(log.samples, K)  # the routes grouped exactly as the packet groups them
     out: dict[str, dict[str, Any]] = {}
     by_ident = {(str(s.id), int(s.epoch)): s for s in log.samples}
     for ident, f in facts.items():
         s = by_ident[ident]
-        fb = (getattr(s, "error", None) is None
-              and any((getattr(v, "metadata", None) or {}).get("format_break") for v in (s.scores or {}).values()))
+        carried = bool(rp.carried_reasons(s))
+        fb, errored, unscored = _epoch_kinds(s, carried)
         for subset in subsets_of(f.case_kind):
-            row = out.setdefault(subset, {"epochs": 0, "format_break_epochs": 0, "errored_epochs": 0,
-                                          "carried_epochs": 0, "routed_epochs": 0, "findings": 0,
-                                          "fm_codes": Counter()})
+            row = out.setdefault(subset, {"epochs": 0, "format_break_epochs": 0, "format_break_errored_epochs": 0,
+                                          "errored_epochs": 0, "unscored_epochs": 0, "carried_epochs": 0,
+                                          "routed_epochs": 0, "findings": 0, "fm_codes": Counter()})
             row["epochs"] += 1
             row["format_break_epochs"] += fb
-            row["errored_epochs"] += f.error
-            row["carried_epochs"] += bool(rp.carried_reasons(s))
+            row["format_break_errored_epochs"] += fb and errored
+            row["errored_epochs"] += errored
+            row["unscored_epochs"] += unscored
+            row["carried_epochs"] += carried
             row["routed_epochs"] += f.routed
             row["findings"] += len(f.findings)
             row["fm_codes"].update(dict.fromkeys(f.codes, 1))
     for row in out.values():
+        row["format_break_rate"] = row["format_break_epochs"] / row["epochs"] if row["epochs"] else None
         row["routing_rate"] = row["routed_epochs"] / row["epochs"] if row["epochs"] else None
         row["findings_per_routed_epoch"] = row["findings"] / row["routed_epochs"] if row["routed_epochs"] else None
         row["fm_codes"] = dict(sorted(row["fm_codes"].items()))
@@ -618,20 +667,31 @@ def epoch_counts(log: Any) -> dict[str, dict[str, Any]]:
 
 def log_totals(items: Sequence[LogInput]) -> dict[str, int]:
     """Counts over every given log together, never per log or per model: epochs, errored
-    epochs, format-break epochs (an FM-000 parse failure without a sample error) and carried
-    epochs. What the withheld report prints on the evaluation split (section 9: until the
-    second look is frozen "no per-model score the run prints is read")."""
+    epochs, format-break epochs (FM-000: a parse failure or, decision D-R20, an errored
+    epoch) with how many of them are errored, unscored epochs and carried epochs. What the
+    withheld report prints on the evaluation split (section 9: until the second look is
+    frozen "no per-model score the run prints is read")."""
     rp = load_review_packet()
-    out = {"logs": len(items), "epochs": 0, "errored_epochs": 0, "format_break_epochs": 0, "carried_epochs": 0}
+    out = {"logs": len(items), "epochs": 0, "errored_epochs": 0, "format_break_epochs": 0,
+           "format_break_errored_epochs": 0, "unscored_epochs": 0, "carried_epochs": 0}
     for item in items:
         for s in item.log.samples or ():
-            errored = getattr(s, "error", None) is not None
+            carried = bool(rp.carried_reasons(s))
+            fb, errored, unscored = _epoch_kinds(s, carried)
             out["epochs"] += 1
             out["errored_epochs"] += errored
-            out["format_break_epochs"] += (not errored and any(
-                (getattr(v, "metadata", None) or {}).get("format_break") for v in (s.scores or {}).values()))
-            out["carried_epochs"] += bool(rp.carried_reasons(s))
+            out["format_break_epochs"] += fb
+            out["format_break_errored_epochs"] += fb and errored
+            out["unscored_epochs"] += unscored
+            out["carried_epochs"] += carried
     return out
+
+
+def fm_counts_of(report: trials.TrialReport) -> dict[str, int]:
+    """FM counts per (sample, epoch) over a code-only report, FM-000 on an errored epoch
+    included (decision D-R20); the same counts as reliability.fm_counts on a log with no
+    errored epoch."""
+    return dict(sorted(Counter(c for e in report.epochs for c in dict.fromkeys(e.failure_modes)).items()))
 
 
 def log_only_block(item: LogInput) -> tuple[dict[str, Any], dict[str, trials.TrialReport]]:
@@ -643,7 +703,7 @@ def log_only_block(item: LogInput) -> tuple[dict[str, Any], dict[str, trials.Tri
         "figures": {kind: pass_rows(reports[kind]) for kind in LOG_KINDS},
         "citation_pass4": citation_rows(reports[trials.ROUTE_BLIND], None),
         "epochs": epoch_counts(item.log),
-        "fm_counts": r.fm_counts, "fm002_by_direction": r.fm002_by_direction,
+        "fm_counts": fm_counts_of(reports[trials.CODE_ONLY]), "fm002_by_direction": r.fm002_by_direction,
     }
     return payload, reports
 
@@ -779,10 +839,14 @@ def record_block(item: LogInput, record: Any, run_id: str,
     codes = sorted({c for e in settled.epochs for c in e.failure_modes} |
                    {c for e in log_reports[trials.CODE_ONLY].epochs for c in e.failure_modes})
     audited = trials.audited_code_counts(item.log, record, run_id=run_id, codes=tuple(codes), case_kinds=None)
+    defects = trials.defect_epochs(item.log, k=K)
     payload = {
         "run_id": run_id,
         "second_look_label": label,
         "figures": {trials.REVIEW_SETTLED: pass_rows(settled, label), trials.AUDIT_ADJUSTED: pass_rows(audit, label)},
+        "defect_sensitivity": {"label": trials.DEFECT_DROPPED_LABEL, "defect_epochs": len(defects),
+                               trials.REVIEW_SETTLED: defect_rows(settled, defects, label),
+                               trials.AUDIT_ADJUSTED: defect_rows(audit, defects, label)},
         "fm008_review_settled": list(settled.fm008),
         "anchor_means": {trials.REVIEW_SETTLED: anchor_rows(settled), trials.AUDIT_ADJUSTED: anchor_rows(audit)},
         "citation_pass4": citation_rows(log_reports[trials.ROUTE_BLIND], settled),
@@ -888,6 +952,21 @@ def revision_commit_rows(items: Sequence[LogInput], run_commit: str) -> list[dic
     return rows
 
 
+TEMPLATE_NOT_IN_RECORD = (
+    "the frozen record does not name the template baseline run (no run in it holds the template log's eval id); on "
+    "the evaluation split the template baseline goes in the review packet, so its reference row is review-settled "
+    "beside every model (decision D-R20; pre-registration section 8)")
+
+
+def template_not_in_record(checks: Checks, template: LogInput | None, split: str) -> str | None:
+    """Decision D-R20: on the evaluation split the frozen record must name the template
+    run. The INCOMPLETE text when a read record does not, else None. It names no model and
+    no file, so the withheld report may print it too; the exit code is unchanged."""
+    if split != EVAL_SPLIT or template is None or checks.record is None:
+        return None
+    return TEMPLATE_NOT_IN_RECORD if checks.run_ids.get(template.label) is None else None
+
+
 def carried_by_run(packet_dir: str | None) -> dict[str, int] | None:
     """Per masked run id, the carried failed-trial count sealed/summary.json records."""
     if packet_dir is None:
@@ -961,17 +1040,31 @@ def _citation_lines(rows: Mapping[str, Any]) -> list[str]:
     return lines
 
 
+FORMAT_BREAK_NOTE = "an API error rather than a parse failure, decision D-R20"
+
+
+def _fm_code_text(codes: Mapping[str, int], errored: int) -> str:
+    """FM counts by code, with the errored epochs beside FM-000 (decision D-R20)."""
+    parts = []
+    for c, n in codes.items():
+        parts.append(f"{c} {n} (of them errored epochs {errored})" if c == trials.FORMAT_BREAK_CODE and errored
+                     else f"{c} {n}")
+    return ", ".join(parts) or "none"
+
+
 def _epoch_lines(rows: Mapping[str, Any]) -> list[str]:
     lines = ["  epochs (from the log alone):"]
     for subset in _present(rows):
         r = rows[subset]
         rate = "none" if r["routing_rate"] is None else f"{r['routing_rate']:.3f}"
         per = "none" if r["findings_per_routed_epoch"] is None else f"{r['findings_per_routed_epoch']:.3f}"
-        codes = ", ".join(f"{c} {n}" for c, n in r["fm_codes"].items()) or "none"
-        lines.append(f"    {_sub(subset)}: {r['epochs']} epochs; format breaks {r['format_break_epochs']}; errored "
-                     f"{r['errored_epochs']}; carried failed trials {r['carried_epochs']}; routing rate {rate} "
-                     f"({r['routed_epochs']} routed epochs); findings per routed epoch {per}; code-caught FM "
-                     f"counts {codes}")
+        fb_rate = "none" if r["format_break_rate"] is None else f"{r['format_break_rate']:.3f}"
+        codes = _fm_code_text(r["fm_codes"], r["format_break_errored_epochs"])
+        lines.append(f"    {_sub(subset)}: {r['epochs']} epochs; format breaks (FM-000) {r['format_break_epochs']}, "
+                     f"format-break rate {fb_rate}, of them errored epochs {r['format_break_errored_epochs']} "
+                     f"({FORMAT_BREAK_NOTE}); unscored epochs {r['unscored_epochs']}; carried failed trials "
+                     f"{r['carried_epochs']}; routing rate {rate} ({r['routed_epochs']} routed epochs); findings per "
+                     f"routed epoch {per}; code-caught FM counts {codes}")
     return lines
 
 
@@ -995,11 +1088,29 @@ def _anchor_mean_lines(block: Mapping[str, Any], label: str | None) -> list[str]
     return lines
 
 
+def _defect_lines(block: Mapping[str, Any]) -> list[str]:
+    """The section 8 sensitivity row (decision D-R20), labeled so, review-settled with the
+    audit-adjusted reading beside it."""
+    d = block["defect_sensitivity"]
+    label = block.get("second_look_label")
+    tag = f"; {label}" if label else ""
+    lines = [f"  {d['label']}; {d['defect_epochs']} defect epoch(s) dropped from this run{tag}:"]
+    for kind in RECORD_KINDS:
+        rows = d[kind]
+        for subset in _present(rows):
+            r = rows[subset]
+            lines.append(f"    {FIGURE_NAMES[kind]}, {_sub(subset)}: {_ci(r)}; under the rule before D-R9 "
+                         f"{_ci(r['before_d_r9'])}; samples scored on fewer than {K} epochs "
+                         f"{r['samples_fewer_than_k']}; samples that left the row {r['samples_left_row']}")
+    return lines
+
+
 def _record_lines(block: Mapping[str, Any]) -> list[str]:
     lines: list[str] = []
     label = block.get("second_look_label")
     for kind in RECORD_KINDS:
         lines.extend(_figure_lines(kind, block["figures"][kind], label))
+    lines.extend(_defect_lines(block))
     lines.append(f"  FM-008 on the review-settled trial: {len(block['fm008_review_settled'])}")
     lines.extend(_anchor_mean_lines(block, label))
     for subset in _present(block["review_found"]):
@@ -1060,6 +1171,8 @@ def format_report(payload: Mapping[str, Any]) -> str:
     if payload.get("incomplete"):
         lines.append("INCOMPLETE: the run report lacks " + "; ".join(payload["incomplete"]) + " (pre-registration "
                      "section 8: the archive URL and date go in the run report)")
+    if payload.get("incomplete_template"):
+        lines.append(f"INCOMPLETE: {payload['incomplete_template']}")
     if payload["withheld"]:
         lines.append("Review-settled and audit-adjusted figures: " + WITHHELD)
         lines.extend(f"  why: {r}" for r in payload["withheld_reasons"])
@@ -1067,8 +1180,9 @@ def format_report(payload: Mapping[str, Any]) -> str:
             t = payload["totals"]
             lines.append(f"Counts only (pre-registration section 9: until the second look is frozen no per-model "
                          f"score is read): over all {t['logs']} log(s) together, {t['epochs']} epochs; errored "
-                         f"{t['errored_epochs']}; format breaks {t['format_break_epochs']}; carried failed trials "
-                         f"{t['carried_epochs']}")
+                         f"{t['errored_epochs']}; format breaks (FM-000) {t['format_break_epochs']}, of them errored "
+                         f"epochs {t['format_break_errored_epochs']} ({FORMAT_BREAK_NOTE}); unscored epochs "
+                         f"{t['unscored_epochs']}; carried failed trials {t['carried_epochs']}")
     else:
         fz = payload["freezes"]
         lines.append(f"First record frozen in {fz['first']['freeze_commit']}, second look frozen in "
@@ -1099,6 +1213,7 @@ def format_report(payload: Mapping[str, Any]) -> str:
         if t.get("record") is not None:
             for kind in RECORD_KINDS:
                 lines.extend(_figure_lines(kind, t["record"]["figures"][kind], t["record"]["second_look_label"]))
+            lines.extend(_defect_lines(t["record"]))
             lines.extend(_anchor_mean_lines(t["record"], t["record"]["second_look_label"]))
         elif t.get("not_review_settled") is not None:
             n = t["not_review_settled"]
@@ -1158,8 +1273,9 @@ def format_report(payload: Mapping[str, Any]) -> str:
             else:
                 lines.append("H3 robustness: " + (", ".join(labels) if labels else
                                                   "the three readings give one ordering"))
-            lines.append(f"H3 anchor cells read as 0 because unscored (an errored or unscored epoch), per reading "
-                         f"and model: {hb['unscored']}")
+            lines.append(f"H3 anchor cells read as 0 because unscored (an unscored epoch with no sample error; an "
+                         f"errored epoch is a format break, FM-000, scored 0 by decision D-R20), per reading and "
+                         f"model: {hb['unscored']}")
     lines.append("== Not available in this repository yet")
     for item, why in payload["not_available"].items():
         lines.append(f"  {item}: not available; {why}")
@@ -1190,6 +1306,9 @@ def build_report(workers: Sequence[LogInput], template: LogInput | None, *, pack
         "withheld_reasons": checks.reasons() if withheld else [], "worker_logs": len(workers), "workers": {},
         "template": None, "not_available": dict(NOT_AVAILABLE),
     }
+    missing = template_not_in_record(checks, template, split)
+    if missing:
+        payload["incomplete_template"] = missing
     if withheld and split == EVAL_SPLIT:
         # Section 9: "Until the second look is frozen ... no per-model score the run prints is
         # read, and the packet job prints counts only." Totals over every log together, with no

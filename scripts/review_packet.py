@@ -68,6 +68,20 @@ evaluation split. A format break (FM-000) is not carried: it keeps its audit uni
 its whole-narrative read. A log missing an epoch, or one regression.refuse_partial_run
 refuses, is still refused as structurally incomplete.
 
+An errored epoch is a format break (decision D-R20, 2026-11-15; section 9: "A missing or
+refused generation stays a format break, and review never settles it"). It is still
+carried with its reason, and it carries FM-000 (trials.epoch_codes), so it gets its FM-000
+audit unit and its whole-narrative read like any FM-000 epoch: the raw completion, or an
+empty narrative when nothing came back, never a parsed output. Its audit evidence says it
+ended in an error and never shows the error text, which can name the model. An unscored
+epoch with no sample error is not a format break and builds no unit, as before.
+
+The template baseline (decision D-R20). A template run given with --run gets its units like
+a worker run: findings, narrative reads (the narrative-only reads of the 54
+difficulty-bearing cases included) and audit units. sealed/runs.json marks it
+template_baseline, so scripts/review_freeze.py keeps it out of the second look and the
+blinding check, and subset_packet never brings its epochs into a second-look packet.
+
 Composition (pre-registration section 4: the evaluation split is 200 cases, 146
 synthetic, 30 edge and 24 adversarial). An evaluation-split log is refused unless its
 samples hold exactly that composition, each case's kind read from its sample metadata
@@ -144,6 +158,8 @@ STRUCTURED_LINE = "structured field check; see the worker fields"
 NARRATIVE_FM_CODES = ("FM-001", "FM-002", "FM-003", "FM-016")
 INJECTION_DETAIL_KEYS = ("target_field", "field_complied", "canary_found", "canary_in_raw_text")
 UNPARSED_FACT_KEY = "unparsed"
+# Audit evidence for the FM-000 of an errored epoch (decision D-R20).
+ERRORED_EVIDENCE = "sample error: the epoch ended in an error, so no output was scored (decision D-R20)"
 # Member kinds that make an epoch routed (any route item, settleable or not).
 ROUTE_MEMBER_KINDS = frozenset({"finding", "unsettleable", "fm_epoch_route_skipped"})
 
@@ -577,6 +593,10 @@ def _audit_evidence(sample: Any, code: str) -> tuple[str, ...]:
     """What the code recorded for this FM code on this epoch, verbatim from the score
     metadata (spec section 7, audit evidence). No hint toward either audit answer."""
     out: list[str] = []
+    if code == scoring.FORMAT_BREAK_FM and getattr(sample, "error", None) is not None:
+        # Decision D-R20: the FM-000 of an errored epoch. The error text itself is never
+        # shown, since it can name the model.
+        out.append(ERRORED_EVIDENCE)
     scores = getattr(sample, "scores", None) or {}
     for score in scores.values():
         meta = getattr(score, "metadata", None) or {}
@@ -653,18 +673,24 @@ def build_packet(runs: Sequence[RunInput], *, run_id: str, seed: int,
         for s in log.samples:
             sid, ep = str(s.id), int(s.epoch)
             trial = trials[(sid, ep)]
+            # Decision D-R20: an errored epoch carries FM-000 (trials.epoch_codes); any other
+            # epoch keeps the codes its scorers recorded.
+            codes = tr.epoch_codes(s, trial.failure_modes)
+            errored = getattr(s, "error", None) is not None
             why = carried_reasons(s)
             if why:  # a failed trial whatever review finds; review never settles it (section 6)
                 carried.append(CarriedEpoch(run.run_id, sid, ep, "; ".join(why)))
                 skip.add((sid, ep))
-                if not trial.failure_modes:
+                if not codes:
                     continue
-                # Still FM-coded: the mandatory code audit covers it (section 6 and section 8),
-                # with no finding unit (its routes are skipped below).
+                # Still FM-coded (an errored epoch always is): the mandatory code audit covers
+                # it (section 6 and section 8), with no finding unit (its routes are skipped below).
             parse = scoring.parse_worker_output(_completion(s))
-            parsed = parse.parsed if parse.ok else None
+            # An errored epoch is read like any FM-000 epoch: the raw completion, empty when
+            # nothing came back, never a parsed output.
+            parsed = parse.parsed if parse.ok and not errored else None
             text = str(parsed.get("narrative", "")) if parsed is not None else _completion(s)
-            epochs[(run.run_id, sid, ep)] = _Epoch(run.run_id, s, sid, ep, tuple(trial.failure_modes), parsed, text)
+            epochs[(run.run_id, sid, ep)] = _Epoch(run.run_id, s, sid, ep, codes, parsed, text)
             case_inputs.setdefault(sid, _input_text(s.input))
             case_meta.setdefault(sid, s.metadata)
             hard_case.setdefault(sid, _is_hard_case(s))
@@ -1037,8 +1063,7 @@ def _runs_json(packet: Packet) -> dict:
             "label": run.label, "file_name": Path(run.path).name, "sha256": run.sha256, "eval_id": run.eval_id,
             "model": run.model, "revision_commit": run.revision_commit,
             "dataset_sha256": meta.get("dataset_sha256") if log is not None else run_meta_get(run, "dataset_sha256"),
-            "template_baseline": bool(rel.is_template_baseline_log(log)) if log is not None
-            else bool(run_meta_get(run, "template_baseline")),
+            "template_baseline": is_template_run(run),
         }
         if _run_split(run) == EVAL_SPLIT:  # a dev run records neither key, so a dev packet keeps its bytes
             unlock = (log.eval.task_args or {}).get(UNLOCK_ARG) if log is not None else run_meta_get(run, UNLOCK_ARG)
@@ -1053,6 +1078,14 @@ _LOADED_RUN_EXTRA: dict[tuple[str, str], dict[str, Any]] = {}
 
 def run_meta_get(run: RunInput, key: str) -> Any:
     return _LOADED_RUN_EXTRA.get((run.run_id, run.sha256), {}).get(key)
+
+
+def is_template_run(run: RunInput) -> bool:
+    """Whether a run is the template baseline: from its log, or from sealed/runs.json for
+    a loaded packet. Its units are built like a worker run's (decision D-R20)."""
+    if run.log is not None:
+        return bool(rel.is_template_baseline_log(run.log))
+    return bool(run_meta_get(run, "template_baseline"))
 
 
 # --- HTML -------------------------------------------------------------------------------------
@@ -1741,8 +1774,11 @@ def subset_packet(packet: Packet, narrative_unit_ids: Sequence[str], *, seed: in
         if nid not in by_id or by_id[nid].row_kind != "narrative":
             raise ValueError(f"{nid!r} is not a narrative unit of this packet")
     drawn_set = set(drawn)
+    # Decision D-R20: the template baseline stays out of the second look. A drawn unit the
+    # template run shares with a worker run brings in the worker's epochs only.
+    templates = {run.run_id for run in packet.runs if is_template_run(run)}
     epochs = {(m.run_id, m.sample_id, m.epoch) for m in packet.members
-              if m.member_kind == "narrative" and m.unit_id in drawn_set}
+              if m.member_kind == "narrative" and m.unit_id in drawn_set and m.run_id not in templates}
     finding_ids = {m.unit_id for m in packet.members
                    if m.member_kind == "finding" and (m.run_id, m.sample_id, m.epoch) in epochs}
     new_of = {old: second_look_id(seed, by_id[old].row_kind, old, id_salt) for old in (*drawn, *sorted(finding_ids))}
@@ -1857,7 +1893,7 @@ def _model_word_texts(packet: Packet) -> int:
 def _totals_lines(packet: Packet) -> list[str]:
     t = summary(packet)["totals"]
     unsettleable = sum(t["unsettleable_by_key"].values())
-    carried = ([f"carried failed trials (errored or unscored epochs, no review unit): {len(t[CARRIED_KEY])}"]
+    carried = ([f"carried failed trials (errored or unscored epochs, no finding unit): {len(t[CARRIED_KEY])}"]
                if CARRIED_KEY in t else [])
     return [
         f"findings: {t['findings']} on {t['route_keys']} route keys; finding units: {t['finding_units']}; "

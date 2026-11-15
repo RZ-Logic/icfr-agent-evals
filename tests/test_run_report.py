@@ -398,8 +398,11 @@ def assert_withheld(text, payload, why):
     assert payload["workers"] == {} and payload["template"] is None
     t = payload["totals"]
     assert t["epochs"] == 12 * t["logs"] and t["errored_epochs"] == 1 and t["carried_epochs"] == 1
-    assert t["format_break_epochs"] == 0
+    # decision D-R20: the errored epoch is a format break, counted beside the parse failures
+    assert t["format_break_epochs"] == 1 and t["format_break_errored_epochs"] == 1 and t["unscored_epochs"] == 0
     assert "Counts only" in text and f"over all {t['logs']} log(s) together, {t['epochs']} epochs; errored 1" in text
+    assert ("format breaks (FM-000) 1, of them errored epochs 1 (an API error rather than a parse failure, "
+            "decision D-R20); unscored epochs 0") in text
     body = json.dumps(payload, default=str).lower()
     for name in NAMES_NEVER_SHOWN:
         assert name.lower() not in text.lower() and name.lower() not in body, name
@@ -433,6 +436,30 @@ def test_full_path_with_both_checks_passing(small, small_logs):
     assert payload["h3"]["computed"] is False and "four roster workers" in payload["h3"]["reason"]
     # the errored epoch carries no score: its anchors count 0 in the review-settled means
     assert alpha["anchor_means"]["review_settled"]["edge"]["correctness_anchor"]["mean"] == 2.25
+    # decision D-R20: the errored epoch is a format break (FM-000) in every FM count and in
+    # the format-break rate, with the errored count beside FM-000; its audit row is required
+    epochs = payload["workers"]["alpha"]["log"]["epochs"]
+    for subset in ("all", "edge", "difficulty_bearing"):
+        assert epochs[subset]["fm_codes"] == {"FM-000": 1}
+        assert epochs[subset]["format_break_epochs"] == epochs[subset]["format_break_errored_epochs"] == 1
+    assert epochs["edge"]["format_break_rate"] == 0.25 and epochs["synthetic"]["format_break_epochs"] == 0
+    assert payload["workers"]["alpha"]["log"]["fm_counts"] == {"FM-000": 1}
+    assert payload["workers"]["beta"]["log"]["fm_counts"] == {}
+    assert "code-caught FM counts FM-000 1 (of them errored epochs 1)" in text
+    assert "format breaks (FM-000) 1, format-break rate 0.250, of them errored epochs 1" in text
+    assert alpha["code_audit_counts"] == {"real_error": {"FM-000": 1}, "extractor_error": {}}
+    assert alpha["record_tables"]["edge"]["audit_by_code"] == {"FM-000": {"real_error": 1}}
+    assert alpha["figures"]["audit_adjusted"]["edge"]["passed"] == 0
+    # decision D-R20: the sensitivity row is printed; this run has no defect epoch
+    d = alpha["defect_sensitivity"]
+    assert d["defect_epochs"] == 0 and d["label"] == trials.DEFECT_DROPPED_LABEL
+    for kind in ("review_settled", "audit_adjusted"):
+        for subset, row in d[kind].items():
+            assert (row["passed"], row["n"]) == (alpha["figures"][kind][subset]["passed"],
+                                                 alpha["figures"][kind][subset]["n"])
+            assert row["samples_fewer_than_k"] == row["samples_left_row"] == 0
+    assert "sensitivity row (decision D-R20)" in text and "the unsettleable-route sensitivity row" not in text
+    assert "the unsettleable-route sensitivity row" not in payload["not_available"]
     sl = payload["second_look"]
     assert sl["bootstrap_seed"] == rf.derived_seed(rs.sha256_file(small.repo / first_rel()), RUN_ID, "bootstrap")
     assert {r["gate"]["result"] for r in sl["runs"].values()} == {"confirmed"}
@@ -475,8 +502,12 @@ def test_full_path_with_every_archive_given_is_complete(small, small_logs):
     args = SimpleNamespace(first_archive="https://web.archive.org/web/1/x", first_archive_date=DAY,
                            second_archive="https://web.archive.org/web/2/y", second_archive_date=LATER_DAY)
     text, payload = report(small, *small_items(small_logs), args=args)
-    assert payload["withheld"] is False and payload["incomplete"] == [] and "INCOMPLETE" not in text
+    assert payload["withheld"] is False and payload["incomplete"] == [] and "the run report lacks" not in text
     assert "archive https://web.archive.org/web/2/y" in text
+    # decision D-R20: this record does not name the template run, so the report says so
+    assert payload["incomplete_template"] == rr.TEMPLATE_NOT_IN_RECORD
+    assert [line for line in text.splitlines() if line.startswith("INCOMPLETE")] == [
+        f"INCOMPLETE: {rr.TEMPLATE_NOT_IN_RECORD}"]
 
 
 def test_cli_prints_and_writes_json(small, small_logs, capsys, tmp_path):
@@ -497,6 +528,8 @@ def test_withheld_when_no_second_look_is_given(small, small_logs, monkeypatch):
     workers, template = small_items(small_logs)
     text, payload = report(small, workers, template, second_look_dir=None)
     assert_withheld(text, payload, "no second look given")
+    # decision D-R20: the record does not name the template run; the withheld report says so
+    assert f"INCOMPLETE: {rr.TEMPLATE_NOT_IN_RECORD}" in text.splitlines()
 
 
 def test_withheld_when_the_second_look_manifest_is_missing(small, small_logs, monkeypatch):
@@ -582,6 +615,7 @@ def test_withheld_without_a_record(small_logs, monkeypatch):
     text, payload = rr.build_report(*small_items(small_logs))
     assert_withheld(text, payload, "no first review record given")
     assert payload["freezes"] is None
+    assert "incomplete_template" not in payload  # no record was read, so nothing to name
 
 
 def test_withheld_when_the_record_does_not_name_a_worker_log(small, small_logs, base_log, tmp_path, monkeypatch):
@@ -703,8 +737,12 @@ def test_template_in_the_record_gets_its_review_settled_and_audit_adjusted_figur
     commit_second(env)
     text, payload = report(env, *small_items(small_logs))
     assert payload["withheld"] is False, payload["withheld_reasons"]
+    assert "incomplete_template" not in payload and rr.TEMPLATE_NOT_IN_RECORD not in text
     t = payload["template"]["record"]
     assert t is not None and t["second_look_label"] == "reference row, never a worker; not second-looked"
+    # decision D-R20: the sensitivity row covers the template row too
+    assert set(t["defect_sensitivity"]["review_settled"]) == {"all", "synthetic", "edge", "adversarial",
+                                                             "difficulty_bearing"}
     for kind in ("review_settled", "audit_adjusted"):
         assert set(t["figures"][kind]) == {"all", "synthetic", "edge", "adversarial", "difficulty_bearing"}
     assert t["figures"]["review_settled"]["all"]["passed"] == 3
@@ -729,6 +767,83 @@ def test_template_that_routes_outside_the_record_is_not_review_settled(small, sm
     assert payload["template"]["record"] is None and (n["routed_epochs"], n["findings"], n["epochs"]) == (3, 3, 12)
     assert ("this row is not review-settled; the frozen record does not name the template run, and its log routes "
             "3 epoch(s) with 3 finding(s) over 12 epochs") in text
+
+
+# --- The defect sensitivity row (decision D-R20) -------------------------------------------------------
+
+S72 = "extractor_error: KeyError"
+S17 = "computed explained split disagrees with truth although every eligible item is cited"
+NONLATIN = "non_latin_characters: ж"
+
+
+def with_reasons(targets):
+    """A mutate that plants code-review reasons on the correctness scorer of some epochs."""
+    def mutate(log):
+        for s in log.samples:
+            reasons = targets.get((str(s.id), int(s.epoch)))
+            if reasons and s.scores:
+                meta = s.scores["correctness_anchor"].metadata
+                meta["review_reasons"] = [*meta.get("review_reasons", []), *reasons]
+                meta["requires_human_review"] = True
+    return mutate
+
+
+def test_sensitivity_row_drops_each_models_defect_epochs(small_logs, base_log, tmp_path):
+    # The standard case loses one epoch to an extractor defect (S72) and is scored on 3; every
+    # epoch of the adversarial case holds an answer-key defect (S17), so it leaves the row; a
+    # non-Latin letter (S20) is unsettleable but no defect, so it is never dropped.
+    targets = {("eval-mock-001", 2): [S72], **{("eval-mock-003", e): [S17] for e in range(1, 5)},
+               ("eval-mock-002", 3): [NONLATIN]}
+    gamma = make_log(base_log, tmp_path / "gamma.eval", SONNET5, SMALL, plan_for("east"), mutate=with_reasons(targets))
+    logs = {"alpha": small_logs["alpha"], "gamma": gamma}
+    env = freeze_first(tmp_path / "run", logs)
+    draw_second(env)
+    score_second(env)
+    commit_second(env)
+    workers, template = items(logs, small_logs["template"])
+    text, payload = report(env, workers, template)
+    assert payload["withheld"] is False, payload["withheld_reasons"]
+    assert sorted(trials.defect_epochs(read_eval_log(gamma))) == [
+        ("eval-mock-001", 2), *(("eval-mock-003", e) for e in range(1, 5))]
+    g = payload["workers"]["gamma"]["record"]
+    assert g["figures"]["review_settled"]["all"]["passed"] == 0  # every case fails on an unsettleable route
+    d = g["defect_sensitivity"]
+    assert d["defect_epochs"] == 5
+    for kind in ("review_settled", "audit_adjusted"):
+        row = d[kind]["all"]
+        assert (row["passed"], row["n"], row["samples_fewer_than_k"], row["samples_left_row"]) == (1, 2, 1, 1)
+        assert row["dropped_epochs"] == 5 and row["second_look"] == "second look confirmed"
+        lo, hi = trials.clopper_pearson(1, 2)
+        assert row["ci95"] == [lo, hi] and row["before_d_r9"]["n"] == 2
+        assert (d[kind]["synthetic"]["passed"], d[kind]["synthetic"]["n"]) == (1, 1)
+        assert d[kind]["synthetic"]["samples_fewer_than_k"] == 1
+        assert (d[kind]["edge"]["passed"], d[kind]["edge"]["n"]) == (0, 1)  # S20 stays
+        assert (d[kind]["adversarial"]["n"], d[kind]["adversarial"]["samples_left_row"]) == (0, 1)
+    # each model for its own defect epochs: alpha has none, so its row is its figure
+    a = payload["workers"]["alpha"]["record"]["defect_sensitivity"]
+    assert a["defect_epochs"] == 0 and a["review_settled"]["all"]["n"] == 3
+    block = text.split("== Worker gamma", 1)[1]
+    assert f"  {trials.DEFECT_DROPPED_LABEL}; 5 defect epoch(s) dropped from this run; second look confirmed:" in block
+    assert ("review-settled, all: 1/2 (Clopper-Pearson 95% [") in block
+    assert "samples scored on fewer than 4 epochs 1; samples that left the row 1" in block
+
+
+def test_defect_dropped_rule():
+    def ep(sid, e, ok=True):
+        return trials.EpochResult(sid, e, ok, () if ok else ("x",), {}, ())
+
+    def rep(*samples):
+        return trials.TrialReport(kind=trials.REVIEW_SETTLED, k=4, samples={
+            sid: trials.SampleResult(sid, all(e.success for e in eps), "", tuple(eps)) for sid, eps in samples})
+
+    report_ = rep(("a", [ep("a", 1), ep("a", 2, False), ep("a", 3), ep("a", 4)]),
+                  ("b", [ep("b", e, e != 1) for e in range(1, 5)]),
+                  ("c", [ep("c", e) for e in range(1, 5)]))
+    row = trials.defect_dropped(report_, {("a", 2), *(("b", e) for e in range(1, 5))})
+    assert row["per_sample"] == {"a": 1, "c": 1} and (row["passed"], row["n"]) == (2, 2)
+    assert (row["samples_fewer_than_k"], row["samples_left_row"], row["dropped_epochs"]) == (1, 1, 5)
+    assert row["label"] == trials.DEFECT_DROPPED_LABEL and "never the score of record" in row["label"]
+    assert trials.defect_dropped(report_, set())["per_sample"] == {"a": 0, "b": 0, "c": 1}
 
 
 # --- The reasoning mode, read from the model-call requests (section 5) --------------------------------
@@ -943,19 +1058,26 @@ def test_review_not_confirmed_makes_h3_not_tested(full_drawn, full_logs, tmp_pat
     assert "the three readings give one ordering" not in text
 
 
-# --- trials.py: carried epochs need no review row ----------------------------------------------------
+# --- trials.py: carried epochs need no finding row ----------------------------------------------------
 
-def carried_record(samples, entries, **kw):
-    """record_for on the samples the packet reads (carried epochs left out), with the carried list."""
-    errored = [s for s in samples if trials.carried_reason(trials._collect([s], 1)[1][(str(s.id), int(s.epoch))])]
-    rec = record_for([s for s in samples if s not in errored], **kw)
+def carried_record(samples, entries, *, errored_rows=True, **kw):
+    """record_for on the samples the packet reads (carried epochs left out), with the carried
+    list. With errored_rows, each errored epoch also gets the rows decision D-R20 asks of a
+    format break: its FM-000 audit row and its whole-narrative read."""
+    carried = [s for s in samples if trials.carried_reason(trials._collect([s], 1)[1][(str(s.id), int(s.epoch))])]
+    rec = record_for([s for s in samples if s not in carried], **kw)
+    if errored_rows:
+        for s in carried:
+            if s.error is not None:
+                rec.audit(str(s.id), int(s.epoch), "FM-000")
+                rec.narrative(str(s.id), int(s.epoch))
     rec.carried = entries
     return rec
 
 
-def hard_samples(err_epoch=2, **err_kw):
-    out = [sample("h", e, kind="edge") for e in range(1, 5) if e != err_epoch]
-    out.append(sample("h", err_epoch, kind="edge", error=SimpleNamespace(message="boom"), **err_kw))
+def hard_samples(err_epoch=2, kind="edge", **err_kw):
+    out = [sample("h", e, kind=kind) for e in range(1, 5) if e != err_epoch]
+    out.append(sample("h", err_epoch, kind=kind, error=SimpleNamespace(message="boom"), **err_kw))
     return sorted(out, key=lambda s: s.epoch)
 
 
@@ -963,20 +1085,59 @@ def entry(sid="h", epoch=2, reason="sample error", run_id="R1"):
     return {"run_id": run_id, "sample_id": sid, "epoch": epoch, "reason": reason}
 
 
-def test_errored_epoch_counts_as_a_failed_trial_with_no_review_row():
+ANCHOR_NAMES = ("correctness_anchor", "fabrication_anchor", "reconciling_items_anchor", "completeness_anchor")
+
+
+def test_errored_epoch_is_a_format_break_and_a_failed_trial():
+    # Decision D-R20: an errored epoch carries FM-000, fails its trial, scores 0 on every
+    # anchor and keeps FM-000 in the audit-adjusted figure whatever the audit rules.
     samples = hard_samples()
     rec = carried_record(samples, [entry()])
     rep = trials.review_settled_trial(samples, rec, k=4)
     e2 = next(e for e in rep.samples["h"].epochs if e.epoch == 2)
-    assert not e2.success and e2.reasons == ("sample error",)
+    assert not e2.success and e2.reasons == ("sample error", trials.ERRORED_FORMAT_BREAK_REASON,
+                                             "FM codes ['FM-000'] (codes final)")
+    assert e2.failure_modes == ("FM-000",) and e2.anchors == {a: 0.0 for a in ANCHOR_NAMES}
     assert rep.pass_k == {"h": 0}
     assert all(e.success for e in rep.samples["h"].epochs if e.epoch != 2)
-    assert trials.audit_adjusted_trial(samples, rec, k=4).pass_k == {"h": 0}
+    assert rep.anchor_means()["correctness_anchor"]["mean"] == 2.25
+    ruled_out = carried_record(samples, [entry()], errored_rows=False)
+    ruled_out.audit("h", 2, "FM-000", verdict="extractor_error")
+    ruled_out.narrative("h", 2)
+    for record in (rec, ruled_out):
+        audit = trials.audit_adjusted_trial(samples, record, k=4)
+        a2 = next(e for e in audit.samples["h"].epochs if e.epoch == 2)
+        assert audit.pass_k == {"h": 0} and a2.failure_modes == ("FM-000",) and a2.removed_codes == ()
+        assert a2.anchors == {a: 0.0 for a in ANCHOR_NAMES}
+    for trial in (trials.route_blind_trial, trials.code_only_trial):
+        r = trial(samples, k=4)
+        assert r.pass_k == {"h": 0}
+        assert next(e for e in r.samples["h"].epochs if e.epoch == 2).failure_modes == ("FM-000",)
+    blind = trials.route_blind_trial(samples, k=4)
+    assert next(e for e in blind.samples["h"].epochs if e.epoch == 2).anchors == {a: 0.0 for a in ANCHOR_NAMES}
+
+
+def test_errored_epoch_needs_its_fm000_audit_row_and_its_narrative_read():
+    samples = hard_samples()
+    rec = carried_record(samples, [entry()], errored_rows=False)
+    with pytest.raises(trials.RecordError) as e:
+        trials.review_settled_trial(samples, rec, k=4)
+    assert "h epoch 2: no audit row for FM-000" in e.value.gaps
+    assert "h epoch 2: no whole-narrative member" in e.value.gaps
+
+
+def test_epoch_codes_adds_fm000_on_an_errored_epoch_only():
+    err = SimpleNamespace(error=SimpleNamespace(message="boom"))
+    assert trials.epoch_codes(err, ()) == ("FM-000",)
+    assert trials.epoch_codes(err, ("FM-001",)) == ("FM-000", "FM-001")
+    assert trials.epoch_codes(err, ("FM-000", "FM-005")) == ("FM-000", "FM-005")
+    ok = SimpleNamespace(error=None)
+    assert trials.epoch_codes(ok, ()) == () and trials.epoch_codes(ok, ("FM-001",)) == ("FM-001",)
 
 
 def test_a_record_without_the_carried_list_reads_as_before():
     samples = hard_samples()
-    rec = carried_record(samples, None)
+    rec = carried_record(samples, None, errored_rows=False)
     del rec.carried
     with pytest.raises(trials.RecordError, match="h epoch 2: no whole-narrative member"):
         trials.review_settled_trial(samples, rec, k=4)
@@ -1007,9 +1168,22 @@ def test_carried_list_of_another_run_does_not_count():
         trials.review_settled_trial(samples, rec, k=4)
 
 
-def test_a_narrative_member_on_a_carried_epoch_is_a_gap():
-    samples = hard_samples()
-    rec = carried_record(samples, [entry()])
+def unscored_samples():
+    blank = SimpleNamespace(value=None, metadata={})
+    out = [sample("h", e, kind="edge") for e in (1, 3, 4)]
+    out.append(sample("h", 2, kind="edge", completeness=blank))
+    return sorted(out, key=lambda s: s.epoch)
+
+
+UNSCORED = "completeness_anchor unscored or non-numeric"
+
+
+def test_a_narrative_member_on_an_unscored_carried_epoch_is_a_gap():
+    # an unscored epoch with no sample error is not a format break (decision D-R20): the
+    # packet reads none of it, so a narrative member on it is a gap
+    samples = unscored_samples()
+    rec = carried_record(samples, [entry(reason=UNSCORED)])
+    assert trials.review_settled_trial(samples, rec, k=4).pass_k == {"h": 0}
     rec.narrative("h", 2)
     with pytest.raises(trials.RecordError, match="reads the narrative of an epoch the packet carried"):
         trials.review_settled_trial(samples, rec, k=4)
@@ -1022,51 +1196,72 @@ FM001 = SimpleNamespace(value=0, metadata={"failure_modes": ["FM-001"], "require
 def test_an_fm_coded_carried_epoch_needs_its_audit_row_and_its_narrative_read():
     # Section 8: the settlement refuses a record unless every FM-coded (epoch, code) has an
     # audit row; section 6: the audit reads that epoch's narrative whole. A carried epoch is
-    # no exception, and it stays a failed trial whatever the rows say.
+    # no exception, and it stays a failed trial whatever the rows say. Being errored, it
+    # also carries FM-000 (decision D-R20), which the audit never removes (D-R5).
     samples = hard_samples(correctness=FM001)
-    rec = carried_record(samples, [entry()])
+    rec = carried_record(samples, [entry()], errored_rows=False)
     with pytest.raises(trials.RecordError) as e:
         trials.review_settled_trial(samples, rec, k=4)
     assert "h epoch 2: no audit row for FM-001" in e.value.gaps
+    assert "h epoch 2: no audit row for FM-000" in e.value.gaps
     assert "h epoch 2: no whole-narrative member" in e.value.gaps
     rec.audit("h", 2, "FM-001", verdict=None)
+    rec.audit("h", 2, "FM-000")
     rec.narrative("h", 2)
     with pytest.raises(trials.RecordError, match="h epoch 2: audit verdict None for FM-001"):
         trials.review_settled_trial(samples, rec, k=4)
-    done = carried_record(samples, [entry()])
+    done = carried_record(samples, [entry()], errored_rows=False)
     done.audit("h", 2, "FM-001", verdict="extractor_error")
+    done.audit("h", 2, "FM-000", verdict="extractor_error")
     done.narrative("h", 2, "wrong", ("amount",))
     for trial in (trials.review_settled_trial, trials.audit_adjusted_trial):
         rep = trial(samples, done, k=4)
         e2 = next(e for e in rep.samples["h"].epochs if e.epoch == 2)
         assert rep.pass_k == {"h": 0} and not e2.success and e2.reasons[0] == "sample error"
         assert not any("whole-narrative" in r for r in e2.reasons)  # review never settles a carried epoch
+        assert "FM-000" in e2.failure_modes
+    audit = trials.audit_adjusted_trial(samples, done, k=4)
+    assert next(e for e in audit.samples["h"].epochs if e.epoch == 2).removed_codes == ("FM-001",)
 
 
 def test_audited_code_counts_never_reads_a_missing_carried_audit_row_as_real_error():
     samples = hard_samples(correctness=FM001)
-    rec = carried_record(samples, [entry()])
+    rec = carried_record(samples, [entry()], errored_rows=False)
     with pytest.raises(trials.RecordError, match="no audit row for FM-001"):
         trials.audited_code_counts(samples, rec, k=4, case_kinds=None)
     counts = trials.audited_code_counts(samples, rec, k=4, case_kinds=None, require_complete=False)
-    assert counts == {"real_error": {}, "extractor_error": {}, trials.NOT_AUDITED: {"FM-001": 1}}
+    assert counts == {"real_error": {}, "extractor_error": {}, trials.NOT_AUDITED: {"FM-000": 1, "FM-001": 1}}
     rec.audit("h", 2, "FM-001")
+    rec.audit("h", 2, "FM-000")
     rec.narrative("h", 2)
     assert trials.audited_code_counts(samples, rec, k=4, case_kinds=None) == {
-        "real_error": {"FM-001": 1}, "extractor_error": {}}
+        "real_error": {"FM-000": 1, "FM-001": 1}, "extractor_error": {}}
     # an epoch nothing carried reads as before
     clean = [sample("c", e, kind="adversarial") for e in range(1, 5)]
     assert trials.audited_code_counts(clean, record_for(clean), k=4) == {"real_error": {}, "extractor_error": {}}
 
 
+@pytest.mark.parametrize("verdict,h2", [("real_error", {"FM-000": 1}), ("extractor_error", {})])
+def test_an_errored_epoch_supports_h2_only_when_the_audit_rules_it_real_error(verdict, h2):
+    # Section 2 and decision D-R20: H2 counts FM-000 only when the audit rules it real_error;
+    # the audit-adjusted figure keeps it either way (D-R5).
+    samples = hard_samples(kind="adversarial")
+    rec = carried_record(samples, [entry()], errored_rows=False)
+    rec.audit("h", 2, "FM-000", verdict=verdict)
+    rec.narrative("h", 2)
+    counts = trials.audited_code_counts(samples, rec, k=4)
+    assert counts["real_error"] == h2
+    assert counts["extractor_error"] == ({} if h2 else {"FM-000": 1})
+    assert trials.audit_adjusted_trial(samples, rec, k=4).pass_k == {"h": 0}
+
+
 def test_unscored_epoch_is_carried_with_its_reason():
-    blank = SimpleNamespace(value=None, metadata={})
-    samples = [sample("h", e, kind="edge") for e in (1, 2, 3)]
-    samples.append(sample("h", 4, kind="edge", completeness=blank))
-    rec = carried_record(samples, [entry(epoch=4, reason="completeness_anchor unscored or non-numeric")])
+    samples = unscored_samples()
+    rec = carried_record(samples, [entry(reason=UNSCORED)])
     rep = trials.review_settled_trial(samples, rec, k=4)
-    e4 = next(e for e in rep.samples["h"].epochs if e.epoch == 4)
-    assert e4.reasons == ("completeness_anchor unscored or non-numeric",)
+    e2 = next(e for e in rep.samples["h"].epochs if e.epoch == 2)
+    assert e2.reasons == (UNSCORED,) and e2.failure_modes == ()  # not a format break (decision D-R20)
+    assert e2.anchors["completeness_anchor"] is None
 
 
 def test_carried_list_is_read_from_the_packet_summary(tmp_path):
@@ -1078,9 +1273,11 @@ def test_carried_list_is_read_from_the_packet_summary(tmp_path):
     summary.parent.mkdir(parents=True)
     summary.write_text(json.dumps({"totals": {trials.CARRIED_KEY: [entry()]}}), encoding="utf-8")
     assert trials.review_settled_trial(samples, rec, k=4).pass_k == {"h": 0}
-    summary.write_text(json.dumps({"totals": {}}), encoding="utf-8")
-    with pytest.raises(trials.RecordError, match="no whole-narrative member"):
+    summary.write_text(json.dumps({"totals": {trials.CARRIED_KEY: [entry(), entry(epoch=3)]}}), encoding="utf-8")
+    with pytest.raises(trials.RecordError, match="but the log scores it"):
         trials.review_settled_trial(samples, rec, k=4)
+    summary.write_text(json.dumps({"totals": {}}), encoding="utf-8")
+    assert trials.review_settled_trial(samples, rec, k=4).pass_k == {"h": 0}  # no list: read as before
 
 
 # --- Public text ---------------------------------------------------------------------------------------

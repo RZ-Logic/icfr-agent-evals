@@ -861,3 +861,40 @@ def test_end_to_end_audit_extractor_error_lifts_only_the_audit_adjusted_figure(e
     assert res["anchor_means"][C]["review_settled"]["mean"] < 3.0
     counts = trials.audited_code_counts(e2e.log, e2e.extractor, case_kinds=None)
     assert counts == {"real_error": {}, "extractor_error": {}}  # FM-003 is not an H2 code
+
+
+# --- The defect sensitivity row (decision D-R20) ----------------------------------------------
+
+DEFECT_REASONS = {
+    "S17": "computed explained split disagrees with truth although every eligible item is cited",
+    "S18": "narrative extractor raised KeyError: 'x'",
+    "S72": "extractor_error: KeyError",
+}
+
+
+def test_defect_epochs_are_read_from_the_settlement_table():
+    # The rows that file an extractor or an answer-key defect, found by their effect in the
+    # table, never by row id; other unsettleable routes (a non-Latin letter) are not defects.
+    assert {r.row_id for r in settlement.TABLE if not r.settleable and r.on_correct in trials.defect_on_correct()} == {
+        "S17", "S18", "S72"}
+    samples = clean("a", e2=sample("a", 2, correctness=_score(3, reasons=[DEFECT_REASONS["S72"]])),
+                    e3=sample("a", 3, correctness=_score(3, reasons=[NONLATIN])))
+    samples += clean("b", e1=sample("b", 1, reconciling=_score(3, reasons=[DEFECT_REASONS["S17"]])),
+                     e4=sample("b", 4, correctness=_score(3, reasons=[DEFECT_REASONS["S18"]])))
+    found = trials.defect_epochs(samples, k=4)
+    assert sorted(found) == [("a", 2), ("b", 1), ("b", 4)]
+    assert not trials.is_defect_route(regression.route_key(NONLATIN), [NONLATIN])
+    rec = record_for(samples)
+    settled = trials.review_settled_trial(samples, rec, k=4)
+    assert settled.pass_k == {"a": 0, "b": 0}
+    row = trials.defect_dropped(settled, found)
+    assert row["per_sample"] == {"a": 0, "b": 1}  # a still fails on its non-Latin letter
+    assert (row["samples_fewer_than_k"], row["samples_left_row"], row["dropped_epochs"]) == (2, 0, 3)
+
+
+def test_defect_dropped_changes_nothing_without_defects():
+    samples = clean("a") + clean("b", e2=sample("b", 2, correctness=_score(0, ["FM-001"])))
+    rec = record_for(samples)
+    for rep in (trials.review_settled_trial(samples, rec, k=4), trials.audit_adjusted_trial(samples, rec, k=4)):
+        row = trials.defect_dropped(rep, trials.defect_epochs(samples, k=4))
+        assert row["per_sample"] == rep.pass_k and row["dropped_epochs"] == 0
