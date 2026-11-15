@@ -329,9 +329,29 @@ def test_pool_judges_the_same_text_on_different_cases_apart():
     rec = pool_record([("u1", "case-a", "X", ["R1"]), ("u2", "case-a", "X", ["R2"]),
                        ("u3", "case-b", "X", ["R1"])])
     assert rf.blind_check_pool(rec) == [("u3", "R1")]
-    # X qualifies on two cases: the page shows no case, so the text is shown once, from the lowest case
+
+
+def test_pool_drops_a_text_that_qualifies_under_different_runs_on_different_cases():
+    # decision D-R20, ruling 4: X is R2's alone on case-a and R1's alone on case-b; the page
+    # shows no case, so X has no single right answer and leaves the pool entirely
     rec = pool_record([("u9", "case-a", "X", ["R2"]), ("u3", "case-b", "X", ["R1"]), ("u5", "case-c", "W", ["R1"])])
-    assert rf.blind_check_pool(rec) == [("u5", "R1"), ("u9", "R2")]
+    assert rf.blind_check_pool(rec) == [("u5", "R1")]
+    # three cases, two of them under R1 and one under R2: still out
+    rec = pool_record([("u1", "case-a", "X", ["R1"]), ("u2", "case-b", "X", ["R1"]), ("u3", "case-c", "X", ["R2"]),
+                       ("u4", "case-d", "W", ["R2"])])
+    assert rf.blind_check_pool(rec) == [("u4", "R2")]
+
+
+def test_pool_keeps_a_text_that_qualifies_under_one_run_on_several_cases_once():
+    # decision D-R20, ruling 4: X qualifies on three cases, each time under R1 alone: shown once,
+    # from its lowest (case id, unit id)
+    rec = pool_record([("u7", "case-c", "X", ["R1"]), ("u9", "case-a", "X", ["R1"]), ("u2", "case-b", "X", ["R1"]),
+                       ("u5", "case-d", "W", ["R2"])])
+    assert rf.blind_check_pool(rec) == [("u5", "R2"), ("u9", "R1")]
+    # a case where X is shared by two runs does not qualify and does not count as a different run
+    rec = pool_record([("u1", "case-a", "X", ["R1"]), ("u2", "case-b", "X", ["R1"]), ("u3", "case-b", "X", ["R2"]),
+                       ("u4", "case-c", "X", ["R1"])])
+    assert rf.blind_check_pool(rec) == [("u1", "R1")]
 
 
 def test_pool_compares_the_displayed_text_exactly():
@@ -371,7 +391,8 @@ def test_draw_takes_all_when_fewer_than_40_qualify(n_texts, want):
 
 def dup_text_env(tmp_path):
     """Two distinct narrative units with one text on case-s, one in each worker run, plus
-    the same text held once by R1 on case-t, and two texts R1 wrote once each."""
+    the same text held once by R1 on case-t; text p held by R1 on case-p and by R2 on
+    case-q; text r held by R2 on case-r1 and case-r2."""
     shared = text("shared")
     return custom_packet(tmp_path, [
         ("A", "case-a", text("a"), [(0, 1, True)]),
@@ -381,6 +402,8 @@ def dup_text_env(tmp_path):
         ("T", "case-t", shared, [(0, 2, False)]),
         ("P", "case-p", text("p"), [(0, 1, False)]),
         ("Q", "case-q", text("p"), [(1, 1, False)]),
+        ("RA", "case-r1", text("r"), [(1, 1, False)]),
+        ("RB", "case-r2", text("r"), [(1, 2, False)]),
     ])
 
 
@@ -392,11 +415,13 @@ def test_blind_check_draw_shows_no_text_twice(tmp_path, monkeypatch, capsys):
     sheet = rs.read_csv(d3 / rf.BLIND_CHECK_CSV, rf.BLIND_CHECK_COLUMNS)
     texts = [r["narrative"] for r in sheet]
     assert len(texts) == len(set(texts))
-    # case-s names no one model, case-t names R1; text p qualifies on case-p and case-q and is shown once
-    assert sorted(texts) == sorted([text("a"), text("b"), text("shared"), text("p")])
+    # case-s names no one model, case-t names R1; text p qualifies under R1 on case-p and
+    # under R2 on case-q, so it leaves the pool (decision D-R20); text r qualifies under R2 on
+    # two cases and is shown once
+    assert sorted(texts) == sorted([text("a"), text("b"), text("shared"), text("r")])
     mapping = {m["check_id"]: m for m in rs.read_csv(d3 / rf.BLIND_CHECK_MAP, rf.BLIND_CHECK_MAP_COLUMNS)}
     by_text = {r["narrative"]: mapping[r["check_id"]]["run_label"] for r in sheet}
-    assert by_text[text("shared")] == "alpha" and by_text[text("p")] == "alpha"
+    assert by_text[text("shared")] == "alpha" and by_text[text("r")] == "beta"
     meta = json.loads((d3 / rf.BLIND_CHECK_META).read_text(encoding="utf-8"))
     assert meta["pool"] == 4 and meta["drawn"] == 4
     assert "only 4 narrative text(s)" in capsys.readouterr().err
@@ -452,6 +477,15 @@ def test_check_blind_check_folder_rebuilds_the_pool(tmp_path, monkeypatch, capsy
     _rehash(d3, rf.BLIND_CHECK_CSV)
     gaps, _ = rf.check_blind_check_folder(first, d3, first_sha, "abcdef1")
     assert any("blind-check.csv differs from the rebuild" in g for g in gaps)
+    for p, b in kept.items():
+        p.write_bytes(b)
+    # a reviewer sheet showing text p, which qualifies under two runs on two cases (decision D-R20)
+    sheet = rs.read_csv(csv_path, rf.BLIND_CHECK_COLUMNS)
+    sheet[0] = dict(sheet[0], narrative=text("p"))
+    rs.write_csv(csv_path, rf.BLIND_CHECK_COLUMNS, sheet)
+    _rehash(d3, rf.BLIND_CHECK_CSV)
+    gaps, result = rf.check_blind_check_folder(first, d3, first_sha, "abcdef1")
+    assert result is None and any("blind-check.csv differs from the rebuild" in g for g in gaps)
     for p, b in kept.items():
         p.write_bytes(b)
     # an edited pool count

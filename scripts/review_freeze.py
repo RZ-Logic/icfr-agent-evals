@@ -1178,8 +1178,11 @@ def blind_check_pool(rec: Record) -> list[tuple[str, str]]:
        has no one model to name (a template baseline is never a worker run);
     2. a qualifying group gives one entry, its lowest unit id, so a text one run wrote
        twice is shown once;
-    3. the same text qualifying on several cases is still one text on the page, which shows
-       no case: it gives one entry, from its lowest (case id, unit id).
+    3. the page shows no case, so a text is judged across the cases it qualifies on
+       (decision D-R20, ruling 4): when it qualifies on two or more cases under different
+       worker runs (one run on each case, but not the same run on every case) it has no
+       single right answer and leaves the pool entirely; when every case it qualifies on
+       names the same one worker run it stays, shown once, from its lowest (case id, unit id).
     Entries are sorted by unit id."""
     worker_set = set(worker_run_ids(rec))
     runs_of_unit: dict[str, set[str]] = {}
@@ -1194,15 +1197,19 @@ def blind_check_pool(rec: Record) -> list[tuple[str, str]]:
     for uid in runs_of_unit:
         u = rec.units[uid]
         groups.setdefault((str(u.get("case_id", "")), str(u.get("narrative", ""))), []).append(uid)
-    by_text: dict[str, tuple[str, str, str]] = {}
+    by_text: dict[str, list[tuple[str, str, str]]] = {}
     for (case, text), uids in sorted(groups.items()):
         runs = set().union(*(runs_of_unit[uid] for uid in uids))
         if len(runs) != 1:
             continue
-        pick = (case, min(uids), next(iter(runs)))
-        if text not in by_text or pick[:2] < by_text[text][:2]:
-            by_text[text] = pick
-    return sorted((uid, run) for _case, uid, run in by_text.values())
+        by_text.setdefault(text, []).append((case, min(uids), next(iter(runs))))
+    pool = []
+    for picks in by_text.values():
+        if len({run for _case, _uid, run in picks}) != 1:
+            continue  # qualifies under different worker runs on different cases: no single right answer
+        _case, uid, run = min(picks)
+        pool.append((uid, run))
+    return sorted(pool)
 
 
 def sample_size(n_units: int) -> int:
@@ -1568,7 +1575,8 @@ def check_blind_check_folder(first: Record, d3: Path, first_sha: str,
     manifest and freeze commit and the derived seed, every file still hashes to its meta,
     the drawn checks are the ones the pool of this record gives under that seed and the
     recorded salt (blind_check_checks: judged on the displayed text, no text shown twice,
-    pre-registration section 8), and the result is recomputed from the map and the kept
+    pre-registration section 8; a text that qualifies under different worker runs on
+    different cases is out of the pool, decision D-R20), and the result is recomputed from the map and the kept
     answers (red-team M4). Returns (gaps, result)."""
     gaps: list[str] = []
     meta_path = d3 / BLIND_CHECK_META

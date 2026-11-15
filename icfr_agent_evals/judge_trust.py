@@ -43,7 +43,9 @@ Gates (pre-registration section 7):
     not a gate.
   - reliability_exclusion: on a run whose reliability gate fails, each sub-dimension
     whose lower limit is below 0.60 is excluded from every reported claim for that
-    run, with the exclusion and its statistic returned for disclosure. It is outside
+    run, with the exclusion and its statistic returned for disclosure. An undefined
+    lower limit counts as failing the gate, so that sub-dimension is excluded with
+    the reason "undefined" (decision D-R20); the other is decided on its own value. It is outside
     the judge remedy order and never triggers a grader change.
   - retest_alpha and run_test_retest: the grader scores the calibration subset
     exactly 3 times at an acceptance look, the acceptance-look scoring counted as
@@ -101,6 +103,8 @@ STRATIFIED_LABEL = ("stratified: the calibration subset is stratified so every s
                     "least 4 times per sub-dimension, so the estimate is labeled stratified "
                     "(pre-registration sections 4 and 7)")
 INTRA_RATER_LABEL = "intra-rater (test-retest) agreement"
+EXCLUSION_BELOW = "below 0.60"          # reliability exclusion reasons, section 7
+EXCLUSION_UNDEFINED = "undefined"       # an undefined lower limit fails the gate, decision D-R20
 
 Pass = Mapping[str, Mapping[str, int]]
 
@@ -584,23 +588,29 @@ def reliability_exclusion(grader: Pass, calibrator: Pass, *, subdimensions: Sequ
     sub-dimension whose ICC(A,1) lower limit is below 0.60 is excluded from every reported claim
     for that run, and the deterministic anchors stand alone for it. Each exclusion is returned with
     its statistic for disclosure. It is outside the judge remedy order and never triggers a grader
-    change. An undefined lower limit is refused: the text does not say whether it excludes."""
+    change. An undefined lower limit counts as failing the gate (decision D-R20, ruling 7): that
+    sub-dimension is excluded for the run with the reason "undefined" disclosed, and every other
+    sub-dimension is still decided on its own lower limit."""
     gate = reliability_gate(grader, calibrator, subdimensions=subdimensions, confidence=confidence)
-    if gate["undefined"]:
-        raise Refused(f"ICC(A,1) lower limit undefined for {gate['undefined']}: pre-registration section 7 "
-                      "excludes a sub-dimension whose lower limit is below 0.60 and does not fix this case")
     kept, excluded = [], []
     for name in gate["subdimensions"]:
         stat = gate["per_subdimension"][name]["icc_a1"]
-        if stat["ci_lower"] < ICC_LOWER_LIMIT:
-            excluded.append({"subdimension": name, "statistic": "ICC(A,1) grader versus calibrator",
-                             "estimate": stat["estimate"], "ci_lower": stat["ci_lower"],
-                             "ci_upper": stat["ci_upper"], "n": stat["n"], "threshold": ICC_LOWER_LIMIT,
-                             "disclosure": (f"{name} excluded from every reported claim for this run: "
-                                            f"ICC(A,1) {stat['estimate']:.3f}, lower limit {stat['ci_lower']:.3f} "
-                                            f"below {ICC_LOWER_LIMIT:.2f}; the deterministic anchors stand alone")})
+        if stat["ci_lower"] is None:
+            estimate = "undefined" if stat["estimate"] is None else f"{stat['estimate']:.3f}"
+            reason, why = EXCLUSION_UNDEFINED, (
+                f"ICC(A,1) {estimate}, lower limit undefined ({stat['note']}), which counts as failing "
+                f"the {ICC_LOWER_LIMIT:.2f} gate (decision D-R20)")
+        elif stat["ci_lower"] < ICC_LOWER_LIMIT:
+            reason, why = EXCLUSION_BELOW, (
+                f"ICC(A,1) {stat['estimate']:.3f}, lower limit {stat['ci_lower']:.3f} below {ICC_LOWER_LIMIT:.2f}")
         else:
             kept.append(name)
+            continue
+        excluded.append({"subdimension": name, "statistic": "ICC(A,1) grader versus calibrator",
+                         "reason": reason, "estimate": stat["estimate"], "ci_lower": stat["ci_lower"],
+                         "ci_upper": stat["ci_upper"], "n": stat["n"], "threshold": ICC_LOWER_LIMIT,
+                         "disclosure": (f"{name} excluded from every reported claim for this run: {why}; "
+                                        "the deterministic anchors stand alone")})
     return {"gate_passed": gate["passed"], "kept": kept, "excluded": excluded,
             "triggers_grader_change": False, "remedy_order": REMEDY_NOTE, "gate": gate}
 
