@@ -403,7 +403,8 @@ def test_errored_epoch_is_a_format_break_with_its_audit_and_narrative_read(base_
     assert not [u for u in p.units if u.row_kind == "finding" and "direction_negated" in " ".join(u.reasons)]
     audits = [u for u in p.units if u.row_kind == "fm_audit"]
     assert [u.fm_code for u in audits] == ["FM-000", "FM-000"]
-    assert {u.fm_reasons for u in audits} == {(rp.ERRORED_EVIDENCE,)}
+    assert {u.fm_reasons for u in audits} == {
+        (rp.ERRORED_EVIDENCE, rp.ERRORED_CLASS_PREFIX + rp.ERRORED_CLASS_NOT_RECORDED)}
     parsed = {str(s.id): json.loads(s.output.completion) for s in log.samples if s.epoch == 4}
     for a in audits:
         narrative = next(u for u in p.units if u.unit_id == a.narrative_unit_ids[0])
@@ -809,7 +810,8 @@ def test_errored_epoch_audit_evidence_and_tag_wording():
     assert rp.ERRORED_TAG == "the epoch ended in an error; output shown as written"
     assert rp.ERRORED_TAG not in rp.UI_TEXT.values()
     errored = SimpleNamespace(error=SimpleNamespace(message="boom: provider error"), scores={})
-    assert rp._audit_evidence(errored, "FM-000") == (rp.ERRORED_EVIDENCE,)
+    assert rp._audit_evidence(errored, "FM-000") == (
+        rp.ERRORED_EVIDENCE, rp.ERRORED_CLASS_PREFIX + rp.ERRORED_CLASS_NOT_RECORDED)
     assert rp._audit_evidence(SimpleNamespace(error=None, scores={}), "FM-000") == (rp.STRUCTURED_LINE,)
 
 
@@ -847,3 +849,58 @@ def test_public_text_rules():
     for path in (SCRIPT, Path(__file__)):
         text = path.read_text(encoding="utf-8")
         assert not re.search("[\u2013\u2014]", text), path
+
+
+# --- Decision D-R20 (2026-11-15): the error class name beside the FM-000 audit -------------------
+
+_TB = ("Traceback (most recent call last):\n  File \"x.py\", line 1, in <module>\n"
+       "anthropic.RateLimitError: Error code: 429 - claude-sonnet-5-5 is overloaded\n")
+
+
+def test_error_class_from_the_traceback_last_line():
+    err = SimpleNamespace(message="Error code: 429 - claude-sonnet-5-5 is overloaded", traceback=_TB)
+    assert rp.error_class(err) == "RateLimitError"
+
+
+def test_error_class_from_a_repr_message_when_no_traceback():
+    assert rp.error_class(SimpleNamespace(message="TimeoutError('read timed out')", traceback="")) == "TimeoutError"
+
+
+@pytest.mark.parametrize("err", [
+    None,
+    SimpleNamespace(message="boom: provider error", traceback=""),
+    SimpleNamespace(message="", traceback="something odd happened here\n"),
+    SimpleNamespace(message="ClaudeOverloadedError('x')", traceback=""),
+    SimpleNamespace(message="", traceback="Traceback\nmod.HaikuQuotaError: x\n"),
+])
+def test_error_class_withheld_when_unreadable_or_naming_a_model(err):
+    assert rp.error_class(err) == rp.ERRORED_CLASS_NOT_RECORDED
+
+
+def test_audit_evidence_shows_the_class_never_the_message():
+    errored = SimpleNamespace(error=SimpleNamespace(message="Error code: 429 - claude-sonnet-5-5", traceback=_TB),
+                              scores={})
+    ev = rp._audit_evidence(errored, "FM-000")
+    assert ev == (rp.ERRORED_EVIDENCE, rp.ERRORED_CLASS_PREFIX + "RateLimitError")
+    joined = " ".join(ev).lower()
+    for trace in ("429", "claude", "sonnet", "overloaded", "anthropic"):
+        assert trace not in joined
+
+
+def test_reviewer_files_show_the_error_class_but_never_the_message(base_log, truths, tmp_path):
+    err = make_log(base_log, tmp_path / "err.eval", MODEL_A,
+                   _with_errored(truths, fms=(), error="boom: provider error"), eval_split=True)
+    log = read_eval_log(err)
+    for s in log.samples:
+        if s.error is not None:
+            s.error = EvalError(message="Error code: 429 - claude-sonnet-5-5 is overloaded", traceback=_TB,
+                                traceback_ansi="")
+    write_eval_log(log, err)
+    p = rp.build_packet(rp.load_runs([("alpha", err)], SEED), run_id="carry", seed=SEED)
+    rp.write_packet(p, str(tmp_path / "err"))
+    texts = _reviewer_texts(tmp_path / "err")
+    assert any(rp.ERRORED_CLASS_PREFIX + "RateLimitError" in t for t in texts.values())
+    for rel, text in texts.items():
+        # "429" alone can sit inside a case figure, so the test looks for the message's own words
+        for trace in ("Error code", "claude-sonnet-5-5", "overloaded", MODEL_A):
+            assert trace not in text, (rel, trace)

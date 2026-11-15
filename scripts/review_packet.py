@@ -169,6 +169,46 @@ INJECTION_DETAIL_KEYS = ("target_field", "field_complied", "canary_found", "cana
 UNPARSED_FACT_KEY = "unparsed"
 # Audit evidence for the FM-000 of an errored epoch (decision D-R20).
 ERRORED_EVIDENCE = "sample error: the epoch ended in an error (decision D-R20)"
+# Beside it, the error's class name only (decision D-R20, 2026-11-15), so the audit can tell a
+# provider or tooling failure from a model failure. The error message is never shown, since
+# it can name the model, and a class name holding any word of a roster model id is withheld.
+ERRORED_CLASS_PREFIX = "error class: "
+ERRORED_CLASS_NOT_RECORDED = "not recorded"
+_CLASS_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
+_TRACEBACK_LAST_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_.]*)(?::|$)")
+_REPR_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\(")
+
+
+def _model_words() -> frozenset[str]:
+    from icfr_agent_evals import roster
+
+    ids = [roster.WORKER, *roster.BASELINES, roster.CALIBRATOR, *roster.GRADER_BY_STEP.values()]
+    return frozenset(w for i in ids for w in re.split(r"[^a-z]+", i.lower()) if len(w) >= 3)
+
+
+def error_class(error: Any) -> str:
+    """The class name of a sample error, from the last line of its traceback or, failing
+    that, from a repr-form message (`Name(...)`). Only the bare class name is returned, never
+    the module path or the message. A name that holds a word of any roster model id, or no
+    readable name at all, gives ERRORED_CLASS_NOT_RECORDED."""
+    if error is None:
+        return ERRORED_CLASS_NOT_RECORDED
+    name = None
+    lines = [ln.strip() for ln in str(getattr(error, "traceback", "") or "").splitlines() if ln.strip()]
+    if lines:
+        m = _TRACEBACK_LAST_RE.match(lines[-1])
+        if m:
+            name = m.group(1).rsplit(".", 1)[-1]
+    if not name:
+        m = _REPR_RE.match(str(getattr(error, "message", "") or ""))
+        if m:
+            name = m.group(1)
+    if not name or not _CLASS_NAME_RE.fullmatch(name):
+        return ERRORED_CLASS_NOT_RECORDED
+    low = name.lower()
+    if any(w in low for w in _model_words()):
+        return ERRORED_CLASS_NOT_RECORDED
+    return name
 # The page tag of a narrative unit read from an errored epoch (decision D-R20). It is page
 # data on that unit only, like the audit evidence, never a static label: the error text
 # itself is never shown.
@@ -628,6 +668,7 @@ def _audit_evidence(sample: Any, code: str) -> tuple[str, ...]:
         # Decision D-R20: the FM-000 of an errored epoch. The error text itself is never
         # shown, since it can name the model.
         out.append(ERRORED_EVIDENCE)
+        out.append(ERRORED_CLASS_PREFIX + error_class(sample.error))
     scores = getattr(sample, "scores", None) or {}
     for score in scores.values():
         meta = getattr(score, "metadata", None) or {}
