@@ -356,6 +356,24 @@ def test_reliability_exclusion_decides_the_other_subdimension_on_its_own_value()
     assert below["ci_lower"] < 0.60 and "below 0.60" in below["disclosure"] and "undefined" not in below["disclosure"]
 
 
+@pytest.mark.parametrize("matrix, error", [([[0, 3], [1, 1]], "ZeroDivisionError"),
+                                           ([[0, 3], [2, 1]], "ArithmeticError")])
+def test_icc_a1_with_a_tiny_df_gives_an_undefined_interval_not_a_crash(matrix, error):
+    # these matrices raised from f_ppf or the incomplete beta before (decision D-R20, ruling 7)
+    out = jt.icc_a1(matrix)
+    assert out["estimate"] is not None and out["ci_lower"] is None and out["ci_upper"] is None
+    assert out["defined"] is False and 0 < out["df_v"] < 0.1
+    assert out["note"].startswith("interval undefined") and error in out["note"]
+    grader, calibrator = ([r[0] for r in matrix], [r[1] for r in matrix])
+    r = jt.reliability_exclusion({G: _pass(grader)[G], C: _pass(CLOSE)[C]},
+                                 {G: _pass(calibrator)[G], C: _pass(HUMAN)[C]})
+    assert not r["gate_passed"] and r["gate"]["undefined"] == [G]
+    (ex,) = r["excluded"]
+    assert ex["subdimension"] == G and ex["reason"] == jt.EXCLUSION_UNDEFINED and ex["ci_lower"] is None
+    assert "lower limit undefined (interval undefined" in ex["disclosure"]
+    assert r["kept"] == [C]
+
+
 def test_reliability_exclusion_discloses_a_defined_estimate_with_an_undefined_interval(monkeypatch):
     real = jt.icc_a1
 

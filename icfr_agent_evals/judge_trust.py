@@ -271,6 +271,10 @@ def icc_a1(matrix: Sequence[Sequence[Any]], *, confidence: float = CONFIDENCE) -
     Every score equal leaves the estimate undefined (0 / 0). Two cases where v is 0 / 0 have
     an interval that does not depend on v: no residual and no rater variance (estimate 1,
     interval [1, 1]) and no residual and no output variance (estimate 0, interval [0, 0]).
+    When v is so small that the F quantile or the incomplete beta cannot be computed, or
+    the limits come out not finite, the interval is undefined with a note, so the
+    reliability gate fails and reliability_exclusion excludes that sub-dimension as
+    undefined (decision D-R20, ruling 7).
     """
     confidence = _check_confidence(confidence)
     an = two_way_anova(matrix)
@@ -295,11 +299,21 @@ def icc_a1(matrix: Sequence[Sequence[Any]], *, confidence: float = CONFIDENCE) -
         return _icc_result("ICC(A,1)", an, p, None, None, confidence,
                            "interval undefined: the McGraw-Wong degrees of freedom v are not positive", df_v=None)
     q = 1.0 - (1.0 - confidence) / 2.0
-    f_l = f_ppf(q, n - 1, v)
-    f_u = f_ppf(q, v, n - 1)
-    c = k * mscf + (k * n - k - n) * msef
-    lower = n * (msrf - f_l * msef) / (f_l * c + n * msrf)
-    upper = n * (f_u * msrf - msef) / (c + n * f_u * msrf)
+    try:
+        f_l = f_ppf(q, n - 1, v)
+        f_u = f_ppf(q, v, n - 1)
+        c = k * mscf + (k * n - k - n) * msef
+        lower = n * (msrf - f_l * msef) / (f_l * c + n * msrf)
+        upper = n * (f_u * msrf - msef) / (c + n * f_u * msrf)
+    except (ZeroDivisionError, OverflowError, ArithmeticError) as e:
+        # a tiny v can break the F quantile or the incomplete beta: the interval is undefined,
+        # so the reliability gate fails and that sub-dimension is excluded (decision D-R20, ruling 7)
+        return _icc_result("ICC(A,1)", an, p, None, None, confidence,
+                           f"interval undefined: the F quantile cannot be computed at McGraw-Wong degrees of "
+                           f"freedom v = {v:.3g} ({type(e).__name__})", df_v=v)
+    if not (math.isfinite(lower) and math.isfinite(upper)):
+        return _icc_result("ICC(A,1)", an, p, None, None, confidence,
+                           f"interval undefined: the McGraw-Wong limits are not finite at v = {v:.3g}", df_v=v)
     return _icc_result("ICC(A,1)", an, p, lower, upper, confidence, None, df_v=v, f_lower=f_l, f_upper=f_u)
 
 

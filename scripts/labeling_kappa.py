@@ -46,16 +46,26 @@ timer row) when that is later. The export time is the moment the compared first-
 labels were fixed, so the gap runs from it; a last stop after the export can only come
 from a clock change, and taking the later of the two never shortens the gap. A case
 lacks timer data when the first pass's export time is missing or unreadable, the
-first pass's last stop on the case is given but unreadable, or the second pass gives
-no readable start on the case. When any case lacks timer data, or any case shows a gap
-under 48 hours, the name is withheld with the reason and the cases listed.
+first pass's last stop on the case is given but unreadable, the second pass gives
+no readable start on the case, or the second pass's start on the case is later than
+the second pass's own export time (a start after the export cannot be a real start).
+The two export times are checked too: when the second pass's export is less than 48
+hours after the first pass's export, or either export time is missing or unreadable,
+the gap is not shown. When any case lacks timer data, any case shows a gap under 48
+hours, or the export times do not show the gap, the name is withheld with the reason
+and the cases listed.
 
-The adjudicated-case count (decision D-R20). Section 8 publishes the number of
-adjudicated cases. It is the count of cases whose two passes differ on any compared
-label: eligibility (any item), variance direction, band or evidence state (both passes
-give a value and the values differ), or an amount (variance, explained or unexplained)
-whose two readable values are more than $1 apart. The count of cases that differ on
-eligibility is reported beside it as a breakdown, with the count per label.
+The adjudicated-case count (decision D-R20, ruling 10). Section 8 publishes the number
+of adjudicated cases. It is the any-label count: a case counts when its two passes
+differ on any compared label. A label differs when both passes give it and the values
+differ, or when one pass gives it and the other leaves it blank or unreadable. The
+compared labels are eligibility on each item (an item labeled in one pass and absent
+from or blank in the other counts as differing), variance direction, band, evidence
+state, and the variance, explained and unexplained amounts (two readable amounts more
+than $1 apart differ, and so does an amount readable in one pass and blank or
+unreadable in the other). The count per label is reported inside the count as a
+breakdown. The kappa statistic keeps the omission rule above unchanged: for kappa an
+omitted item is not eligible.
 
 Reported beside the gate, not gating: kappa for variance direction (unweighted)
 and for band and evidence state (quadratic-weighted, over the sheet's three ordered
@@ -132,9 +142,11 @@ REFERENCE_LAST_STOP = "first_pass_last_stop_on_case"
 GAP_RULE = ("on each case the second pass's start on that case is at least 48 hours after the first pass's "
             "export time, or after the first pass's last recorded time on that case when that is later "
             "(pre-registration section 4; decision D-R20)")
-ADJUDICATED_DEFINITION = ("cases whose two passes differ on eligibility, variance direction, band or evidence "
-                          "state, or on an amount whose two readable values are more than $1 apart "
-                          "(pre-registration section 8; decision D-R20)")
+ADJUDICATED_DEFINITION = ("cases whose two passes differ on any compared label (eligibility on each item, "
+                          "variance direction, band, evidence state, or an amount): both passes give it and the "
+                          "values differ (amounts more than $1 apart), or one pass gives it and the other leaves "
+                          "it blank, unreadable or absent (pre-registration section 8; decision D-R20)")
+COUNTED_STATUSES = ("differ", "missing_first", "missing_second", "one_pass_only")
 
 
 class Refused(Exception):
@@ -573,35 +585,45 @@ def compare(first: PassLabels, second: PassLabels, *, seed: int,
                        "cases_left_out_for_a_missing_value": len(case_ids) - len(pairs)}
 
     match, unreadable = 0, 0
-    one_sided_amount: set[str] = set()
     for c in case_ids:
         got = [(parse_amount(first.cases[c].fields[f]), parse_amount(second.cases[c].fields[f]))
                for f in AMOUNT_FIELDS]
         apart = any(a is not None and b is not None and abs(a - b) > AMOUNT_TOLERANCE_CENTS for a, b in got)
-        if any((a is None) != (b is None) for a, b in got):
-            one_sided_amount.add(c)
+        one_sided = any((a is None) != (b is None) for a, b in got)
         if any(a is None or b is None for a, b in got):
             unreadable += 1
             none_given = all(a is None and b is None for a, b in got)
-            # an amount whose two readable values are more than $1 apart is a difference even
-            # when another amount is missing (decision D-R20)
-            statuses[c]["amounts"] = "differ" if apart else ("missing_both" if none_given else "missing")
+            # an amount readable in one pass and blank or unreadable in the other differs, as do two
+            # readable amounts more than $1 apart (decision D-R20, ruling 10)
+            statuses[c]["amounts"] = ("differ" if apart else "one_pass_only" if one_sided
+                                      else "missing_both" if none_given else "missing")
         elif not apart:
             match += 1
             statuses[c]["amounts"] = "agree"
         else:
             statuses[c]["amounts"] = "differ"
     for c in case_ids:
-        statuses[c]["eligibility"] = ("differ" if any(a != b for _, a, b, _ in per_case_items[c])
-                                      else "agree")
+        rows = per_case_items[c]
+        if any(h == "both" and a != b for _, a, b, h in rows):
+            statuses[c]["eligibility"] = "differ"
+        elif any(h != "both" for *_, h in rows):
+            # an item labeled in one pass and absent from or blank in the other (decision D-R20, ruling 10)
+            statuses[c]["eligibility"] = "one_pass_only"
+        else:
+            statuses[c]["eligibility"] = "agree"
 
     compared = ("eligibility", "variance_direction", "band", "evidence_state", "amounts")
-    elig_queue = [c for c in case_ids if statuses[c]["eligibility"] == "differ"]
-    adjudicated = [c for c in case_ids if any(statuses[c][lab] == "differ" for lab in compared)]
-    by_label = {lab: sum(1 for c in case_ids if statuses[c][lab] == "differ") for lab in compared}
-    one_sided = [c for c in case_ids if c not in adjudicated and (
-        c in one_sided_amount
-        or any(statuses[c][lab] in ("missing_first", "missing_second") for lab in compared))]
+
+    def counted(c: str, lab: str) -> bool:
+        return statuses[c][lab] in COUNTED_STATUSES
+
+    elig_queue = [c for c in case_ids if counted(c, "eligibility")]
+    adjudicated = [c for c in case_ids if any(counted(c, lab) for lab in compared)]
+    by_label = {lab: sum(1 for c in case_ids if counted(c, lab)) for lab in compared}
+    by_label_detail = {lab: {"both_given_and_differ": sum(1 for c in case_ids if statuses[c][lab] == "differ"),
+                             "given_in_one_pass_only": sum(1 for c in case_ids if counted(c, lab)
+                                                           and statuses[c][lab] != "differ")}
+                       for lab in compared}
 
     warnings = list(first.warnings) + list(second.warnings)
     withheld: list[str] = []
@@ -619,6 +641,8 @@ def compare(first: PassLabels, second: PassLabels, *, seed: int,
         withheld.append(f"the sheet's timer data shows the second pass started less than 48 hours after the "
                         f"first pass on {len(short)} case(s) ({', '.join(short)}) (pre-registration section 4; "
                         "decision D-R20)")
+    if timing["exports_problem"]:
+        withheld.append(timing["exports_problem"])
 
     named = subset_name(kappa, reason)
     on_kappa = named["name"]
@@ -656,9 +680,8 @@ def compare(first: PassLabels, second: PassLabels, *, seed: int,
             "breakdown": {
                 "on_eligibility": {"count": len(elig_queue), "cases": elig_queue},
                 "by_label": by_label,
+                "by_label_detail": by_label_detail,
             },
-            "label_given_in_one_pass_only": {"count": len(one_sided), "cases": one_sided,
-                                             "note": "not in the adjudicated-case count"},
         },
         "case_count": len(case_ids),
         "cases": [{"case_id": c, "labels": statuses[c],
@@ -693,9 +716,12 @@ def _timing(first: PassLabels, second: PassLabels, case_ids: Sequence[str]) -> d
     Per case: the reference time is the first pass's export time, or the first pass's
     last stop on the case when that is later; the gap runs from it to the second pass's
     start on the case. A case lacks timer data when a time it needs is missing or
-    unreadable. compare withholds the name when any case lacks timer data or shows a
-    gap under 48 hours."""
+    unreadable, or when the second pass's start on it is later than the second pass's
+    own export time. compare withholds the name when any case lacks timer data, any
+    case shows a gap under 48 hours, or the second pass's export is less than 48 hours
+    after the first pass's export (or either export time is unreadable)."""
     exported = _parse_utc(first.exported_at_utc)
+    second_exported = _parse_utc(second.exported_at_utc)
     rows: list[dict[str, Any]] = []
     lacking: list[str] = []
     short: list[str] = []
@@ -712,6 +738,8 @@ def _timing(first: PassLabels, second: PassLabels, case_ids: Sequence[str]) -> d
             missing = "the second pass records no start time on the case"
         elif start is None:
             missing = "the second pass's start time on the case is unreadable"
+        elif second_exported is not None and start > second_exported:
+            missing = "the second pass's start time on the case is later than the second pass's export time"
         ref, source = exported, REFERENCE_EXPORT
         if exported is not None and last is not None and last > exported:
             ref, source = last, REFERENCE_LAST_STOP
@@ -731,8 +759,20 @@ def _timing(first: PassLabels, second: PassLabels, case_ids: Sequence[str]) -> d
                 row["status"] = "at_least_48_hours"
         rows.append(row)
     hours = [r["hours"] for r in rows if r["hours"] is not None]
+    between = None
+    if exported is not None and second_exported is not None:
+        between = round((second_exported - exported).total_seconds() / 3600, 2)
+    problem = None
+    if exported is None or second_exported is None:
+        problem = ("the 48-hour gap is not shown: an export time is missing or unreadable, so the second pass's "
+                   "export cannot be checked against the first pass's (pre-registration section 4; decision D-R20)")
+    elif second_exported - exported < timedelta(hours=RELABEL_GAP_HOURS):
+        problem = (f"the second pass was exported {between} hours after the first pass, less than the 48 hours "
+                   "of pre-registration section 4 (decision D-R20)")
     return {"rule": GAP_RULE, "first_exported_at_utc": first.exported_at_utc,
-            "gap_shown_on_every_case": bool(rows) and not lacking and not short,
+            "second_exported_at_utc": second.exported_at_utc, "hours_between_exports": between,
+            "exports_problem": problem,
+            "gap_shown_on_every_case": bool(rows) and not lacking and not short and problem is None,
             "cases_without_timer_data": lacking, "cases_under_48_hours": short,
             "smallest_gap_hours": min(hours) if hours else None, "cases": rows}
 
@@ -773,15 +813,16 @@ def format_summary(result: Mapping[str, Any]) -> str:
     lines.append(f"Adjudicated-case count: {adj['count']} ({adj['definition']})")
     lines.append(f"  breakdown: {brk['on_eligibility']['count']} on eligibility; by label "
                  + ", ".join(f"{lab} {n}" for lab, n in brk["by_label"].items()))
-    one = dis["label_given_in_one_pass_only"]
-    if one["count"]:
-        lines.append(f"  {one['count']} other case(s) hold a label given in one pass only, not in the "
-                     f"adjudicated-case count: {', '.join(one['cases'])}")
+    one = {lab: d["given_in_one_pass_only"] for lab, d in brk["by_label_detail"].items()
+           if d["given_in_one_pass_only"]}
+    if one:
+        lines.append("  of these, given in one pass only: " + ", ".join(f"{lab} {n}" for lab, n in one.items()))
     t = result["timing"]
     lines.append("48-hour gap: " + ("shown on every case" if t["gap_shown_on_every_case"] else "not shown on every case")
                  + f"; smallest gap {'undefined' if t['smallest_gap_hours'] is None else t['smallest_gap_hours']} "
                  f"hours; {len(t['cases_without_timer_data'])} case(s) without timer data; "
-                 f"{len(t['cases_under_48_hours'])} case(s) under 48 hours")
+                 f"{len(t['cases_under_48_hours'])} case(s) under 48 hours; exports "
+                 f"{'undefined' if t['hours_between_exports'] is None else t['hours_between_exports']} hours apart")
     for w in result["warnings"]:
         lines.append(f"warning: {w}")
     return "\n".join(lines)
