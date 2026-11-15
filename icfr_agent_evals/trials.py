@@ -42,6 +42,17 @@ is in the case file exactly (`in_case_file` on its sweep hit); otherwise it keep
 effect it had before. Every epoch holding a code-found (P12) citation omission needs the
 whole-narrative read. A log scored before D-R9 is refused (reliability.scored_before_d_r9).
 
+Carried epochs (pre-registration section 6 and section 13, decision D-R19): an epoch
+with a sample error, or with a trial anchor missing or not a finite number, fails every
+figure whatever review finds, and the review packet builds no unit from it. It lists
+each one in sealed/summary.json under totals.carried_failed_trials. When the record
+carries that list (a `carried` attribute, or the summary file in its packet_dir), the
+record check needs no finding row and no whole-narrative row for such an epoch, and no
+audit row when the packet built no audit unit for it. The epochs code finds this way
+must be the epochs the list names, with the same reason, or the record is refused. The
+epoch still fails in the settlement with its own reason. A record without the list is
+read exactly as before.
+
 Imports of settlement and regression are made inside functions, so regression.py may
 import this module at load time without an import cycle.
 """
@@ -53,6 +64,7 @@ import json
 import math
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from . import reliability as rel
@@ -115,6 +127,11 @@ REAL_ERROR, EXTRACTOR_ERROR = rs.AUDIT_VERDICTS
 D_H_MODE = "findings"                      # review_schema.FM_EPOCH_ROUTE_MODES, ruled D-H
 D_J_SCOPES: frozenset[str] = frozenset({"hard", "all"})  # whole-narrative scopes that meet D-J (b)
 OFF_CONTRACT_AMOUNT, OFF_CONTRACT_BAND, OFF_CONTRACT_PERIOD = "variance_amount_usd", "materiality_band", "period"
+# Carried epochs: the key scripts/review_packet.py writes under totals in sealed/summary.json,
+# and the reasons it records, in the words _settle gives the same epoch.
+CARRIED_KEY = "carried_failed_trials"
+SAMPLE_ERROR_REASON = "sample error"
+UNSCORED_REASON = "{anchor} unscored or non-numeric"
 
 
 class RecordError(ValueError):
@@ -492,13 +509,95 @@ def _record_view(record: Any, run_id: str) -> _RecordView:
     return view
 
 
+def carried_reason(f: _Facts) -> str:
+    """Why this epoch is carried as a failed trial with no review unit, in the words
+    scripts/review_packet.py records (a sample error, then each trial anchor missing or
+    not a finite number, joined by "; "); "" for an epoch review reads."""
+    reasons = [SAMPLE_ERROR_REASON] if f.error else []
+    reasons += [UNSCORED_REASON.format(anchor=a) for a in rel.TRIAL_ANCHORS if f.anchors[a] is None]
+    return "; ".join(reasons)
+
+
+def record_carried(record: Any) -> tuple[dict[tuple[str, str, int], str] | None, list[str]]:
+    """The carried epochs the record lists, as {(run id, sample id, epoch): reason}, and
+    the gaps found reading them. The list is the record's `carried` attribute (entries
+    with run_id, sample_id, epoch and reason, as dicts or objects), else
+    totals.carried_failed_trials of sealed/summary.json in its packet_dir. None when the
+    record carries no list: such a record is read as before carried epochs existed."""
+    entries = getattr(record, "carried", None)
+    gaps: list[str] = []
+    if entries is None:
+        packet_dir = getattr(record, "packet_dir", None)
+        path = Path(packet_dir) / rs.PACKET_FILES["summary"] if packet_dir else None
+        if path is None or not path.is_file():
+            return None, []
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, ValueError):
+            return None, ["sealed/summary.json cannot be read, so its carried epochs cannot be checked"]
+        totals = data.get("totals") if isinstance(data, Mapping) else None
+        if not isinstance(totals, Mapping) or CARRIED_KEY not in totals:
+            return None, []
+        entries = totals[CARRIED_KEY]
+    if not isinstance(entries, (list, tuple)):
+        return None, [f"the record's {CARRIED_KEY} is not a list"]
+    out: dict[tuple[str, str, int], str] = {}
+    for entry in entries:
+        get = entry.get if isinstance(entry, Mapping) else (lambda k, e=entry: getattr(e, k, None))
+        try:
+            ident = (str(get("run_id")), str(get("sample_id")), int(get("epoch")))
+        except (TypeError, ValueError):
+            gaps.append(f"a {CARRIED_KEY} entry has no readable run, sample and epoch")
+            continue
+        if ident in out:
+            gaps.append(f"{ident[1]} epoch {ident[2]}: run {ident[0]} lists the carried epoch twice")
+            continue
+        out[ident] = str(get("reason") or "")
+    return out, gaps
+
+
+def _carried_skip(view: _RecordView, record: Any,
+                  facts: Mapping[tuple[str, int], _Facts]) -> tuple[set[tuple[str, int]], list[str]]:
+    """The epochs of this run that need no review row because the packet carried them, and
+    every mismatch between them and the record's carried list. Empty when the record
+    carries no list."""
+    listed, gaps = record_carried(record)
+    if listed is None:
+        return set(), gaps
+    mine = {(sid, ep): why for (rid, sid, ep), why in listed.items() if rid == view.run_id}
+    skip: set[tuple[str, int]] = set()
+    for ident, f in sorted(facts.items()):
+        why = carried_reason(f)
+        sid, ep = ident
+        if not why:
+            if ident in mine:
+                gaps.append(f"{sid} epoch {ep}: the packet carried it as a failed trial ({mine[ident]}), "
+                            f"but the log scores it")
+            continue
+        if ident not in mine:
+            gaps.append(f"{sid} epoch {ep}: the log fails it as a carried epoch ({why}), "
+                        f"but the packet's carried list does not name it")
+        elif mine[ident] != why:
+            gaps.append(f"{sid} epoch {ep}: the packet carried it for {mine[ident]!r}, the log gives {why!r}")
+        else:
+            skip.add(ident)
+    for (sid, ep) in sorted(set(mine) - set(facts)):
+        gaps.append(f"{sid} epoch {ep}: the packet carried an epoch the log does not hold")
+    return skip, gaps
+
+
 def _record_gaps(view: _RecordView, record: Any, facts: Mapping[tuple[str, int], _Facts]) -> list[str]:
     """Every way the record fails to cover this run's log (section 8: the settlement
     refuses a record unless every finding, every narrative in scope and every
-    FM-coded (epoch, code) has exactly one row)."""
+    FM-coded (epoch, code) has exactly one row). An epoch the packet carried as a failed
+    trial (_carried_skip) needs no finding or whole-narrative row, and no audit row when
+    the packet built no audit unit for it."""
     from . import settlement
 
     gaps = list(view.gaps)
+    carried, carried_gaps = _carried_skip(view, record, facts)
+    gaps.extend(carried_gaps)
+    audited_epochs = {(sid, ep) for (sid, ep, _code) in view.audits}
     meta = getattr(record, "meta", None) or {}
     if meta.get("fm_epoch_routes", D_H_MODE) != D_H_MODE:
         gaps.append(f"packet fm_epoch_routes is {meta.get('fm_epoch_routes')!r}; D-H needs {D_H_MODE!r}")
@@ -507,7 +606,13 @@ def _record_gaps(view: _RecordView, record: Any, facts: Mapping[tuple[str, int],
     expected: set[tuple[str, int, str]] = set()
     for ident, f in sorted(facts.items()):
         sid, ep = ident
-        for key, reasons in f.findings:
+        # A carried epoch has no finding or narrative unit (a finding member on it is a gap
+        # below, as for any route the log does not give), and needs an audit row only when
+        # the packet built an audit unit for it.
+        is_carried = ident in carried
+        if is_carried and ident in view.narratives:
+            gaps.append(f"{sid} epoch {ep}: the record reads the narrative of an epoch the packet carried")
+        for key, reasons in (() if is_carried else f.findings):
             expected.add((sid, ep, key))
             got = view.findings.get((sid, ep, key))
             if got is None:
@@ -519,7 +624,7 @@ def _record_gaps(view: _RecordView, record: Any, facts: Mapping[tuple[str, int],
                 gaps.append(f"{sid} epoch {ep}: finding {got.unit_id} has no verdict")
             elif got.verdict not in settlement.allowed_verdicts(key, reasons):
                 gaps.append(f"{sid} epoch {ep}: verdict {got.verdict!r} is not allowed for {key!r}")
-        if _narrative_required(f):
+        if not is_carried and _narrative_required(f):
             n = view.narratives.get(ident, "absent")
             if n == "absent":
                 gaps.append(f"{sid} epoch {ep}: no whole-narrative member")
@@ -531,7 +636,7 @@ def _record_gaps(view: _RecordView, record: Any, facts: Mapping[tuple[str, int],
                 gaps.append(f"{sid} epoch {ep}: a whole-narrative error type is not one of ERROR_TYPES")
             elif n[0] == WRONG and not n[1]:
                 gaps.append(f"{sid} epoch {ep}: a whole-narrative wrong names no error type")
-        for code in f.codes:
+        for code in (f.codes if not is_carried or ident in audited_epochs else ()):
             a = view.audits.get((sid, ep, code), "absent")
             if a == "absent":
                 gaps.append(f"{sid} epoch {ep}: no audit row for {code}")
@@ -811,6 +916,7 @@ def _reviewed(kind: str, log_or_samples: Any, record: Any, *, k: int | None, run
         gaps = _record_gaps(view, record, facts)
         if gaps:
             raise RecordError(gaps)
+    carried, _ = _carried_skip(view, record, facts)
     results = []
     for ident, f in facts.items():
         sid, ep = ident
@@ -820,7 +926,8 @@ def _reviewed(kind: str, log_or_samples: Any, record: Any, *, k: int | None, run
             return got.verdict if got is not None and got.verdict else NOT_REVIEWED  # unreviewed fails (D-K)
 
         narrative = view.narratives.get(ident)
-        required = _narrative_required(f)
+        # A carried epoch fails on its own reason; review never read it (section 6).
+        required = _narrative_required(f) and ident not in carried
         removed: frozenset[str] = frozenset()
         if kind == AUDIT_ADJUSTED:
             removed = audit_removed_codes(f.codes, lambda c, sid=sid, ep=ep: view.audits.get((sid, ep, c)))
