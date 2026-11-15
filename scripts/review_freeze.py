@@ -36,6 +36,11 @@ packet with fresh unit ids; `second-look-score` reports intra-rater agreement on
 `validate` and `freeze` refuse a packet whose recorded whole-narrative scope is not hard
 or all (D-J, option b): a routed-scope packet is never frozen.
 
+check_second_look_freeze is the check scripts/run_report.py runs on the second-look freeze
+before it computes any review-settled or audit-adjusted figure (pre-registration section 8):
+the counterpart of the first-freeze check, with its git reads made through
+scripts/pilot_report.py.
+
 This script never sets, suggests or edits a verdict, never computes a review-settled,
 audit-adjusted, route-blind or code-only figure, and reports no score. Its own source
 imports nothing from reliability, regression or scoring.
@@ -1590,6 +1595,173 @@ def check_bootstrap_seed(given: int | None, first_manifest_sha256: str, run_id: 
         return want, []
     return want, [f"--bootstrap-seed {given} is not the seed the frozen first manifest gives ({want}); "
                   "the bootstrap seed is derived, never chosen: leave the flag out"]
+
+
+SECOND_LOOK_MANIFEST_SUFFIX = "-second-look-manifest.json"
+BLIND_CHECK_PREFIX = "blind-check/"   # the second-look manifest lists blinding-check files under it
+SECOND_LOOK_REQUIRED_FILES: tuple[str, ...] = (
+    SECOND_LOOK_MAP_FILE, SECOND_LOOK_META_FILE, SECOND_LOOK_RESULT_FILE, SECOND_LOOK_VERDICTS_FILE)
+
+
+def second_look_manifest_rel(run_id: str) -> str:
+    """The public path of a run's second-look manifest, beside its first manifest."""
+    return f"{DEFAULT_MANIFEST_DIR}/{run_id}{SECOND_LOOK_MANIFEST_SUFFIX}"
+
+
+def _rev_parse(repo: str, sha: str) -> str | None:
+    """The full hash git gives for `sha`, or None when it names no commit here."""
+    if not _SHA_RE.match(sha or ""):
+        return None
+    got = load_pilot_report()._git(Path(repo), "rev-parse", "--verify", "--quiet", f"{sha}^{{commit}}")
+    return got.stdout.decode("utf-8", errors="replace").strip() if got.returncode == 0 else None
+
+
+def check_second_look_private_files(second_look_dir: str | Path, manifest: Mapping[str, Any],
+                                    blind_check_dir: str | Path | None = None) -> list[str]:
+    """Every file the second-look manifest lists hashes to it: the second-look folder's
+    files by their own path, and the blinding check's files (listed under blind-check/)
+    in the blinding-check folder. The manifest must list the second-look map, meta,
+    result and verdicts, and the blinding-check files whenever it records a blinding
+    result. The check_private_files pattern, split over the two folders."""
+    files = manifest.get("private_files")
+    if not isinstance(files, dict) or not files:
+        return ["the second-look manifest lists no private files"]
+    gaps = [f"the second-look manifest does not list private file {rel}"
+            for rel in SECOND_LOOK_REQUIRED_FILES if rel not in files]
+    blind = {rel[len(BLIND_CHECK_PREFIX):]: d for rel, d in files.items() if rel.startswith(BLIND_CHECK_PREFIX)}
+    if manifest.get("blinding") is not None and not blind:
+        gaps.append("the second-look manifest records a blinding result but lists no blinding-check file")
+    if blind and blind_check_dir is None:
+        gaps.append("the second-look manifest lists blinding-check files; give the blinding-check folder")
+    for rel, digest in sorted(files.items()):
+        if rel.startswith(BLIND_CHECK_PREFIX):
+            if blind_check_dir is None:
+                continue
+            p, shown = Path(blind_check_dir) / rel[len(BLIND_CHECK_PREFIX):], rel
+        else:
+            p, shown = Path(second_look_dir) / rel, rel
+        if not p.is_file():
+            gaps.append(f"second-look private file {shown} is missing")
+        elif rs.sha256_file(p) != digest:
+            gaps.append(f"second-look private file {shown} does not hash to the second-look manifest")
+    return gaps
+
+
+def check_second_look_freeze(*, repo: str, first_manifest_path: str | Path, first_freeze_commit: str,
+                             second_look_dir: str | Path, blind_check_dir: str | Path | None = None,
+                             manifest: str | Path | None = None,
+                             commit: str | None = None) -> tuple[dict | None, dict, list[str]]:
+    """The second-look freeze of pre-registration section 8 ("No review-settled or
+    audit-adjusted figure of a pre-registered evaluation run or tagged release run is
+    computed or read until its second look is done and frozen by a second manifest
+    commit"), the counterpart of the first-freeze check (check_freeze_commit and
+    scripts/pilot_report.py freeze_commit_gaps).
+
+    Every gap is listed: the second-look manifest exists at
+    docs/evidence/reviews/<run-id>-second-look-manifest.json under `repo` (or at
+    `manifest`, which must be that path); its kind is second_look, its run id the first
+    manifest's and its agreement intra-rater; its first_manifest_sha256 is the SHA-256
+    of the first manifest file and its freeze_commit names the first freeze commit; its
+    reviewer is the first record's reviewer (intra-rater, decision D-R19); its bootstrap
+    seed is the derived one (check_bootstrap_seed); it is committed alone in one commit
+    on HEAD's history that holds it byte for byte, whose closing trailer block holds
+    `Reviewed-by: <reviewer>, <date>` with only Co-Authored-By lines beside it (decision
+    D-R16; freeze_commit_gaps, with no minimum age), and that commit is a descendant of
+    the first freeze commit and an ancestor of HEAD; `commit`, when given, must name it;
+    and every private file it lists hashes to it (check_second_look_private_files).
+    The second-look result file must also agree with the manifest's public per-run
+    results. Returns (the manifest or None, {"path", "sha256", "commit"}, gaps).
+
+    Git is read through scripts/pilot_report.py (rev-parse, log, rev-list, diff-tree,
+    show and merge-base) and nothing here writes to the repository."""
+    pr = load_pilot_report()
+    repo_path = Path(repo)
+    info: dict[str, Any] = {"path": None, "sha256": None, "commit": None}
+    first_path = Path(first_manifest_path)
+    if not first_path.is_file():
+        return None, info, [f"the first manifest {first_path.name} is not found"]
+    first_bytes = first_path.read_bytes()
+    first_sha = hashlib.sha256(first_bytes).hexdigest()
+    try:
+        first = _read_json(first_path)
+    except Refused as e:
+        return None, info, list(e.gaps)
+    run_id = str(first.get("run_id", "")) if isinstance(first, dict) else ""
+    want_rel = second_look_manifest_rel(run_id)
+    mpath = Path(manifest) if manifest else repo_path / want_rel
+    info["path"] = str(mpath)
+    if not mpath.is_file():
+        return None, info, [f"the second-look manifest {mpath.name} is not found: the second look is not done "
+                            f"and frozen"]
+    mbytes = mpath.read_bytes()
+    info["sha256"] = hashlib.sha256(mbytes).hexdigest()
+    try:
+        man = _read_json(mpath)
+    except Refused as e:
+        return None, info, list(e.gaps)
+    if not isinstance(man, dict):
+        return None, info, [f"the second-look manifest {mpath.name} is not a JSON object"]
+    gaps: list[str] = []
+    if man.get("kind") != "second_look":
+        gaps.append(f"the second-look manifest's kind is {man.get('kind')!r}, not 'second_look'")
+    if man.get("run_id") != run_id:
+        gaps.append(f"the second-look manifest names run {man.get('run_id')!r}, the first manifest {run_id!r}")
+    if man.get("agreement") != AGREEMENT_LABEL:
+        gaps.append(f"the second-look manifest's agreement is {man.get('agreement')!r}, not {AGREEMENT_LABEL!r}")
+    if man.get("first_manifest_sha256") != first_sha:
+        gaps.append("the second-look manifest names another first manifest: its first_manifest_sha256 is not the "
+                    "SHA-256 of the first manifest file")
+    first_full = _rev_parse(repo, first_freeze_commit)
+    named = _rev_parse(repo, str(man.get("freeze_commit", "")))
+    if first_full is None:
+        gaps.append(f"the first freeze commit {first_freeze_commit!r} cannot be read in {repo}")
+    elif named != first_full:
+        gaps.append(f"the second-look manifest names freeze commit {man.get('freeze_commit')!r}, not the first "
+                    f"freeze commit {first_full[:12]}")
+    reviewer = first.get("reviewer") if isinstance(first, dict) else None
+    if man.get("reviewer") != reviewer:
+        gaps.append(f"the second-look reviewer {man.get('reviewer')!r} is not the first record's reviewer "
+                    f"{reviewer!r}; the second look is intra-rater")
+    _, seed_gaps = check_bootstrap_seed(man.get("bootstrap_seed") if isinstance(man.get("bootstrap_seed"), int)
+                                        else -1, first_sha, run_id)
+    gaps.extend(seed_gaps)
+    # The commit: the first-freeze rules with the second manifest's own path, reviewer and date.
+    # freeze_commit_gaps wants the path docs/evidence/reviews/<its run_id>-manifest.json.
+    as_frozen = {"run_id": f"{run_id}-second-look",
+                 "reviewer": man.get("reviewer", ""), "freeze_date": man.get("date", "")}
+    commit_gaps, full = pr.freeze_commit_gaps(repo_path, mpath, mbytes, as_frozen, commit)
+    gaps.extend(g.replace("the manifest", "the second-look manifest").replace("freeze commit", "second-look commit")
+                for g in commit_gaps)
+    info["commit"] = full or None
+    if full and first_full:
+        if full == first_full:
+            gaps.append("the second-look manifest is frozen in the first freeze commit; it needs a commit of its own")
+        else:
+            desc = pr._git(repo_path, "merge-base", "--is-ancestor", first_full, full)
+            if desc.returncode == 1:
+                gaps.append(f"second-look commit {full[:12]} is not a descendant of the first freeze commit "
+                            f"{first_full[:12]}")
+            elif desc.returncode != 0:
+                gaps.append(f"git cannot tell whether second-look commit {full[:12]} descends from the first "
+                            f"freeze commit")
+    gaps.extend(check_second_look_private_files(second_look_dir, man, blind_check_dir))
+    result_path = Path(second_look_dir) / SECOND_LOOK_RESULT_FILE
+    if result_path.is_file():
+        try:
+            result = _read_json(result_path)
+        except Refused as e:
+            gaps.extend(e.gaps)
+            result = None
+        if isinstance(result, dict):
+            if result.get("bootstrap_seed") != man.get("bootstrap_seed"):
+                gaps.append("second-look-result.json records another bootstrap seed than the second-look manifest")
+            public = set(PUBLIC_RUN_RESULT_KEYS)
+            got = sorted(json.dumps({k: v for k, v in r.items() if k in public}, sort_keys=True)
+                         for r in (result.get("runs") or {}).values())
+            want = sorted(json.dumps(r, sort_keys=True) for r in (man.get("runs") or {}).values())
+            if got != want:
+                gaps.append("second-look-result.json per-run results differ from the second-look manifest")
+    return man, info, gaps
 
 
 def _second_look_score(args: argparse.Namespace) -> int:
