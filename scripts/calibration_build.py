@@ -9,7 +9,10 @@ splits, graded by hand and by the grader, stratified so every score level 0 to 3
 at least 4 times per LLM-graded sub-dimension, with seeded degraded responses where
 natural outputs do not reach a level; seeds for narrative coverage are made two ways,
 omission seeds and addition seeds) and section 7 (the grader gets one acceptance look on
-the subset). Decision D-R10 (C5: an output that did not parse is not graded; C6: seeds
+the subset, which is never used for tuning). The targets need a margin above the floor
+of 4: every level at least 6 times per sub-dimension, so that author grades a level away
+from a target can still meet the floor at import. The floor of 4 stays the hard rule
+on the author's grades (scripts/calibration_import.py). Decision D-R10 (C5: an output that did not parse is not graded; C6: seeds
 follow section 4's wording; C7: the grader and the human see one shared facts sheet).
 
 Design set by the author on 2026-11-17 (not in the pre-registration text): 40 cases of
@@ -37,24 +40,38 @@ Files written under --out (outside the repo):
                                     source, seed note, stratum, worker output; read by
                                     scripts/calibration_import.py
 
+Sheet id: a SHA-256 over the records the sheet shows and the plan. It sits in the sheet
+data, in the browser storage key and in a sheet_id column of every row of the saved
+grades file, and the plan records it. A rebuilt sheet that shows other records gets
+another id, so grades saved from an earlier sheet never attach to outputs the author
+did not grade: the page will not load them and the import refuses them.
+
 The sheet shows what the judge-development sheet shows: the narrative, the facts sheet,
 the case file as the worker saw it, and the committed scope and level texts. It never
 shows the worker model, the case id, the source, the seed note, the stratum, the log or
 any score. Records appear under a random code in an order shuffled by the recorded seed.
-Same inputs give the same bytes.
+Same inputs give the same bytes. Record codes follow from the shuffle seed alone, so with
+--force a selection that changed must also change its shuffle seed.
+
+The screen never shows target levels: stdout prints totals only, and a refusal for
+targets that miss the margin says only that. The per-level detail goes to
+calibration-build-shortfall.txt in the sealed folder that holds the selection input.
 
 Exit codes:
-  0  written; stdout prints totals only
+  0  written; stdout prints totals only (records, unparsed outputs, sheet id, sheet hash)
   3  refused (nothing written): a missing or unreadable log; not exactly one log per
      worker; a log that is not a successful whole calibration-split run at epochs 1 under
      the locked prompt, or that fails the run-config check; a case file that is not the 40
      calibration cases; a missing or malformed selection input; a selection that is not
-     40 cases with one output each, that misses the section 4 stratification on its
-     targets, that seeds one way only, or whose target does not follow from its rule; a
+     40 cases with one output each, whose targets miss the margin of 6 per level per
+     sub-dimension (the one file written on a refusal is the per-level detail beside the
+     selection input), that seeds one way only, or whose target does not follow from its rule; a
      picked output that does not parse (D-R10 C5) or ended in an error; a seed whose rule
      does not apply to its base output or whose edit changes a protected token or a code
      score; an output folder or selection inside the repo; an existing output without
-     --force; or a sheet that would show sealed text
+     --force; with --force, an existing sheet without its plan, an existing plan that
+     cannot be read, or a selection that changed while its shuffle seed did not (the
+     record codes would repeat); or a sheet that would show sealed text
 """
 
 # No `from __future__ import annotations`: tests load this file with
@@ -90,6 +107,7 @@ CAL_SPLIT = "calibration"
 CASE_PREFIX = "calibration-"
 SET_SIZE = 40              # section 4: 40 cases
 MIN_PER_LEVEL = 4          # section 4: every level 0 to 3 at least 4 times per sub-dimension
+TARGET_MIN_PER_LEVEL = 6   # margin on the targets: every level at least 6 times per sub-dimension
 EPOCH = 1                  # each worker answers each case once
 GROUNDING, COVERAGE = jdb.GROUNDING, jdb.COVERAGE
 SUBDIMS = jdb.SUBDIMS
@@ -111,9 +129,28 @@ SHEET_TITLE = "Calibration subset grading"
 GRADES_FILE = "calibration-grades.csv"
 SITTINGS_FILE = "calibration-sittings.csv"
 STORAGE_PREFIX = "calibration-sheet-"
+SHORTFALL_NAME = "calibration-build-shortfall.txt"
+SHEET_ID_RE = re.compile(r"^[0-9a-f]{64}$")
 
 Refused = jdb.Refused
 SeedError = jdb.SeedError
+
+
+class ShortRefused(Refused):
+    """A refusal for levels that fall short. The message never names a level or a count;
+    the per-level detail travels in `detail` and is written only to a sealed folder."""
+
+    def __init__(self, message: str, detail: Sequence[str]):
+        super().__init__(message)
+        self.detail = list(detail)
+
+
+def write_detail(folder: Path, name: str, heading: str, detail: Sequence[str]) -> Path:
+    """Write the per-level detail of a refusal into a sealed folder, never to the screen."""
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / name
+    path.write_bytes(("\n".join([heading, *detail]) + "\n").encode("utf-8"))
+    return path
 
 
 @dataclass(frozen=True)
@@ -240,12 +277,19 @@ def stratification_shortfalls(counts: Mapping[str, Mapping[int, int]], minimum: 
     return out
 
 
+def target_shortfalls(picks: Sequence[CalPick]) -> list[str]:
+    """Each sub-dimension level whose targets fall below the margin of
+    TARGET_MIN_PER_LEVEL. Sealed detail: never printed to the screen."""
+    return stratification_shortfalls(level_counts(picks), TARGET_MIN_PER_LEVEL)
+
+
 def seed_types(picks: Sequence[CalPick]) -> dict[str, int]:
     return {s: sum(1 for p in picks if p.source == s) for s in SOURCES}
 
 
 def selection_problems(picks: Sequence[CalPick], case_ids: Sequence[str] | None = None) -> list[str]:
-    """Every rule the selection must meet, as plain messages; empty when it meets them all."""
+    """Every rule the selection must meet, as plain messages; empty when it meets them all.
+    The target margin is checked apart (target_shortfalls), since its detail is sealed."""
     problems: list[str] = []
     if len(picks) != SET_SIZE:
         problems.append(f"the subset holds {len(picks)} records, not {SET_SIZE}")
@@ -269,7 +313,6 @@ def selection_problems(picks: Sequence[CalPick], case_ids: Sequence[str] | None 
             if lv not in LEVELS:
                 problems.append(f"{p.sample_id}: target {lv} for {d} out of range")
         problems.extend(_rule_problems(p))
-    problems.extend(f"targets: {s}" for s in stratification_shortfalls(level_counts(picks)))
     kinds = seed_types(picks)
     seeded = kinds["seeded_omission"] + kinds["seeded_addition"]
     if seeded and not (kinds["seeded_omission"] and kinds["seeded_addition"]):
@@ -369,6 +412,10 @@ def build_records(logs_by_model: Mapping[str, Any], cases: Mapping[str, dict], s
     problems = selection_problems(selection.picks, list(cases))
     if problems:
         raise Refused("selection: " + "; ".join(problems))
+    short = target_shortfalls(selection.picks)
+    if short:
+        raise ShortRefused(f"selection: the targets miss the margin of {TARGET_MIN_PER_LEVEL} records per level per "
+                           "sub-dimension", short)
     records: list[dict] = []
     for cp in selection.picks:
         pick, model = cp.pick, cp.worker
@@ -447,23 +494,64 @@ def build_records(logs_by_model: Mapping[str, Any], cases: Mapping[str, dict], s
 # --- Sheet ----------------------------------------------------------------------------------
 
 
-def storage_key(records: Sequence[Mapping[str, Any]]) -> str:
-    codes = ",".join(sorted(r["code"] for r in records))
-    return STORAGE_PREFIX + hashlib.sha256(codes.encode("utf-8")).hexdigest()[:16]
+def _canonical(obj: Any) -> bytes:
+    return json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
-def sheet_data(records: Sequence[Mapping[str, Any]]) -> dict:
-    """The judge-development sheet's data, with this subset's file names and browser key."""
+def compute_sheet_id(records: Sequence[Mapping[str, Any]], plan_core: Mapping[str, Any]) -> str:
+    """SHA-256 over the records the sheet shows (the judge-development sheet data: codes,
+    narratives, facts, case files and rubric texts) and the plan without its sheet fields."""
+    return hashlib.sha256(_canonical({"plan": dict(plan_core), "sheet": jdb.sheet_data(records)})).hexdigest()
+
+
+def storage_key(sheet_id: str) -> str:
+    """The browser storage key: one per sheet id, so a rebuilt sheet never loads the
+    answers kept for an earlier one."""
+    return STORAGE_PREFIX + sheet_id[:32]
+
+
+def sheet_data(records: Sequence[Mapping[str, Any]], sheet_id: str) -> dict:
+    """The judge-development sheet's data, with this subset's file names, sheet id and browser key."""
+    if not SHEET_ID_RE.match(sheet_id or ""):
+        raise Refused("the sheet id is not a SHA-256 hex digest")
     data = jdb.sheet_data(records)
-    data.update(storage_key=storage_key(records), grades_file=GRADES_FILE, sittings_file=SITTINGS_FILE)
+    data.update(storage_key=storage_key(sheet_id), grades_file=GRADES_FILE, sittings_file=SITTINGS_FILE,
+                sheet_id=sheet_id)
     return data
 
 
-def render_sheet(records: Sequence[Mapping[str, Any]]) -> str:
-    """The judge-development sheet page and script, under this subset's title."""
+# The judge-development page script, with a sheet_id column in the saved grades file and
+# a page that will not load a grades file saved from another sheet.
+_JS_EDITS = (
+    ('var rows = [["record_code"].concat(DIMS).concat(["note", "graded_at"])];',
+     'var rows = [["record_code"].concat(DIMS).concat(["note", "graded_at", "sheet_id"])];'),
+    ('.concat([x.note || "", x.at || ""])); });',
+     '.concat([x.note || "", x.at || "", D.sheet_id])); });'),
+    ('if (ci < 0 || di.indexOf(-1) >= 0) { status("That file is not a grades file from this page."); return; }',
+     'var si = head.indexOf("sheet_id");\n'
+     '  if (ci < 0 || si < 0 || di.indexOf(-1) >= 0) { status("That file is not a grades file from this page."); '
+     'return; }\n'
+     '  if (rows.some(function(row){ return row.length > 1 && row[si] !== D.sheet_id; })) '
+     '{ status("That grades file was saved from another sheet. It is not loaded."); return; }'),
+)
+
+
+def sheet_script() -> str:
+    """The judge-development script with the sheet id edits; refuses when an edit no
+    longer finds its text exactly once."""
+    js = jdb._JS.strip()
+    for old, new in _JS_EDITS:
+        if js.count(old) != 1:
+            raise Refused("the judge-development sheet script changed; the sheet id edits no longer apply")
+        js = js.replace(old, new)
+    return js
+
+
+def render_sheet(records: Sequence[Mapping[str, Any]], sheet_id: str) -> str:
+    """The judge-development sheet page and script, under this subset's title, carrying the sheet id."""
     page = jdb._PAGE.replace("__TITLE__", html.escape(SHEET_TITLE)).replace("__CSS__", jdb._CSS.strip())
-    page = page.replace("__JS__", jdb._JS.strip())
-    return page.replace("__DATA__", jdb._embed_json(sheet_data(records)))
+    page = page.replace("__JS__", sheet_script())
+    return page.replace("__DATA__", jdb._embed_json(sheet_data(records, sheet_id)))
 
 
 def worker_words() -> list[str]:
@@ -506,9 +594,12 @@ def _sha256_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+SHEET_FIELDS = ("sheet_file", "sheet_id", "sheet_sha256")
+
+
 def plan_payload(records: Sequence[Mapping[str, Any]], *, logs: Sequence[Mapping[str, str]], cases_path: Path,
                  cases_sha: str, selection: CalSelection, selection_path: Path, unparsed: Sequence[Mapping[str, str]],
-                 sheet_sha: str) -> dict:
+                 sheet_id: str, sheet_sha: str) -> dict:
     return {
         "plan_version": PLAN_VERSION,
         "what": "Calibration subset plan (sealed). Do not open before grading is finished.",
@@ -521,12 +612,14 @@ def plan_payload(records: Sequence[Mapping[str, Any]], *, logs: Sequence[Mapping
         "selection_sha256": selection.sha256,
         "shuffle_seed": selection.shuffle_seed,
         "min_per_level": MIN_PER_LEVEL,
+        "target_min_per_level": TARGET_MIN_PER_LEVEL,
         "unparsed": list(unparsed),
         "rules": dict(jdb.RULES),
         "level_counts": {d: {str(lv): n for lv, n in c.items()} for d, c in level_counts(selection.picks).items()},
         "source_counts": seed_types(selection.picks),
         "worker_counts": {m: sum(1 for p in selection.picks if p.worker == m) for m in CAL_WORKERS},
         "sheet_file": SHEET_NAME,
+        "sheet_id": sheet_id,
         "sheet_sha256": sheet_sha,
         "records": [{k: r[k] for k in PLAN_FIELDS} for r in sorted(records, key=lambda r: r["position"])],
     }
@@ -538,6 +631,26 @@ def _inside_repo(path: Path) -> bool:
         return True
     except ValueError:
         return False
+
+
+def check_rebuild(sheet_path: Path, plan_path: Path, selection: CalSelection) -> None:
+    """With --force: refuses a rebuild whose record codes would repeat for other outputs.
+    Codes follow from the shuffle seed alone, so a selection that changed must change its
+    shuffle seed too. An existing sheet without its plan, or a plan that cannot be read,
+    cannot be compared and is refused."""
+    if not plan_path.exists():
+        if sheet_path.exists():
+            raise Refused("a sheet exists without its plan, so the rebuild cannot be checked; move the old sheet away")
+        return
+    try:
+        old = json.loads(plan_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        raise Refused(f"cannot read the existing plan to check the rebuild: {type(e).__name__}") from e
+    if not isinstance(old, dict):
+        raise Refused("the existing plan is not a JSON object, so the rebuild cannot be checked")
+    if old.get("selection_sha256") != selection.sha256 and old.get("shuffle_seed") == selection.shuffle_seed:
+        raise Refused("the selection changed but its shuffle seed did not, so the rebuilt sheet would reuse record "
+                      "codes for other outputs; give the changed selection a new shuffle_seed")
 
 
 def build(log_paths: Sequence[Path], out_dir: Path, cases_path: Path, selection_path: Path, force: bool,
@@ -553,6 +666,8 @@ def build(log_paths: Sequence[Path], out_dir: Path, cases_path: Path, selection_
     if not force and (sheet_path.exists() or plan_path.exists()):
         raise Refused("the sheet or the plan already exists; pass --force to rebuild")
     selection = load_selection(selection_path)
+    if force:
+        check_rebuild(sheet_path, plan_path, selection)
     cases = load_cases(cases_path)
     paths_of: dict[int, Path] = {}
     logs = []
@@ -563,18 +678,27 @@ def build(log_paths: Sequence[Path], out_dir: Path, cases_path: Path, selection_
     by_model = index_logs(logs)
     for model, log in by_model.items():
         check_worker_log(log, model, list(cases), max_tokens_pin)
-    records = build_records(by_model, cases, selection)
-    sheet = render_sheet(records)
+    try:
+        records = build_records(by_model, cases, selection)
+    except ShortRefused as e:
+        where = write_detail(selection_path.parent, SHORTFALL_NAME,
+                             f"Targets below the margin of {TARGET_MIN_PER_LEVEL} per level per sub-dimension:",
+                             e.detail)
+        raise ShortRefused(f"{e}; the per-level detail is in {where.name} beside the selection input", e.detail) from e
+    log_rows = [{"model": m, "file": paths_of[id(by_model[m])].name, "sha256": _sha256_file(paths_of[id(by_model[m])]),
+                 "eval_id": str(by_model[m].eval.eval_id)} for m in CAL_WORKERS]
+    plan_args = dict(logs=log_rows, cases_path=cases_path, cases_sha=_sha256_file(cases_path), selection=selection,
+                     selection_path=selection_path, unparsed=unparsed_outputs(by_model))
+    core = {k: v for k, v in plan_payload(records, **plan_args, sheet_id="", sheet_sha="").items()
+            if k not in SHEET_FIELDS}
+    sheet_id = compute_sheet_id(records, core)
+    sheet = render_sheet(records, sheet_id)
     eval_ids = [str(by_model[m].eval.eval_id) for m in CAL_WORKERS]
     hits = blindness_hits(sheet, records, eval_ids)
     if hits:
         raise Refused("the sheet would show sealed text: " + "; ".join(hits))
     sheet_bytes = sheet.encode("utf-8")
-    log_rows = [{"model": m, "file": paths_of[id(by_model[m])].name, "sha256": _sha256_file(paths_of[id(by_model[m])]),
-                 "eval_id": str(by_model[m].eval.eval_id)} for m in CAL_WORKERS]
-    plan = plan_payload(records, logs=log_rows, cases_path=cases_path, cases_sha=_sha256_file(cases_path),
-                        selection=selection, selection_path=selection_path, unparsed=unparsed_outputs(by_model),
-                        sheet_sha=hashlib.sha256(sheet_bytes).hexdigest())
+    plan = plan_payload(records, **plan_args, sheet_id=sheet_id, sheet_sha=hashlib.sha256(sheet_bytes).hexdigest())
     (out_dir / SEALED_DIR).mkdir(parents=True, exist_ok=True)
     sheet_path.write_bytes(sheet_bytes)
     plan_path.write_bytes((json.dumps(plan, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
@@ -600,12 +724,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     except Refused as e:
         print(f"refused: {e}", file=sys.stderr)
         return EXIT_REFUSED
+    # Totals only: never a level, source or worker count, since the author grades this sheet.
     print(f"records: {len(plan['records'])}")
-    print("sources: " + ", ".join(f"{k} {v}" for k, v in plan["source_counts"].items()))
-    print("workers: " + ", ".join(f"{k} {v}" for k, v in plan["worker_counts"].items()))
-    for d, c in plan["level_counts"].items():
-        print(f"{d}: " + ", ".join(f"level {lv} x{n}" for lv, n in c.items()))
     print(f"unparsed outputs (never graded): {len(plan['unparsed'])}")
+    print(f"sheet id: {plan['sheet_id']}")
     print(f"sheet sha256: {plan['sheet_sha256']}")
     return EXIT_OK
 

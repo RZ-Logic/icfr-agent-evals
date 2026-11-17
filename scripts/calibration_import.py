@@ -15,9 +15,18 @@ Grades are the author's. This script never sets, fills or changes one: it copies
 two 0 to 3 grades per record exactly as the file gives them, or refuses.
 
 Pre-registration section 4: every score level 0 to 3 appears at least 4 times per
-LLM-graded sub-dimension. The build checks this on the targets; this import checks it
-on the author's grades and refuses when they miss it, saying which level is short and
-by how much. The subset then needs more seeds before the grader's acceptance look.
+LLM-graded sub-dimension. The build checks the targets with a margin (at least 6 per
+level per sub-dimension) and this import checks the plan's targets the same way. On the
+author's grades the floor of 4 is the hard rule: the import refuses grades that miss it.
+The subset then needs more seeds before the grader's acceptance look.
+
+The screen never shows a level count or a shortfall. A refusal for levels that fall
+short says only that the stratification is not met; the per-level detail is written to
+calibration-import-shortfall.txt in the sealed folder beside the plan.
+
+Sheet id: the grades file must carry a sheet_id column whose value, on every row, is
+the plan's sheet_id. A grades file saved from another build of the sheet is refused,
+since its record codes can name outputs the author never graded.
 
 Exit codes:
   0  all 40 records written; stdout prints the file names only
@@ -27,17 +36,21 @@ Exit codes:
      a case outside the calibration split, an epoch other than 1, a worker outside the
      three calibration workers or a log eval id that is not its worker's, in which a
      worker output differs from its base output outside the narrative, whose targets
-     miss the stratification, or whose sheet_sha256 is not the hash of the sheet beside
-     it; a grades file without the required columns or with a column name given twice; a
+     miss the margin of 6, that has no sheet id, or whose sheet_sha256 is not the hash of
+     the sheet beside it; a grades file without the required columns, without a sheet_id
+     column, with a sheet id that is not the plan's, or with a column name given twice; a
      record code that is missing, repeated or not in the plan; a grade that is missing or
      not one of 0, 1, 2, 3; a missing or malformed graded_at; author grades that miss the
-     stratification; an output folder whose parent is missing; or an output file that
-     already exists
+     floor of 4; an output folder whose parent is missing; or an output file that
+     already exists. A refusal for levels that fall short writes one file, the per-level
+     detail beside the plan, and nothing in the output folder
 """
 
 # No `from __future__ import annotations`: tests load this file with
 # importlib.util.spec_from_file_location.
 import argparse
+import csv
+import io
 import json
 import re
 import sys
@@ -61,6 +74,8 @@ SUBDIMS = jdi.SUBDIMS
 LEVELS = (0, 1, 2, 3)
 SET_SIZE = cb.SET_SIZE
 MIN_PER_LEVEL = cb.MIN_PER_LEVEL
+TARGET_MIN_PER_LEVEL = cb.TARGET_MIN_PER_LEVEL
+SHORTFALL_NAME = "calibration-import-shortfall.txt"
 LOCKED_ANCHOR_SHA256 = jdi.LOCKED_ANCHOR_SHA256
 GRADED_BY = jdi.GRADED_BY
 SOURCES = jdi.SOURCES
@@ -71,6 +86,15 @@ RECORD_FIELDS = (*jdi.RECORD_FIELDS, "worker_model")
 FILE_NAME_RE = re.compile(r"^calibration-[A-Za-z0-9-]+\.json$")
 
 Refused = jdi.Refused
+
+
+class ShortRefused(Refused):
+    """A refusal for levels that fall short. The message never names a level or a count;
+    the per-level detail travels in `detail` and is written only beside the plan."""
+
+    def __init__(self, message: str, detail: Sequence[str]):
+        super().__init__(message)
+        self.detail = list(detail)
 
 
 def _counts(levels_by_record: Sequence[Mapping[str, int]]) -> dict[str, dict[int, int]]:
@@ -169,9 +193,12 @@ def load_plan(path: Path) -> dict:
             raise Refused(f"record {code}: the base worker output does not parse")
         if not jdi._same_but_narrative(dict(parsed.parsed), dict(base.parsed)):
             raise Refused(f"record {code}: the worker output differs from its base output outside the narrative")
-    short = cb.stratification_shortfalls(_counts([r["stratum"] for r in records]), MIN_PER_LEVEL)
+    sheet_id = plan.get("sheet_id")
+    if not isinstance(sheet_id, str) or not cb.SHEET_ID_RE.match(sheet_id):
+        raise Refused("the plan has no sheet id; rebuild the sheet and the plan")
+    short = cb.stratification_shortfalls(_counts([r["stratum"] for r in records]), TARGET_MIN_PER_LEVEL)
     if short:
-        raise Refused("the plan's targets miss the stratification: " + "; ".join(short))
+        raise ShortRefused("the plan's targets miss the stratification margin", short)
     jdi._check_sheet(plan, path)
     return plan
 
@@ -181,15 +208,45 @@ def load_grades(path: Path) -> dict[str, dict[str, Any]]:
     return jdi.load_grades(path)
 
 
+def grades_sheet_id(path: Path) -> str:
+    """The sheet id the grades file was saved from: its sheet_id column, one value on
+    every row. Refuses a file without the column, with a blank value or with two ids."""
+    if not path.is_file():
+        raise Refused(f"grades file not found: {path}")
+    try:
+        text = path.read_bytes().decode("utf-8-sig")
+    except (OSError, UnicodeDecodeError) as e:
+        raise Refused(f"cannot read the grades file: {type(e).__name__}") from e
+    reader = csv.DictReader(io.StringIO(text, newline=""))
+    header = reader.fieldnames or []
+    if header.count("sheet_id") != 1:
+        raise Refused("the grades file has no single sheet_id column; save it again from the current sheet")
+    ids = {(row.get("sheet_id") or "").strip() for row in reader}
+    if not ids or "" in ids:
+        raise Refused("the grades file has a row without a sheet id")
+    if len(ids) != 1:
+        raise Refused("the grades file mixes rows from more than one sheet")
+    return ids.pop()
+
+
+def check_sheet_id(plan: Mapping[str, Any], grades_path: Path) -> None:
+    """Refuses a grades file saved from a sheet other than the plan's: its record codes
+    can name outputs the author never graded."""
+    got = grades_sheet_id(grades_path)
+    if got != plan["sheet_id"]:
+        raise Refused(f"the grades file comes from sheet {got[:12]}, not from the plan's sheet "
+                      f"{plan['sheet_id'][:12]}; grades from another sheet are never imported")
+
+
 def build_records(plan: Mapping[str, Any], grades: Mapping[str, Mapping[str, Any]]) -> list[tuple[str, dict]]:
     """The judge-development records plus the worker model; refuses author grades that
     miss the stratification."""
     base = jdi.build_records(plan, grades)
     short = grade_shortfalls([g["grades"] for g in grades.values()])
     if short:
-        raise Refused("the author's grades miss the section 4 stratification (every level 0 to 3 at least "
-                      f"{MIN_PER_LEVEL} times per sub-dimension): " + "; ".join(short)
-                      + ". The subset needs more seeds at the short levels before the acceptance look")
+        raise ShortRefused("the author's grades do not meet the section 4 stratification (every level 0 to 3 at "
+                           f"least {MIN_PER_LEVEL} times per sub-dimension). The subset needs more seeds before "
+                           "the acceptance look", short)
     model_of = {r["file_name"]: r["worker_model"] for r in plan["records"]}
     out = []
     for name, record in base:
@@ -200,9 +257,14 @@ def build_records(plan: Mapping[str, Any], grades: Mapping[str, Mapping[str, Any
 
 
 def run(grades_path: Path, plan_path: Path, out_dir: Path) -> list[str]:
-    plan = load_plan(plan_path)
-    grades = load_grades(grades_path)
-    records = build_records(plan, grades)
+    try:
+        plan = load_plan(plan_path)
+        grades = load_grades(grades_path)
+        check_sheet_id(plan, grades_path)
+        records = build_records(plan, grades)
+    except ShortRefused as e:
+        where = cb.write_detail(plan_path.parent, SHORTFALL_NAME, f"{e}.", e.detail)
+        raise ShortRefused(f"{e}; the per-level detail is sealed in {where.name} beside the plan", e.detail) from e
     if not out_dir.is_dir() and not out_dir.parent.is_dir():
         raise Refused(f"output folder not found, and neither is its parent: {out_dir}")
     clash = [name for name, _ in records if (out_dir / name).exists()]
