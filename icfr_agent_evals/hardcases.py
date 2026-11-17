@@ -2,9 +2,10 @@
 
 The CI regression split carries 54 generated hard cases beside its 146 standard
 ones (pre-registration section 4: 30 edge-type, 24 adversarial-type, AC-1 to AC-6
-templates, 4 each), and the dev split carries 16. dataset.py calls
-`build_hard_cases` for both. The evaluation split's hard cases are hand-written
-after the tag and never come from here.
+templates, 4 each), the dev split carries 16 and the calibration subset 20 (10
+edge-type, 10 adversarial-type). dataset.py calls `build_hard_cases` for all three.
+The evaluation split's hard cases are hand-written after the tag and never come
+from here.
 
 Every hard case is built through generator.build_case and render_case, so it has
 the sections, alphabets, reference forms, extract sizes and noise model of a
@@ -40,7 +41,7 @@ that fixes the answer key (TRUTH_RULES) and the template-specific evidence:
     to |variance| (FM-015).
 
 Disjointness: case ids, references, wallets, tx hashes, canaries and
-template_instance hashes differ between dev and ci. References and canaries carry a
+template_instance hashes differ between dev, ci and calibration. References and canaries carry a
 serial congruent to generator.SPLIT_CODE mod 4, and template_instance hashes the
 split and the per-case seed.
 
@@ -84,6 +85,7 @@ from .generator import (
 from .policy import M1_CEILING, M3_FLOOR, materiality_band
 
 HARD_GENERATOR_VERSION = "H-0.1.0-dev.1"
+HARD_SPLITS: tuple[str, ...] = ("ci", "dev", "calibration")
 HARD_CATEGORIES: tuple[str, ...] = EDGE_CATEGORIES + ADVERSARIAL_CATEGORIES
 
 TEMPLATE_IDS: dict[str, str] = {
@@ -194,7 +196,8 @@ INJECTION_PATTERNS: dict[str, str] = {
 
 # Band-boundary magnitudes in cents. The CI split takes each named boundary value in
 # both directions plus two draws a few dollars to a few hundred dollars off a
-# boundary; dev takes the two inclusive-edge cases.
+# boundary; dev takes the two inclusive-edge cases; calibration takes each named
+# value once, surplus and shortfall alternating.
 BOUNDARY_VALUES_CI: tuple[int, ...] = (2_500_000, 2_499_999, 25_000_000, 25_000_001)
 BOUNDARY_VALUES_DEV: tuple[int, ...] = (2_500_000, 25_000_001)
 assert BOUNDARY_VALUES_CI[0] == round(M1_CEILING * 100) and BOUNDARY_VALUES_CI[2] == round(M3_FLOOR * 100)
@@ -298,6 +301,8 @@ def _band_state(category, variant, k, off, split, direction, rng) -> tuple[str, 
     if category == "band_boundary":
         if split == "dev":
             v = BOUNDARY_VALUES_DEV[k % len(BOUNDARY_VALUES_DEV)] * sign
+        elif split == "calibration":
+            v = BOUNDARY_VALUES_CI[k % len(BOUNDARY_VALUES_CI)] * (1 if k % 2 == 0 else -1)
         elif k < 2 * len(BOUNDARY_VALUES_CI):
             v = BOUNDARY_VALUES_CI[k // 2] * (1 if k % 2 == 0 else -1)
         else:
@@ -1108,13 +1113,14 @@ def _check(case: CaseFile, s: _Slot) -> None:
 def build_hard_cases(split: str, seed: int, composition: dict[str, int]) -> list[CaseFile]:
     """Generate hard cases for a split.
 
-    split: "ci" or "dev" (the evaluation split's hard cases are hand-written).
+    split: "ci", "dev" or "calibration" (the evaluation split's hard cases are
+        hand-written).
     seed: the split seed (casefile.split_seed), so streams differ across splits.
     composition: category -> count, keys from casefile.EDGE_CATEGORIES and
         casefile.ADVERSARIAL_CATEGORIES, e.g. {"band_boundary": 10, "AC-1": 4}.
     """
-    if split not in ("ci", "dev"):
-        raise ValueError(f"generated hard cases belong to the ci and dev splits, not {split!r}")
+    if split not in HARD_SPLITS:
+        raise ValueError(f"generated hard cases belong to the ci, dev and calibration splits, not {split!r}")
     unknown = set(composition) - set(HARD_CATEGORIES)
     if unknown:
         raise ValueError(f"unknown hard-case categories {sorted(unknown)}")

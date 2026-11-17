@@ -189,11 +189,6 @@ def test_n_returns_first_n_samples():
     assert [s.id for s in head.samples] == [s.id for s in _ds("dev").samples[:5]]
 
 
-def test_calibration_split_is_not_built_yet():
-    with pytest.raises(NotImplementedError):
-        build_cases("calibration")
-
-
 def test_exports():
     assert CUSTODIANS[:5] == ["Anchorage Digital", "BitGo Trust", "Coinbase Custody", "Fireblocks", "Komainu"]
     assert ASSETS == ["BTC", "ETH", "SOL", "USDC", "USDT", "XRP", "ADA"]
