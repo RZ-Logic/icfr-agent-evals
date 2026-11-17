@@ -21,6 +21,8 @@ import hashlib
 import importlib.util
 import json
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace as NS
@@ -191,6 +193,9 @@ def _build(s, out=None, **kw):
     return B.build(s.paths, out or s.out, s.cases_path, s.sel_path, kw.pop("force", False), **kw)
 
 
+SID = "ab" * 32      # a stand-in sheet id for sheets rendered outside a build
+
+
 def _sheet_json(sheet: str) -> dict:
     return json.loads(re.search(r'<script type="application/json" id="data">(.*?)</script>', sheet, re.S).group(1))
 
@@ -209,6 +214,7 @@ def test_the_three_workers_are_the_roster_models_other_than_the_calibrator():
 def test_subset_size_minimum_and_split_follow_section_4():
     assert B.SET_SIZE == I.SET_SIZE == 40
     assert B.MIN_PER_LEVEL == I.MIN_PER_LEVEL == 4
+    assert B.TARGET_MIN_PER_LEVEL == I.TARGET_MIN_PER_LEVEL == 6
     assert B.CAL_SPLIT in casefile.SPLITS
     assert casefile.split_seed(B.CAL_SPLIT) == casefile.split_seed("eval") + 3_000_000
     assert B.LOCKED_ANCHOR_SHA256 == rubric.llm_anchor_sha256()
@@ -311,14 +317,43 @@ def test_selection_problems_catch_each_break(fn, message):
     assert any(message in p for p in problems), problems
 
 
-def test_selection_problems_say_which_level_is_short_and_by_how_much():
+def _rows_with_grounding_2(n: int) -> list[dict]:
+    """The stand-in selection with only n records targeted at grounding level 2."""
     rows = _pick_rows()
     for r in rows[:36]:
         if r["grounding"] == 2:
             r["grounding"] = 3
-    rows[2]["grounding"] = 2      # one record left at grounding level 2
-    problems = B.selection_problems(_selection(rows).picks, list(_cases()))
-    assert "targets: faithfulness.narrative_grounding level 2 has 1 records, 3 short of 4" in problems
+    for r in rows[:36][3:3 + 4 * n:4]:       # natural records at grounding level 3
+        r["grounding"] = 2
+    assert sum(r["grounding"] == 2 for r in rows) == n
+    return rows
+
+
+def test_target_shortfalls_say_which_level_is_short_against_the_margin_of_6():
+    rows = _rows_with_grounding_2(1)
+    assert B.target_shortfalls(_selection(rows).picks) == [
+        "faithfulness.narrative_grounding level 2 has 1 records, 5 short of 6"]
+    # Five records meet the floor of 4 but not the margin of 6.
+    assert B.target_shortfalls(_selection(_rows_with_grounding_2(5)).picks) == [
+        "faithfulness.narrative_grounding level 2 has 5 records, 1 short of 6"]
+    assert B.target_shortfalls(_selection(_rows_with_grounding_2(6)).picks) == []
+    assert B.target_shortfalls(_selection().picks) == []
+
+
+def test_selection_problems_leave_the_target_detail_out():
+    problems = B.selection_problems(_selection(_rows_with_grounding_2(1)).picks, list(_cases()))
+    assert problems == []
+
+
+@pytest.mark.parametrize("n", [1, 5])
+def test_build_records_refuses_targets_below_the_margin_without_naming_a_level(n):
+    cases = _cases()
+    with pytest.raises(B.ShortRefused) as e:
+        B.build_records(_logs(cases), cases, _selection(_rows_with_grounding_2(n)))
+    message = str(e.value)
+    assert "margin of 6" in message
+    assert not re.search(r"level \d|short of|\d+ records,", message)
+    assert e.value.detail == [f"faithfulness.narrative_grounding level 2 has {n} records, {6 - n} short of 6"]
 
 
 def test_selection_problems_refuse_seeds_made_one_way_only():
@@ -530,15 +565,16 @@ def test_build_records_refuses_a_bad_selection():
 def test_sheet_shows_what_the_judge_development_sheet_shows():
     cases = _cases()
     recs = B.build_records(_logs(cases), cases, _selection())
-    sheet = B.render_sheet(recs)
+    sheet = B.render_sheet(recs, SID)
     data = _sheet_json(sheet)
     base = JB.sheet_data(recs)
-    assert {k: v for k, v in data.items() if k not in ("storage_key", "grades_file", "sittings_file")} == {
-        k: v for k, v in base.items() if k not in ("storage_key", "grades_file", "sittings_file")}
+    ours = ("storage_key", "grades_file", "sittings_file", "sheet_id")
+    assert {k: v for k, v in data.items() if k not in ours} == {k: v for k, v in base.items() if k not in ours}
     assert set(data["records"][0]) == {"code", "narrative", "case_input", "case_facts", "output_facts"}
     assert [r["code"] for r in data["records"]] == [r["code"] for r in sorted(recs, key=lambda r: r["position"])]
     assert data["grades_file"] == B.GRADES_FILE and data["sittings_file"] == B.SITTINGS_FILE
-    assert data["storage_key"].startswith("calibration-sheet-") and data["storage_key"] == B.storage_key(recs)
+    assert data["sheet_id"] == SID
+    assert data["storage_key"] == "calibration-sheet-" + SID[:32] == B.storage_key(SID)
     assert data["intro"] == list(JB.INTRO) and data["anchors_sha256"] == B.LOCKED_ANCHOR_SHA256
     for d in (GROUNDING, COVERAGE):
         assert data["scope"][d] == rubric.LLM_GRADED_SCOPE[d]
@@ -561,7 +597,7 @@ def test_worker_words_cover_ids_names_and_family_words():
 def test_blindness_check_catches_each_leak(leak):
     cases = _cases()
     recs = B.build_records(_logs(cases), cases, _selection())
-    sheet = B.render_sheet(recs).replace("</body>", f"<p>{leak}</p></body>")
+    sheet = B.render_sheet(recs, SID).replace("</body>", f"<p>{leak}</p></body>")
     assert B.blindness_hits(sheet, recs, ["EVALID0XYZ", "EVALID1XYZ", "EVALID2XYZ"])
 
 
@@ -583,6 +619,13 @@ def test_build_writes_a_blind_sheet_and_a_sealed_plan(setup):
     assert plan["selection_sha256"] == hashlib.sha256(setup.sel_path.read_bytes()).hexdigest()
     assert plan["worker_prompt_sha256"] == WORKER_PROMPT_SHA256 and plan["anchors_sha256"] == B.LOCKED_ANCHOR_SHA256
     assert plan["min_per_level"] == 4 and plan["unparsed"] == [] and plan["rules"] == JB.RULES
+    assert plan["target_min_per_level"] == 6
+    assert re.fullmatch(r"[0-9a-f]{64}", plan["sheet_id"])
+    data = _sheet_json(sheet)
+    assert data["sheet_id"] == plan["sheet_id"] and data["storage_key"] == B.storage_key(plan["sheet_id"])
+    core = {k: v for k, v in plan.items() if k not in B.SHEET_FIELDS}
+    recs = B.build_records(setup.logs, setup.cases, B.load_selection(setup.sel_path))
+    assert B.compute_sheet_id(recs, core) == plan["sheet_id"]
     assert plan["source_counts"] == {"natural": 36, "seeded_omission": 2, "seeded_addition": 2}
     assert plan["worker_counts"] == {W[0]: 14, W[1]: 13, W[2]: 13}
     assert len(plan["records"]) == 40 and [r["position"] for r in plan["records"]] == list(range(1, 41))
@@ -647,7 +690,12 @@ def test_main_prints_totals_and_exits_by_outcome(setup, capsys):
         "--cases", str(setup.cases_path), "--selection", str(setup.sel_path), "--out", str(setup.out)]
     assert B.main(argv) == 0
     out = capsys.readouterr().out
-    assert "records: 40" in out and "seeded_omission 2" in out and "unparsed outputs (never graded): 0" in out
+    assert "records: 40" in out and "unparsed outputs (never graded): 0" in out
+    plan = json.loads((setup.out / B.SEALED_DIR / B.PLAN_NAME).read_text(encoding="utf-8"))
+    assert f"sheet id: {plan['sheet_id']}" in out
+    # Totals only: no level, source or worker count reaches the screen.
+    assert "level" not in out and GROUNDING not in out and COVERAGE not in out
+    assert "seeded" not in out and "natural" not in out and not any(m in out for m in W)
     assert B.main(argv) == 3 and "already exists" in capsys.readouterr().err
     assert B.main(["--cases", "x"]) == 3
 
@@ -708,10 +756,11 @@ def built(setup):
 
 def _grades(plan: dict, levels=None) -> list[list[str]]:
     """Author grades for each record: by default every level 10 times per sub-dimension."""
-    rows = [["record_code", GROUNDING, COVERAGE, "note", "graded_at"]]
+    rows = [["record_code", GROUNDING, COVERAGE, "note", "graded_at", "sheet_id"]]
     for n, r in enumerate(sorted(plan["records"], key=lambda r: r["code"])):
         g, c = levels(n) if levels else (n % 4, (n // 4) % 4)
-        rows.append([r["code"], str(g), str(c), "a, note" if n == 0 else "", "2026-11-20T10:15:00-05:00"])
+        rows.append([r["code"], str(g), str(c), "a, note" if n == 0 else "", "2026-11-20T10:15:00-05:00",
+                     plan["sheet_id"]])
     return rows
 
 
@@ -762,11 +811,17 @@ def test_import_refuses_author_grades_that_miss_the_stratification(built, tmp_pa
     grades = _grades_file(tmp_path, _grades(built.plan, levels))
     out = tmp_path / "records"
     assert I.main(["--grades", str(grades), "--plan", str(built.plan_path), "--out", str(out)]) == 3
-    err = capsys.readouterr().err
-    assert f"{GROUNDING} level 0 has 0 records, 4 short of 4" in err
-    assert f"{GROUNDING} level 1 has 0 records, 4 short of 4" in err
-    assert f"{COVERAGE} level 2 has 2 records, 2 short of 4" in err
-    assert "more seeds" in err and not out.exists()
+    captured = capsys.readouterr()
+    screen = captured.out + captured.err
+    assert "do not meet the section 4 stratification" in screen and "more seeds" in screen and not out.exists()
+    # The screen never names a level, a count or a shortfall.
+    assert not re.search(r"level \d has|short of|\d+ records|\d+ times,", screen)
+    # The per-level detail is sealed beside the plan.
+    detail = (built.plan_path.parent / I.SHORTFALL_NAME).read_text(encoding="utf-8")
+    assert built.plan_path.parent.name == B.SEALED_DIR
+    assert f"{GROUNDING} level 0 has 0 records, 4 short of 4" in detail
+    assert f"{GROUNDING} level 1 has 0 records, 4 short of 4" in detail
+    assert f"{COVERAGE} level 2 has 2 records, 2 short of 4" in detail
 
 
 def test_grade_shortfalls_count_each_level():
@@ -876,3 +931,210 @@ def test_import_refuses_a_missing_plan_or_grades_and_bad_arguments(built, tmp_pa
 def test_load_grades_is_the_judge_development_reader(built, tmp_path):
     grades = _grades_file(tmp_path, _grades(built.plan))
     assert I.load_grades(grades) == JI.load_grades(grades)
+
+
+# --- Sheet id: old grades never attach to a rebuilt sheet -----------------------------------
+
+
+def _changed_rows() -> list[dict]:
+    """The stand-in selection with one pick moved to another worker: same targets, other output."""
+    rows = _pick_rows()
+    rows[3]["worker"] = W[1]
+    return rows
+
+
+def test_sheet_id_follows_the_shown_records_and_the_plan():
+    cases = _cases()
+    recs = B.build_records(_logs(cases), cases, _selection())
+    core = {"selection_sha256": "1" * 64, "shuffle_seed": 4242}
+    sid = B.compute_sheet_id(recs, core)
+    assert re.fullmatch(r"[0-9a-f]{64}", sid) and B.compute_sheet_id(recs, dict(core)) == sid
+    assert B.compute_sheet_id(recs, {**core, "selection_sha256": "2" * 64}) != sid
+    other = B.build_records(_logs(cases), cases, _selection(_changed_rows()))
+    # Same shuffle seed: the same codes, but another output behind one of them, so another id.
+    assert sorted(r["code"] for r in other) == sorted(r["code"] for r in recs)
+    assert B.compute_sheet_id(other, core) != sid
+    edited = [dict(r) for r in recs]
+    edited[0]["_narrative"] += " One more sentence."
+    assert B.compute_sheet_id(edited, core) != sid
+
+
+@pytest.mark.parametrize("bad", ["", "abc", "AB" * 32, "g" * 64, None])
+def test_sheet_data_refuses_a_malformed_sheet_id(bad):
+    cases = _cases()
+    recs = B.build_records(_logs(cases), cases, _selection())
+    with pytest.raises(B.Refused, match="sheet id"):
+        B.sheet_data(recs, bad)
+
+
+def test_sheet_script_adds_the_sheet_id_column_and_refuses_a_changed_base_script(monkeypatch):
+    js = B.sheet_script()
+    assert '["note", "graded_at", "sheet_id"]' in js and 'x.at || "", D.sheet_id' in js
+    assert 'head.indexOf("sheet_id")' in js and "saved from another sheet" in js
+    monkeypatch.setattr(B.jdb, "_JS", B.jdb._JS.replace('"graded_at"])];', '"graded_at", "x"])];'))
+    with pytest.raises(B.Refused, match="script changed"):
+        B.sheet_script()
+
+
+_HARNESS = r"""
+const DATA = __DATA__;
+const SCRIPT = __SCRIPT__;
+const els = {}, store = {}, blobs = [], statuses = [];
+let keydown = null;
+function fake(id){ return {id: id, style: {}, children: [], listeners: {}, files: [], value: "", textContent: "",
+  appendChild(c){ this.children.push(c); return c; }, addEventListener(t, f){ this.listeners[t] = f; },
+  setAttribute(){}, click(){}, remove(){}, showModal(){}, close(){}, focus(){}, blur(){}}; }
+global.document = {
+  getElementById(id){ if (id === "data") return {textContent: DATA}; if (!els[id]) els[id] = fake(id); return els[id]; },
+  createElement(tag){ return fake(tag); }, createTextNode(t){ return fake("#text"); }, body: fake("body"),
+  addEventListener(t, f){ if (t === "keydown") keydown = f; }};
+global.window = {localStorage: {getItem(k){ return k in store ? store[k] : null; }, setItem(k, v){ store[k] = v; }},
+                 scrollTo(){}};
+URL.createObjectURL = function(b){ blobs.push(b); return "blob:x"; };
+URL.revokeObjectURL = function(){};
+global.setInterval = function(){ return 0; };
+global.setTimeout = function(){ return 0; };
+global.FileReader = function(){ this.readAsText = function(f){ this.result = f.text; this.onload(); }; };
+function key(k){ keydown({key: k, target: {tagName: "BODY"}, preventDefault(){}}); }
+function load(text){ els.file.files = [{text: text}]; els.file.listeners.change(); statuses.push(els.status.textContent); }
+(async function(){
+  eval(SCRIPT);
+  key("2"); key("3");
+  els.save.listeners.click();
+  const saved = await blobs[0].text();
+  const D = JSON.parse(DATA);
+  load(saved.split(D.sheet_id).join("a".repeat(64)));
+  load(saved.replace(",sheet_id", ",sheet"));
+  load(saved);
+  console.log(JSON.stringify({saved: saved, statuses: statuses, keys: Object.keys(store)}));
+})();
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+def test_the_page_saves_the_sheet_id_and_will_not_load_another_sheets_grades(built, tmp_path):
+    sheet = (built.out / B.SHEET_NAME).read_text(encoding="utf-8")
+    data = re.search(r'<script type="application/json" id="data">(.*?)</script>', sheet, re.S).group(1)
+    script = re.search(r"<script>(.*?)</script>", sheet, re.S).group(1)
+    harness = tmp_path / "harness.js"
+    harness.write_text(_HARNESS.replace("__DATA__", json.dumps(data)).replace("__SCRIPT__", json.dumps(script)),
+                       encoding="utf-8")
+    res = subprocess.run(["node", str(harness)], capture_output=True, text=True, encoding="utf-8", timeout=60)
+    assert res.returncode == 0, res.stderr
+    got = json.loads(res.stdout)
+    rows = list(csv.reader(got["saved"].splitlines()))
+    assert rows[0] == ["record_code", GROUNDING, COVERAGE, "note", "graded_at", "sheet_id"]
+    assert len(rows) == 41 and all(r[5] == built.plan["sheet_id"] for r in rows[1:])
+    first = _sheet_json(sheet)["records"][0]["code"]
+    assert [r[1:3] for r in rows[1:] if r[0] == first] == [["2", "3"]]
+    assert got["statuses"][0] == "That grades file was saved from another sheet. It is not loaded."
+    assert got["statuses"][1] == "That file is not a grades file from this page."
+    assert got["statuses"][2] == "Loaded 40 record(s) from the grades file."
+    assert got["keys"] == [B.storage_key(built.plan["sheet_id"])]
+    # The file the page saves carries the plan's sheet id as the import reads it.
+    grades = tmp_path / "saved.csv"
+    grades.write_text(got["saved"], encoding="utf-8", newline="")
+    assert I.grades_sheet_id(grades) == built.plan["sheet_id"]
+
+
+def test_import_refuses_grades_saved_from_an_earlier_build_with_the_same_codes(setup, tmp_path, capsys):
+    first = _build(setup, out=setup.tmp / "first")
+    grades = _grades_file(tmp_path, _grades(first))
+    _write_selection(setup.sel_path, _changed_rows())          # same shuffle seed
+    second = _build(setup, out=setup.tmp / "second")
+    assert sorted(r["code"] for r in second["records"]) == sorted(r["code"] for r in first["records"])
+    assert second["sheet_id"] != first["sheet_id"]
+    plan2 = setup.tmp / "second" / B.SEALED_DIR / B.PLAN_NAME
+    out = tmp_path / "records"
+    assert I.main(["--grades", str(grades), "--plan", str(plan2), "--out", str(out)]) == 3
+    assert "comes from sheet" in capsys.readouterr().err and not out.exists()
+    plan1 = setup.tmp / "first" / B.SEALED_DIR / B.PLAN_NAME
+    assert I.main(["--grades", str(grades), "--plan", str(plan1), "--out", str(out)]) == 0
+
+
+@pytest.mark.parametrize("mutate, message", [
+    (lambda rows: [r[:5] for r in rows], "no single sheet_id column"),
+    (lambda rows: [rows[0] + ["sheet_id"]] + [r + [r[5]] for r in rows[1:]], "more than once"),
+    (lambda rows: rows[:2] + [rows[2][:5] + [""]] + rows[3:], "without a sheet id"),
+    (lambda rows: rows[:2] + [rows[2][:5] + ["c" * 64]] + rows[3:], "more than one sheet"),
+    (lambda rows: [rows[0]] + [r[:5] + ["c" * 64] for r in rows[1:]], "comes from sheet"),
+])
+def test_import_refuses_a_grades_file_without_the_plans_sheet_id(built, tmp_path, capsys, mutate, message):
+    grades = _grades_file(tmp_path, mutate(_grades(built.plan)))
+    out = tmp_path / "records"
+    assert I.main(["--grades", str(grades), "--plan", str(built.plan_path), "--out", str(out)]) == 3
+    assert message in capsys.readouterr().err and not out.exists()
+
+
+def test_import_refuses_a_plan_without_a_sheet_id(built, tmp_path, capsys):
+    for mutate in (lambda p: p.pop("sheet_id"), lambda p: p.update(sheet_id="0" * 12)):
+        plan_path = _plan_copy(built, tmp_path, mutate)
+        grades = _grades_file(tmp_path, _grades(built.plan))
+        assert I.main(["--grades", str(grades), "--plan", str(plan_path), "--out", str(tmp_path / "r")]) == 3
+        assert "no sheet id" in capsys.readouterr().err
+
+
+# --- Rebuild with --force -------------------------------------------------------------------
+
+
+def test_force_refuses_a_changed_selection_that_keeps_its_shuffle_seed(setup):
+    plan = _build(setup)
+    sheet = (setup.out / B.SHEET_NAME).read_bytes()
+    _write_selection(setup.sel_path, _changed_rows())
+    with pytest.raises(B.Refused, match="shuffle seed did not"):
+        _build(setup, force=True)
+    assert (setup.out / B.SHEET_NAME).read_bytes() == sheet
+    _write_selection(setup.sel_path, _changed_rows(), seed=4243)
+    again = _build(setup, force=True)
+    assert again["sheet_id"] != plan["sheet_id"]
+    assert not {r["code"] for r in again["records"]} & {r["code"] for r in plan["records"]}
+
+
+def test_force_refuses_a_sheet_without_its_plan_or_an_unreadable_plan(setup):
+    _build(setup)
+    plan_path = setup.out / B.SEALED_DIR / B.PLAN_NAME
+    plan_path.write_text("{broken", encoding="utf-8")
+    with pytest.raises(B.Refused, match="cannot read the existing plan"):
+        _build(setup, force=True)
+    plan_path.write_text("[]", encoding="utf-8")
+    with pytest.raises(B.Refused, match="not a JSON object"):
+        _build(setup, force=True)
+    plan_path.unlink()
+    with pytest.raises(B.Refused, match="without its plan"):
+        _build(setup, force=True)
+
+
+# --- Target margin: the screen never shows a level ------------------------------------------
+
+
+def test_main_refuses_targets_below_the_margin_and_seals_the_detail(setup, capsys):
+    _write_selection(setup.sel_path, _rows_with_grounding_2(5))
+    argv = [a for p in setup.paths for a in ("--log", str(p))] + [
+        "--cases", str(setup.cases_path), "--selection", str(setup.sel_path), "--out", str(setup.out)]
+    assert B.main(argv) == 3
+    captured = capsys.readouterr()
+    screen = captured.out + captured.err
+    assert "margin of 6" in screen and B.SHORTFALL_NAME in screen
+    assert not re.search(r"level \d|short of|\d+ records,", screen)
+    detail = (setup.sel_path.parent / B.SHORTFALL_NAME).read_text(encoding="utf-8")
+    assert f"{GROUNDING} level 2 has 5 records, 1 short of 6" in detail
+    assert not setup.out.exists()
+
+
+def test_import_refuses_plan_targets_below_the_margin_and_seals_the_detail(built, tmp_path, capsys):
+    def five_at_grounding_2(p):
+        seen = 0
+        for r in p["records"]:
+            if r["stratum"][GROUNDING] == 2:
+                seen += 1
+                if seen > 5:
+                    r["stratum"] = {**r["stratum"], GROUNDING: 3}
+    plan_path = _plan_copy(built, tmp_path, five_at_grounding_2)
+    grades = _grades_file(tmp_path, _grades(built.plan))
+    assert I.main(["--grades", str(grades), "--plan", str(plan_path), "--out", str(tmp_path / "r")]) == 3
+    captured = capsys.readouterr()
+    screen = captured.out + captured.err
+    assert "targets miss the stratification margin" in screen
+    assert not re.search(r"level \d|short of|\d+ records,", screen)
+    detail = (plan_path.parent / I.SHORTFALL_NAME).read_text(encoding="utf-8")
+    assert f"{GROUNDING} level 2 has 5 records, 1 short of 6" in detail

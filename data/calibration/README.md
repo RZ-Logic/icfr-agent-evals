@@ -7,19 +7,21 @@ Calibration split only. The cases sit outside the 200-case evaluation split and 
 ## Cases and outputs
 
 - `calibration.jsonl`: the 40 calibration-split cases, generated at the calibration seed (the evaluation seed 20260607 plus 3,000,000).
-- Outputs: three workers (Sonnet 5.5, Sonnet 5 and Haiku 5.5) answer all 40 cases once (epochs 1) under the locked worker prompt. One output per case is picked, about 13 or 14 per worker. An output that did not parse is never graded (decision D-R10 C5).
+- Outputs: three workers (Sonnet 5.5, Sonnet 5 and Haiku 5.5) answer all 40 cases once (epochs 1) under the locked worker prompt. One output per case is picked. The intent is about 13 or 14 per worker, but the build does not enforce that split: it checks only that each pick names one of the three workers. An output that did not parse is never graded (decision D-R10 C5).
 
 ## Stratification
 
-As in §4: every score level 0 to 3 appears at least 4 times per LLM-graded sub-dimension. Where natural outputs do not reach a level, a picked output is degraded by one mechanical seed rule of `scripts/judge_dev_build.py` (the same rules as the judge-development set). Seeds are made two ways: omission seeds delete required content, and addition seeds add unsupported content by editing words inside the output's own sentences. A seed edits only the narrative field, never an amount, reference, band, direction, asset, period, date, time or case entity name, and never in a way that changes a code score.
+As in §4: every score level 0 to 3 appears at least 4 times per LLM-graded sub-dimension. Where natural outputs do not reach a level, a picked output is degraded by one mechanical seed rule of `scripts/judge_dev_build.py` (the same rules as the judge-development set). Seeds are made two ways: omission seeds delete required content, and addition seeds add unsupported content by editing words inside the output's own sentences. Every seed changes only the narrative field. Two further checks run on addition seeds only: no edit may change an amount, reference, band, direction, asset, period, date, time or case entity name, and no edit may change a code score. Omission seeds delete whole clauses and get neither check, so an omission seed can remove an amount or a reference along with its clause.
 
-The build checks the stratification on the target levels. The import checks it again on the author's grades and refuses when a level falls short, saying by how much; the subset then needs more seeds before the acceptance look. The rubric defines no binary checks (decision D-R10 C4), so no binary check needs 10 cases of each class.
+The build checks the target levels with a margin: every level at least 6 times per sub-dimension, so that an author grade one level away from its target can still leave the floor met. The import checks the plan's targets against the same margin, and the author's grades against the floor of 4 from §4, and refuses when a level falls short; the subset then needs more seeds before the acceptance look. Neither script prints a level count or a shortfall to the screen. The build prints totals only. A refusal says only that the stratification is not met, and the per-level detail goes to a file in the sealed folder (beside the selection input for the build, beside the plan for the import). The rubric defines no binary checks (decision D-R10 C4), so no binary check needs 10 cases of each class.
 
 ## How the grades are made
 
 1. `scripts/calibration_build.py` reads the three worker logs, the cases and a sealed selection input kept outside the repo. It writes the grading sheet and a sealed plan, both outside the repo.
 2. The author grades every record in the sheet. The sheet shows what the judge-development sheet shows: the narrative, the facts sheet the grader also sees (decision D-R10 C7), the case file as the worker saw it, and the committed scope and level texts. It never shows the worker model, the case id, whether a record is natural or seeded, the seed note or the target level. Records carry a random code and come in a random order.
 3. `scripts/calibration_import.py` reads the saved grades file and the sealed plan and writes one record per case to `records/`.
+
+Each build gives the sheet a sheet id, a SHA-256 over the records the sheet shows and the plan. The id is in the sheet data, in the browser storage key, in the plan and in a `sheet_id` column of every row of the saved grades file. A rebuilt sheet that shows other records gets another id. The page will not load a grades file from another sheet, and the import refuses one. Record codes follow from the shuffle seed alone, so a rebuild with `--force` is refused when the selection changed but its shuffle seed did not.
 
 ## Record format
 
