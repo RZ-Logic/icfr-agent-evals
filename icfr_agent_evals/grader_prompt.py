@@ -84,8 +84,8 @@ class PromptSettings:
         if sorted(self.option_order) != list(LEVELS):
             raise ValueError(f"option_order must be a permutation of {LEVELS}, got {self.option_order}")
         labels = self.label_map()
-        if sorted(labels) != list(LEVELS) or len(set(labels.values())) != len(LEVELS):
-            raise ValueError("labels must give each level 0 to 3 one distinct label")
+        if sorted(labels) != list(LEVELS) or len({str(v).casefold() for v in labels.values()}) != len(LEVELS):
+            raise ValueError("labels must give each level 0 to 3 one distinct label, in any letter case")
         if any(not str(v).strip() or re.search(r'["\\\s]', str(v)) for v in labels.values()):
             raise ValueError("a label is one short token with no quote, backslash or space")
         if sorted(self.dimension_order) != sorted(DIMENSIONS):
@@ -166,24 +166,27 @@ def _json_object(text: str) -> dict:
 
 def parse_reply(text: str, settings: PromptSettings = PromptSettings()) -> dict[str, dict[str, Any]]:
     """Per sub-dimension: level (0 to 3), low_confidence (bool) and reason (str). Strict:
-    exactly the sub-dimension keys, each with a label the prompt offered and a boolean
-    flag; anything else is a GraderReplyError (the reply is not scored)."""
+    the reply is one JSON object, bare or wrapped in one code fence; it holds exactly the
+    sub-dimension keys, each with a label the prompt offered and a boolean flag. A label
+    matches in any letter case ("b" reads as "B"), and nothing else is loosened: no
+    padding, no other label form. Anything else is a GraderReplyError (the reply is not
+    scored, and the grader is not asked again)."""
     obj = _json_object(text)
     if set(obj) != set(DIMENSIONS):
         raise GraderReplyError(f"the reply's keys {sorted(obj)} are not the sub-dimensions {sorted(DIMENSIONS)}")
-    back = {str(v): lv for lv, v in settings.label_map().items()}
+    back = {str(v).casefold(): lv for lv, v in settings.label_map().items()}
     out: dict[str, dict[str, Any]] = {}
     for dim in DIMENSIONS:
         entry = obj[dim]
         if not isinstance(entry, dict) or set(entry) - {"reason", "level", "low_confidence"}:
             raise GraderReplyError(f"{dim}: not an object with reason, level and low_confidence")
         label = entry.get("level")
-        if isinstance(label, bool) or str(label) not in back:
+        if isinstance(label, bool) or str(label).casefold() not in back:
             raise GraderReplyError(f"{dim}: level {label!r} is not one of the offered labels")
         flag = entry.get("low_confidence")
         if not isinstance(flag, bool):
             raise GraderReplyError(f"{dim}: low_confidence is not true or false")
-        out[dim] = {"level": back[str(label)], "low_confidence": flag, "reason": str(entry.get("reason") or "")}
+        out[dim] = {"level": back[str(label).casefold()], "low_confidence": flag, "reason": str(entry.get("reason") or "")}
     return out
 
 
