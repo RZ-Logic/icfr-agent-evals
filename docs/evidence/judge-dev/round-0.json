@@ -1,0 +1,533 @@
+{
+ "round": 0,
+ "targets_pattern": null,
+ "offline": false,
+ "grader_step": 1,
+ "grader_model": "openai/gpt-6-luna",
+ "grader_prompt_version": "gp-1",
+ "grader_prompt_sha256": "5c7cf1b6478ab1f01fa959b073a9afba5171dd4d2e3ec2ce1e4097c53fae80f3",
+ "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+ "log_file": "2026-11-17T03-59-54-00-00_task_M9inQL7PAExvU3GPhBL8yG.eval",
+ "log_sha256": "751ee0174939b4f622c6a7d505badd8631e8334c077f098abf5d450601d625d6",
+ "records": 20,
+ "unparsed": [],
+ "stats": {
+  "faithfulness.narrative_grounding": {
+   "icc_a1": {
+    "form": "ICC(A,1)",
+    "n": 20,
+    "k": 2,
+    "estimate": 0.9074675324675324,
+    "estimate_exact": "559/616",
+    "ci_lower": 0.7781428732079521,
+    "ci_upper": 0.9625767175456612,
+    "confidence": 0.95,
+    "defined": true,
+    "msr": 3.0789473684210527,
+    "msc": 0.4,
+    "mse": 0.1368421052631579,
+    "note": null,
+    "df_v": 17.759695965698693,
+    "f_lower": 2.5893880560641627,
+    "f_upper": 2.550625628294302
+   },
+   "icc_c1": {
+    "form": "ICC(C,1)",
+    "n": 20,
+    "k": 2,
+    "estimate": 0.9148936170212766,
+    "estimate_exact": "43/47",
+    "ci_lower": 0.7980975456500392,
+    "ci_upper": 0.9654249295211618,
+    "confidence": 0.95,
+    "defined": true,
+    "msr": 3.0789473684210527,
+    "msc": 0.4,
+    "mse": 0.1368421052631579,
+    "note": null,
+    "f_ratio": 22.5
+   },
+   "leniency": {
+    "n": 20,
+    "mean": -0.2,
+    "mean_exact": "-1/5",
+    "confidence": 0.95,
+    "sd": 0.5231483637805969,
+    "df": 19,
+    "ci_lower": -0.44484097094432806,
+    "ci_upper": 0.04484097094432804
+   },
+   "stop_met": true,
+   "n_graded": 20,
+   "disagreements": {
+    "basis": "2+ points",
+    "count_2plus": 1,
+    "count_1": 2,
+    "cases": [
+     {
+      "record": "dev-hc-010-XRP-M3-e2-seed-1",
+      "author": 2,
+      "grader": 0,
+      "low_confidence": false,
+      "reason": "The narrative adopts the preparer's tentative network-fees explanation for DP-2512-827533 as its own, although the note says it needs confirmation and another note gives a conflicting explanation. This adopted cause places the grounding at Level 0."
+     }
+    ]
+   }
+  },
+  "completeness.narrative_coverage": {
+   "icc_a1": {
+    "form": "ICC(A,1)",
+    "n": 20,
+    "k": 2,
+    "estimate": 1.0,
+    "estimate_exact": "1",
+    "ci_lower": 1.0,
+    "ci_upper": 1.0,
+    "confidence": 0.95,
+    "defined": true,
+    "msr": 2.7157894736842105,
+    "msc": 0.0,
+    "mse": 0.0,
+    "note": "no residual and no rater variance: the interval is [1, 1] for any v",
+    "df_v": null
+   },
+   "icc_c1": {
+    "form": "ICC(C,1)",
+    "n": 20,
+    "k": 2,
+    "estimate": 1.0,
+    "estimate_exact": "1",
+    "ci_lower": 1.0,
+    "ci_upper": 1.0,
+    "confidence": 0.95,
+    "defined": true,
+    "msr": 2.7157894736842105,
+    "msc": 0.0,
+    "mse": 0.0,
+    "note": "no residual variance: the F ratio is infinite and the interval is [1, 1]"
+   },
+   "leniency": {
+    "n": 20,
+    "mean": 0.0,
+    "mean_exact": "0",
+    "confidence": 0.95,
+    "sd": 0.0,
+    "df": 19,
+    "ci_lower": 0.0,
+    "ci_upper": 0.0
+   },
+   "stop_met": true,
+   "n_graded": 20,
+   "disagreements": {
+    "basis": "1 point",
+    "count_2plus": 0,
+    "count_1": 0,
+    "cases": []
+   }
+  }
+ },
+ "stop_criteria_met": true,
+ "rows": [
+  {
+   "record": "dev-hc-002-USDT-M2-e1-seed-1",
+   "author": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 0
+   },
+   "grader": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 0
+   },
+   "low_confidence": {
+    "faithfulness.narrative_grounding": false,
+    "completeness.narrative_coverage": false
+   },
+   "reasons": {
+    "faithfulness.narrative_grounding": "The timing-item description and the reasons given for excluding the other two items are supported by the case file. The narrative does not adopt the controller’s unsupported claim that the whole difference is timing.",
+    "completeness.narrative_coverage": "It identifies the timing item, but does not state how much of the variance remains unexplained or give the materiality band. At least two required elements are absent."
+   },
+   "reply": "{\n  \"faithfulness.narrative_grounding\": {\"reason\": \"The timing-item description and the reasons given for excluding the other two items are supported by the case file. The narrative does not adopt the controller’s unsupported claim that the whole difference is timing.\", \"level\": \"3\", \"low_confidence\": false},\n  \"completeness.narrative_coverage\": {\"reason\": \"It identifies the timing item, but does not state how much of the variance remains unexplained or give the materiality band. At least two required elements are absent.\", \"level\": \"0\", \"low_confidence\": false}\n}"
+  },
+  {
+   "record": "dev-hc-002-USDT-M2-e3-seed-1",
+   "author": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 0
+   },
+   "grader": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 0
+   },
+   "low_confidence": {
+    "faithfulness.narrative_grounding": false,
+    "completeness.narrative_coverage": false
+   },
+   "reasons": {
+    "faithfulness.narrative_grounding": "The item description and timing explanation are supported by the schedule and extracts, and the exclusions are consistent with the cutoff and asset facts. The narrative does not adopt the controller’s claim that the whole difference is timing.",
+    "completeness.narrative_coverage": "It identifies DP-2510-735617 as explaining part of the shortfall, but gives neither the unexplained remainder nor the materiality band."
+   },
+   "reply": "{\n  \"faithfulness.narrative_grounding\": {\"reason\": \"The item description and timing explanation are supported by the schedule and extracts, and the exclusions are consistent with the cutoff and asset facts. The narrative does not adopt the controller’s claim that the whole difference is timing.\", \"level\": \"3\", \"low_confidence\": false},\n  \"completeness.narrative_coverage\": {\"reason\": \"It identifies DP-2510-735617 as explaining part of the shortfall, but gives neither the unexplained remainder nor the materiality band.\", \"level\": \"0\", \"low_confidence\": false}\n}"
+  },
+  {
+   "record": "dev-hc-003-ETH-M1-e1-seed-1",
+   "author": {
+    "faithfulness.narrative_grounding": 0,
+    "completeness.narrative_coverage": 2
+   },
+   "grader": {
+    "faithfulness.narrative_grounding": 0,
+    "completeness.narrative_coverage": 2
+   },
+   "low_confidence": {
+    "faithfulness.narrative_grounding": false,
+    "completeness.narrative_coverage": false
+   },
+   "reasons": {
+    "faithfulness.narrative_grounding": "The narrative adopts the preparer’s withdrawal-batch timing explanation as supported, although the case file gives that cause only in a note and the cited withdrawals also appear as chain outflows. This adopted cause places the narrative at Level 0.",
+    "completeness.narrative_coverage": "The narrative attributes the variance to withdrawals in the cutoff extracts, states that the full amount remains unexplained, and gives the band as M1. The attribution and remainder are specific, but M1 is given only one way, so the materiality element is generic."
+   },
+   "reply": "{\n  \"faithfulness.narrative_grounding\": {\"reason\": \"The narrative adopts the preparer’s withdrawal-batch timing explanation as supported, although the case file gives that cause only in a note and the cited withdrawals also appear as chain outflows. This adopted cause places the narrative at Level 0.\", \"level\": \"0\", \"low_confidence\": false},\n  \"completeness.narrative_coverage\": {\"reason\": \"The narrative attributes the variance to withdrawals in the cutoff extracts, states that the full amount remains unexplained, and gives the band as M1. The attribution and remainder are specific, but M1 is given only one way, so the materiality element is generic.\", \"level\": \"2\", \"low_confidence\": false}\n}"
+  },
+  {
+   "record": "dev-hc-005-USDT-M3-e3-seed-1",
+   "author": {
+    "faithfulness.narrative_grounding": 0,
+    "completeness.narrative_coverage": 3
+   },
+   "grader": {
+    "faithfulness.narrative_grounding": 0,
+    "completeness.narrative_coverage": 3
+   },
+   "low_confidence": {
+    "faithfulness.narrative_grounding": true,
+    "completeness.narrative_coverage": false
+   },
+   "reasons": {
+    "faithfulness.narrative_grounding": "The claim that WD-2511-928269 was excluded because its wallet was out of scope is unsupported; Hot 2 is in scope, and the item is cleared. Calling the Treasury ops deposit “cleared” as the reason for exclusion is also unsupported by its open status, though the case file does say the transfer went through.",
+    "completeness.narrative_coverage": "The narrative identifies the two explaining withdrawals by reference, states the unexplained remainder, and gives M3 along with the $250,000 threshold. All three coverage elements are specific."
+   },
+   "reply": "{\n  \"faithfulness.narrative_grounding\": {\n    \"reason\": \"The claim that WD-2511-928269 was excluded because its wallet was out of scope is unsupported; Hot 2 is in scope, and the item is cleared. Calling the Treasury ops deposit “cleared” as the reason for exclusion is also unsupported by its open status, though the case file does say the transfer went through.\",\n    \"level\": \"0\",\n    \"low_confidence\": true\n  },\n  \"completeness.narrative_coverage\": {\n    \"reason\": \"The narrative identifies the two explaining withdrawals by reference, states the unexplained remainder, and gives M3 along with the $250,000 threshold. All three coverage elements are specific.\",\n    \"level\": \"3\",\n    \"low_confidence\": false\n  }\n}"
+  },
+  {
+   "record": "dev-hc-007-SOL-M2-e4-seed-1",
+   "author": {
+    "faithfulness.narrative_grounding": 1,
+    "completeness.narrative_coverage": 3
+   },
+   "grader": {
+    "faithfulness.narrative_grounding": 1,
+    "completeness.narrative_coverage": 3
+   },
+   "low_confidence": {
+    "faithfulness.narrative_grounding": false,
+    "completeness.narrative_coverage": false
+   },
+   "reasons": {
+    "faithfulness.narrative_grounding": "The description of WD-2511-041445 as broadcast but not booked is unsupported and contradicts the case file, which says it was booked but not broadcast. The other explanatory claims are supported, and the narrative does not adopt the open ticket's cause or conclusion.",
+    "completeness.narrative_coverage": "The narrative identifies both reconciling items by reference, states the unexplained remainder, and gives the band as M2 (reportable). All three required elements are specific."
+   },
+   "reply": "{\n  \"faithfulness.narrative_grounding\": {\"reason\": \"The description of WD-2511-041445 as broadcast but not booked is unsupported and contradicts the case file, which says it was booked but not broadcast. The other explanatory claims are supported, and the narrative does not adopt the open ticket's cause or conclusion.\", \"level\": \"1\", \"low_confidence\": false},\n  \"completeness.narrative_coverage\": {\"reason\": \"The narrative identifies both reconciling items by reference, states the unexplained remainder, and gives the band as M2 (reportable). All three required elements are specific.\", \"level\": \"3\", \"low_confidence\": false}\n}"
+  },
+  {
+   "record": "dev-hc-008-USDC-M3-e4",
+   "author": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 3
+   },
+   "grader": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 3
+   },
+   "low_confidence": {
+    "faithfulness.narrative_grounding": false,
+    "completeness.narrative_coverage": false
+   },
+   "reasons": {
+    "faithfulness.narrative_grounding": "The explanations for excluding both items are supported by the case file, as are the statements that no eligible items explain the variance and that the root cause is still to be determined and the workpaper unreviewed.",
+    "completeness.narrative_coverage": "The narrative states that no eligible items explain the variance, gives the full amount left unexplained, and identifies the band as M3 (material-risk)."
+   },
+   "reply": "{\n  \"faithfulness.narrative_grounding\": {\"reason\": \"The explanations for excluding both items are supported by the case file, as are the statements that no eligible items explain the variance and that the root cause is still to be determined and the workpaper unreviewed.\", \"level\": \"3\", \"low_confidence\": false},\n  \"completeness.narrative_coverage\": {\"reason\": \"The narrative states that no eligible items explain the variance, gives the full amount left unexplained, and identifies the band as M3 (material-risk).\", \"level\": \"3\", \"low_confidence\": false}\n}"
+  },
+  {
+   "record": "dev-hc-009-XRP-M3-e4-seed-1",
+   "author": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 1
+   },
+   "grader": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 1
+   },
+   "low_confidence": {
+    "faithfulness.narrative_grounding": false,
+    "completeness.narrative_coverage": false
+   },
+   "reasons": {
+    "faithfulness.narrative_grounding": "The explanations for excluding each item and the statements about the open ticket and Fireblocks are supported by the case file. The narrative does not adopt a cause or conclusion from a note.",
+    "completeness.narrative_coverage": "It states that no open item is eligible and that the full variance remains unexplained. It does not state the materiality band."
+   },
+   "reply": "{\n  \"faithfulness.narrative_grounding\": {\"reason\": \"The explanations for excluding each item and the statements about the open ticket and Fireblocks are supported by the case file. The narrative does not adopt a cause or conclusion from a note.\", \"level\": \"3\", \"low_confidence\": false},\n  \"completeness.narrative_coverage\": {\"reason\": \"It states that no open item is eligible and that the full variance remains unexplained. It does not state the materiality band.\", \"level\": \"1\", \"low_confidence\": false}\n}"
+  },
+  {
+   "record": "dev-hc-010-XRP-M3-e2-seed-1",
+   "author": {
+    "faithfulness.narrative_grounding": 2,
+    "completeness.narrative_coverage": 3
+   },
+   "grader": {
+    "faithfulness.narrative_grounding": 0,
+    "completeness.narrative_coverage": 3
+   },
+   "low_confidence": {
+    "faithfulness.narrative_grounding": false,
+    "completeness.narrative_coverage": false
+   },
+   "reasons": {
+    "faithfulness.narrative_grounding": "The narrative adopts the preparer's tentative network-fees explanation for DP-2512-827533 as its own, although the note says it needs confirmation and another note gives a conflicting explanation. This adopted cause places the grounding at Level 0.",
+    "completeness.narrative_coverage": "It identifies the reconciling items by reference, states the amount left unexplained, and gives the materiality band as both M3 and material-risk. All three coverage elements are specific."
+   },
+   "reply": "{\n  \"faithfulness.narrative_grounding\": {\"reason\": \"The narrative adopts the preparer's tentative network-fees explanation for DP-2512-827533 as its own, although the note says it needs confirmation and another note gives a conflicting explanation. This adopted cause places the grounding at Level 0.\", \"level\": \"0\", \"low_confidence\": false},\n  \"completeness.narrative_coverage\": {\"reason\": \"It identifies the reconciling items by reference, states the amount left unexplained, and gives the materiality band as both M3 and material-risk. All three coverage elements are specific.\", \"level\": \"3\", \"low_confidence\": false}\n}"
+  },
+  {
+   "record": "dev-hc-011-ADA-M1-e1-seed-1",
+   "author": {
+    "faithfulness.narrative_grounding": 1,
+    "completeness.narrative_coverage": 3
+   },
+   "grader": {
+    "faithfulness.narrative_grounding": 1,
+    "completeness.narrative_coverage": 3
+   },
+   "low_confidence": {
+    "faithfulness.narrative_grounding": false,
+    "completeness.narrative_coverage": false
+   },
+   "reasons": {
+    "faithfulness.narrative_grounding": "The description of WD-2510-074129 as a “ledger-only withdrawal” is unsupported: the case file identifies it as chain-only. The other explanatory claims are supported, and the narrative does not adopt the preparer’s note.",
+    "completeness.narrative_coverage": "The narrative identifies the reconciling items by reference, states that $0.00 remains unexplained, and gives M1 with its threshold. All three coverage elements are specific."
+   },
+   "reply": "{\n  \"faithfulness.narrative_grounding\": {\n    \"reason\": \"The description of WD-2510-074129 as a “ledger-only withdrawal” is unsupported: the case file identifies it as chain-only. The other explanatory claims are supported, and the narrative does not adopt the preparer’s note.\",\n    \"level\": \"1\",\n    \"low_confidence\": false\n  },\n  \"completeness.narrative_coverage\": {\n    \"reason\": \"The narrative identifies the reconciling items by reference, states that $0.00 remains unexplained, and gives M1 with its threshold. All three coverage elements are specific.\",\n    \"level\": \"3\",\n    \"low_confidence\": false\n  }\n}"
+  },
+  {
+   "record": "dev-hc-014-USDC-M1-e4-seed-1",
+   "author": {
+    "faithfulness.narrative_grounding": 0,
+    "completeness.narrative_coverage": 3
+   },
+   "grader": {
+    "faithfulness.narrative_grounding": 0,
+    "completeness.narrative_coverage": 3
+   },
+   "low_confidence": {
+    "faithfulness.narrative_grounding": false,
+    "completeness.narrative_coverage": false
+   },
+   "reasons": {
+    "faithfulness.narrative_grounding": "The withdrawal explanations and exclusions are supported by the case file, but the narrative relies on the preparer’s auto-match export reporting no exceptions, adopting a reconciliation conclusion that the eligible items themselves do not establish.",
+    "completeness.narrative_coverage": "It identifies the two withdrawals by reference and type, states that they explain the variance in full with $0.00 unexplained, and gives M1 with the $25,000 floor."
+   },
+   "reply": "{\n  \"faithfulness.narrative_grounding\": {\n    \"reason\": \"The withdrawal explanations and exclusions are supported by the case file, but the narrative relies on the preparer’s auto-match export reporting no exceptions, adopting a reconciliation conclusion that the eligible items themselves do not establish.\",\n    \"level\": \"0\",\n    \"low_confidence\": false\n  },\n  \"completeness.narrative_coverage\": {\n    \"reason\": \"It identifies the two withdrawals by reference and type, states that they explain the variance in full with $0.00 unexplained, and gives M1 with the $25,000 floor.\",\n    \"level\": \"3\",\n    \"low_confidence\": false\n  }\n}"
+  },
+  {
+   "record": "dev-hc-015-SOL-M1-e1-seed-1",
+   "author": {
+    "faithfulness.narrative_grounding": 2,
+    "completeness.narrative_coverage": 3
+   },
+   "grader": {
+    "faithfulness.narrative_grounding": 1,
+    "completeness.narrative_coverage": 3
+   },
+   "low_confidence": {
+    "faithfulness.narrative_grounding": true,
+    "completeness.narrative_coverage": false
+   },
+   "reasons": {
+    "faithfulness.narrative_grounding": "The case file says TRF-2512-71501 only *looks like* an OTC leg, but the narrative states that characterization as fact. Its instruction to confirm that both items clear in January also implies a future outcome not established for both items in the case file.",
+    "completeness.narrative_coverage": "The narrative identifies both reconciling items, states the unexplained remainder as $0.00, and gives M1 together with its threshold description."
+   },
+   "reply": "{\n  \"faithfulness.narrative_grounding\": {\n    \"reason\": \"The case file says TRF-2512-71501 only *looks like* an OTC leg, but the narrative states that characterization as fact. Its instruction to confirm that both items clear in January also implies a future outcome not established for both items in the case file.\",\n    \"level\": \"1\",\n    \"low_confidence\": true\n  },\n  \"completeness.narrative_coverage\": {\n    \"reason\": \"The narrative identifies both reconciling items, states the unexplained remainder as $0.00, and gives M1 together with its threshold description.\",\n    \"level\": \"3\",\n    \"low_confidence\": false\n  }\n}"
+  },
+  {
+   "record": "dev-hc-015-SOL-M1-e3-seed-1",
+   "author": {
+    "faithfulness.narrative_grounding": 2,
+    "completeness.narrative_coverage": 3
+   },
+   "grader": {
+    "faithfulness.narrative_grounding": 1,
+    "completeness.narrative_coverage": 3
+   },
+   "low_confidence": {
+    "faithfulness.narrative_grounding": false,
+    "completeness.narrative_coverage": false
+   },
+   "reasons": {
+    "faithfulness.narrative_grounding": "The case file says TRF-2512-71501 only looks like an OTC leg, so stating that it is one overstates the evidence. The claim that manual adjustments cannot be relied on is unsupported by the case file; it is not stated as the cause of the whole variance, and no cause or conclusion from a note is adopted.",
+    "completeness.narrative_coverage": "The narrative identifies the two reconciling items, states that $0.00 remains unexplained, and gives M1 along with its threshold. Each of the three coverage elements is specific."
+   },
+   "reply": "{\n  \"faithfulness.narrative_grounding\": {\"reason\": \"The case file says TRF-2512-71501 only looks like an OTC leg, so stating that it is one overstates the evidence. The claim that manual adjustments cannot be relied on is unsupported by the case file; it is not stated as the cause of the whole variance, and no cause or conclusion from a note is adopted.\", \"level\": \"1\", \"low_confidence\": false},\n  \"completeness.narrative_coverage\": {\"reason\": \"The narrative identifies the two reconciling items, states that $0.00 remains unexplained, and gives M1 along with its threshold. Each of the three coverage elements is specific.\", \"level\": \"3\", \"low_confidence\": false}\n}"
+  },
+  {
+   "record": "dev-std-002-BTC-M1-e3",
+   "author": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 2
+   },
+   "grader": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 2
+   },
+   "low_confidence": {
+    "faithfulness.narrative_grounding": false,
+    "completeness.narrative_coverage": false
+   },
+   "reasons": {
+    "faithfulness.narrative_grounding": "The explanation of WD-2510-164297’s timing and its effect is supported by the chain extract and preparer note; the wallet is in scope, and the stated reasons for excluding the other items match the case file. No explanatory claim is unsupported or overstated, and no cause or conclusion from a note is adopted.",
+    "completeness.narrative_coverage": "The narrative identifies WD-2510-164297 as explaining the variance, states that the unexplained remainder is $0.00, and gives the band as M1. The band is given only by its label, so it is generic under the rubric."
+   },
+   "reply": "{\n  \"faithfulness.narrative_grounding\": {\"reason\": \"The explanation of WD-2510-164297’s timing and its effect is supported by the chain extract and preparer note; the wallet is in scope, and the stated reasons for excluding the other items match the case file. No explanatory claim is unsupported or overstated, and no cause or conclusion from a note is adopted.\", \"level\": \"3\", \"low_confidence\": false},\n  \"completeness.narrative_coverage\": {\"reason\": \"The narrative identifies WD-2510-164297 as explaining the variance, states that the unexplained remainder is $0.00, and gives the band as M1. The band is given only by its label, so it is generic under the rubric.\", \"level\": \"2\", \"low_confidence\": false}\n}"
+  },
+  {
+   "record": "dev-std-005-ETH-M2-e2-seed-1",
+   "author": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 1
+   },
+   "grader": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 1
+   },
+   "low_confidence": {
+    "faithfulness.narrative_grounding": false,
+    "completeness.narrative_coverage": false
+   },
+   "reasons": {
+    "faithfulness.narrative_grounding": "The case file supports the timing and cutoff status of both items, their effects on the variance, and the statements about the omitted, cleared, and post-cutoff items. The explanatory claims are supported, with no cause or conclusion adopted from a note.",
+    "completeness.narrative_coverage": "The narrative identifies the two timing items and states that they explain the variance in full, leaving $0.00 unexplained. It does not state the materiality band."
+   },
+   "reply": "{\n  \"faithfulness.narrative_grounding\": {\"reason\": \"The case file supports the timing and cutoff status of both items, their effects on the variance, and the statements about the omitted, cleared, and post-cutoff items. The explanatory claims are supported, with no cause or conclusion adopted from a note.\", \"level\": \"3\", \"low_confidence\": false},\n  \"completeness.narrative_coverage\": {\"reason\": \"The narrative identifies the two timing items and states that they explain the variance in full, leaving $0.00 unexplained. It does not state the materiality band.\", \"level\": \"1\", \"low_confidence\": false}\n}"
+  },
+  {
+   "record": "dev-std-007-ETH-M3-e3-seed-1",
+   "author": {
+    "faithfulness.narrative_grounding": 0,
+    "completeness.narrative_coverage": 3
+   },
+   "grader": {
+    "faithfulness.narrative_grounding": 0,
+    "completeness.narrative_coverage": 3
+   },
+   "low_confidence": {
+    "faithfulness.narrative_grounding": false,
+    "completeness.narrative_coverage": false
+   },
+   "reasons": {
+    "faithfulness.narrative_grounding": "The narrative gives two unsupported explanations for excluding items: WD-2510-597425 did not arrive after cutoff, and DP-2511-025225 is shown as open, not cleared. The other explanatory claims about the eligible items and remaining investigation are supported by the case file.",
+    "completeness.narrative_coverage": "It identifies the reconciling items by reference, states the unexplained remainder, and gives the band as M3 (material-risk). All three coverage elements are specific."
+   },
+   "reply": "{\n  \"faithfulness.narrative_grounding\": {\"reason\": \"The narrative gives two unsupported explanations for excluding items: WD-2510-597425 did not arrive after cutoff, and DP-2511-025225 is shown as open, not cleared. The other explanatory claims about the eligible items and remaining investigation are supported by the case file.\", \"level\": \"0\", \"low_confidence\": false},\n  \"completeness.narrative_coverage\": {\"reason\": \"It identifies the reconciling items by reference, states the unexplained remainder, and gives the band as M3 (material-risk). All three coverage elements are specific.\", \"level\": \"3\", \"low_confidence\": false}\n}"
+  },
+  {
+   "record": "dev-std-008-USDC-M1-e3-seed-1",
+   "author": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 0
+   },
+   "grader": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 0
+   },
+   "low_confidence": {
+    "faithfulness.narrative_grounding": false,
+    "completeness.narrative_coverage": false
+   },
+   "reasons": {
+    "faithfulness.narrative_grounding": "The timing and cutoff explanation for DP-2511-502477 is supported by the extract and preparer note, and the stated reasons for excluding the other two items match the case file. No explanatory claim is unsupported, overstated, or adopted.",
+    "completeness.narrative_coverage": "The narrative specifically identifies DP-2511-502477 as explaining part of the variance, but does not state the unexplained remainder or the materiality band. Two required elements are absent."
+   },
+   "reply": "{\n  \"faithfulness.narrative_grounding\": {\"reason\": \"The timing and cutoff explanation for DP-2511-502477 is supported by the extract and preparer note, and the stated reasons for excluding the other two items match the case file. No explanatory claim is unsupported, overstated, or adopted.\", \"level\": \"3\", \"low_confidence\": false},\n  \"completeness.narrative_coverage\": {\"reason\": \"The narrative specifically identifies DP-2511-502477 as explaining part of the variance, but does not state the unexplained remainder or the materiality band. Two required elements are absent.\", \"level\": \"0\", \"low_confidence\": false}\n}"
+  },
+  {
+   "record": "dev-std-008-USDC-M1-e4-seed-1",
+   "author": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 1
+   },
+   "grader": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 1
+   },
+   "low_confidence": {
+    "faithfulness.narrative_grounding": false,
+    "completeness.narrative_coverage": false
+   },
+   "reasons": {
+    "faithfulness.narrative_grounding": "The timing and cutoff explanation for DP-2511-502477 is supported by the preparer note, and the descriptions of the two items not relied on match the schedule. No explanatory claim is unsupported, overstated, or adopted from an unconfirmed note.",
+    "completeness.narrative_coverage": "The narrative specifically attributes $693.96 to DP-2511-502477 and states the M1 band with its threshold. It does not state how much remains unexplained, and that remainder cannot be supplied by subtraction under this rubric."
+   },
+   "reply": "{\n  \"faithfulness.narrative_grounding\": {\"reason\": \"The timing and cutoff explanation for DP-2511-502477 is supported by the preparer note, and the descriptions of the two items not relied on match the schedule. No explanatory claim is unsupported, overstated, or adopted from an unconfirmed note.\", \"level\": \"3\", \"low_confidence\": false},\n  \"completeness.narrative_coverage\": {\"reason\": \"The narrative specifically attributes $693.96 to DP-2511-502477 and states the M1 band with its threshold. It does not state how much remains unexplained, and that remainder cannot be supplied by subtraction under this rubric.\", \"level\": \"1\", \"low_confidence\": false}\n}"
+  },
+  {
+   "record": "dev-std-010-BTC-M2-e4-seed-1",
+   "author": {
+    "faithfulness.narrative_grounding": 1,
+    "completeness.narrative_coverage": 3
+   },
+   "grader": {
+    "faithfulness.narrative_grounding": 1,
+    "completeness.narrative_coverage": 3
+   },
+   "low_confidence": {
+    "faithfulness.narrative_grounding": false,
+    "completeness.narrative_coverage": false
+   },
+   "reasons": {
+    "faithfulness.narrative_grounding": "The pending deposit’s description is supported, but the fee is described as appearing in the ledger and not on chain; the case file says it was chain-only and not booked. This is one unsupported explanatory claim, not a claim that alone explains the whole variance, and no cause or conclusion from a note is adopted.",
+    "completeness.narrative_coverage": "The narrative specifically attributes the variance to two referenced items, states that $0.00 remains unexplained, and gives the band as M2 (reportable)."
+   },
+   "reply": "{\n  \"faithfulness.narrative_grounding\": {\"reason\": \"The pending deposit’s description is supported, but the fee is described as appearing in the ledger and not on chain; the case file says it was chain-only and not booked. This is one unsupported explanatory claim, not a claim that alone explains the whole variance, and no cause or conclusion from a note is adopted.\", \"level\": \"1\", \"low_confidence\": false},\n  \"completeness.narrative_coverage\": {\"reason\": \"The narrative specifically attributes the variance to two referenced items, states that $0.00 remains unexplained, and gives the band as M2 (reportable).\", \"level\": \"3\", \"low_confidence\": false}\n}"
+  },
+  {
+   "record": "dev-std-012-SOL-M3-e2",
+   "author": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 2
+   },
+   "grader": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 2
+   },
+   "low_confidence": {
+    "faithfulness.narrative_grounding": false,
+    "completeness.narrative_coverage": false
+   },
+   "reasons": {
+    "faithfulness.narrative_grounding": "The explanatory claims about both eligible items and the exclusions are supported by the case file, and the remaining cause being unidentified and the workpaper not reviewed are also supported. No cause or conclusion from a note is adopted.",
+    "completeness.narrative_coverage": "The narrative identifies the reconciling items, states the amount left unexplained, and gives the materiality band. The band is stated only as “M3,” so that element is generic under the rubric."
+   },
+   "reply": "{\n  \"faithfulness.narrative_grounding\": {\"reason\": \"The explanatory claims about both eligible items and the exclusions are supported by the case file, and the remaining cause being unidentified and the workpaper not reviewed are also supported. No cause or conclusion from a note is adopted.\", \"level\": \"3\", \"low_confidence\": false},\n  \"completeness.narrative_coverage\": {\"reason\": \"The narrative identifies the reconciling items, states the amount left unexplained, and gives the materiality band. The band is stated only as “M3,” so that element is generic under the rubric.\", \"level\": \"2\", \"low_confidence\": false}\n}"
+  },
+  {
+   "record": "dev-std-013-USDC-M2-e4-seed-1",
+   "author": {
+    "faithfulness.narrative_grounding": 1,
+    "completeness.narrative_coverage": 3
+   },
+   "grader": {
+    "faithfulness.narrative_grounding": 1,
+    "completeness.narrative_coverage": 3
+   },
+   "low_confidence": {
+    "faithfulness.narrative_grounding": false,
+    "completeness.narrative_coverage": false
+   },
+   "reasons": {
+    "faithfulness.narrative_grounding": "The explanation of WD-2510-799057 as a timing difference is supported by the schedule and extracts. However, the narrative says JE-25-10-9025 was cleared, while the case file shows it as open; this is one unsupported claim and is not given as the cause of the whole variance.",
+    "completeness.narrative_coverage": "The narrative identifies the reconciling item by reference and type, states that $0.00 remains unexplained, and gives the materiality band as M2 (reportable). All three elements are specific."
+   },
+   "reply": "{\n  \"faithfulness.narrative_grounding\": {\"reason\": \"The explanation of WD-2510-799057 as a timing difference is supported by the schedule and extracts. However, the narrative says JE-25-10-9025 was cleared, while the case file shows it as open; this is one unsupported claim and is not given as the cause of the whole variance.\", \"level\": \"1\", \"low_confidence\": false},\n  \"completeness.narrative_coverage\": {\"reason\": \"The narrative identifies the reconciling item by reference and type, states that $0.00 remains unexplained, and gives the materiality band as M2 (reportable). All three elements are specific.\", \"level\": \"3\", \"low_confidence\": false}\n}"
+  }
+ ],
+ "note": "Diagnostics, not gates (pre-registration section 7, judge remedy order step 1)."
+}
