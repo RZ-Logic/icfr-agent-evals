@@ -1,0 +1,7 @@
+{
+ "dataset_version": "0.1.0",
+ "labeling_kappa_seed": 1553740424122856616,
+ "canary": "icfr-hard-cases-d91582e8-5e25-4cc7-af1f-62e5c411fae1",
+ "recorded_utc": "2026-11-17T01:16:08Z",
+ "statement": "Seed of the case bootstrap for the Branch B labeling kappa (pre-registration section 4, decisions D-R18 and D-R19), recorded with dataset version 0.1.0 after the first labeling pass was exported and before the two passes are compared. The 54 hand-written cases and their answer keys join the evaluation split at the 0.1.0 freeze, after both passes."
+}

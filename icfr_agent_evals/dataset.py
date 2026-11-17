@@ -6,8 +6,10 @@ band, eligible reconciling items, valid entities) and no reference narrative, so
 the LLM-graded sub-dimensions never score against the generator's own prose.
 
 Splits, each from its own RNG stream (casefile.split_seed):
-  - eval: the 146 standard synthetic cases. The 30 hand-written edge and 24
-    hand-written adversarial cases are added in the post-tag dataset build.
+  - eval: the 146 standard synthetic cases, plus the 30 hand-written edge and 24
+    hand-written adversarial cases of data/eval/handwritten.jsonl once that file is
+    committed at the dataset 0.1.0 freeze (icfr_agent_evals.handwritten; section 4).
+    Before the freeze the file is absent and the split is the 146 synthetic cases.
   - ci: 146 standard cases with the same factorial composition plus the generated
     hard cases in CI_HARD_COMPOSITION (30 edge-type, 24 adversarial-type).
   - dev: 14 standard cases (design point D4) plus the hard cases in
@@ -37,6 +39,7 @@ from .casefile import ASSETS as _ASSETS
 from .casefile import BANDS, DIRECTIONS, EVIDENCE_STATES, SPLITS, CaseFile, split_seed, to_sample
 from .casefile import PERIODS as _PERIODS
 from .generator import BAND_RANGES, CUSTODIANS, CaseSpec, build_case, draw_variance_cents
+from .handwritten import HANDWRITTEN_FILE, load_handwritten
 
 ASSETS = list(_ASSETS)
 PERIODS = list(_PERIODS)
@@ -152,9 +155,16 @@ def standard_specs(split: str, seed: int = 20260607) -> list[CaseSpec]:
     return [_spec(rng, split, n, *cell) for n, cell in enumerate(cells)]
 
 
-def build_cases(split: str = "eval", seed: int = 20260607) -> list[CaseFile]:
-    """Every case of a split as CaseFile objects, in sample order."""
+def build_cases(split: str = "eval", seed: int = 20260607, handwritten_path=None) -> list[CaseFile]:
+    """Every case of a split as CaseFile objects, in sample order. On the eval split the
+    hand-written cases (icfr_agent_evals.handwritten) join the synthetic ones when their
+    file exists, and the 200 cases are shuffled under a seed derived from the split's."""
     cases = [build_case(s) for s in standard_specs(split, seed)]
+    if split == "eval":
+        hw = load_handwritten(HANDWRITTEN_FILE if handwritten_path is None else handwritten_path)
+        if hw:
+            cases = cases + list(hw)
+            random.Random(split_seed(split, seed) ^ 0x5EED).shuffle(cases)
     if split in ("ci", "dev"):
         from .hardcases import build_hard_cases
 
