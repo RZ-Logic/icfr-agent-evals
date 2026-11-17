@@ -2,7 +2,7 @@
 
 The author's rulings on the Phase 1 pre-registration ([`PRE-REGISTRATION-PHASE-1.md`](../PRE-REGISTRATION-PHASE-1.md)) from 2026-11-09 to 2026-11-15, grouped by topic, one plain sentence each. The tag and date in brackets are the ruling's name and date in the pre-registration, which states each rule in full; where this log and the pre-registration differ, the pre-registration governs. Earlier D-numbered decisions (D1 to D18, from 2026-11-05 on; the D1 of 2026-11-11 on difficulty check (b) is listed below), P12 of 2026-11-07 and the ratifications of 2026-11-03 and 2026-11-04 are recorded in §13 of the pre-registration; the few that still shape today's rules are noted where they matter.
 
-Written on 2026-11-13 from the author's private decision record as it stood then: 37 rulings, with D-R16 added the same evening, D-R17 and D-R18 on 2026-11-14, and D-R19 (the outside pre-tag review's fixes) the same day (41). D-R20, the first ruling after the tag, was added on 2026-11-15 (section 13).
+Written on 2026-11-13 from the author's private decision record as it stood then: 37 rulings, with D-R16 added the same evening, D-R17 and D-R18 on 2026-11-14, and D-R19 (the outside pre-tag review's fixes) the same day (41). D-R20, the first ruling after the tag, was added on 2026-11-15, and D-R21 on 2026-11-17 (section 13).
 
 ## 1. What the score of record is
 
@@ -109,6 +109,7 @@ D-R20 (2026-11-15) is the first ruling after the tag. It settles points the tagg
 - **Test-retest and bias-audit details are kept as built:** the alpha bootstrap uses 10,000 unit resamples with undefined resamples dropped and counted, and the one seeded option permutation is kept, and flagged, when it comes out as the identity or the reversal. [D-R20, 2026-11-15]
 - **Labeling checks:** the 48-hour gap is shown on every case from the sheet's timer, or the subset gets no name; the published adjudicated-case count is the count of cases differing on any label, a label given in one pass and left blank in the other counting as differing. [D-R20, 2026-11-15]
 - **The template baseline goes in the review packet,** so its reference row gets all three figures; an evaluation-split packet without it is refused. [D-R20, 2026-11-15]
+- **Grader development rounds (D-R21):** in step 1 of the judge remedy order, the first grading of the judge-development set with the first prompt wording is round 0 and targets no pattern; at most 3 rounds follow, each after an edit for a named disagreement pattern, so the 3-round cap counts edits. [D-R21, 2026-11-17]
 
 ## Still open
 
