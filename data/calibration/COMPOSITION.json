@@ -1,0 +1,154 @@
+{
+ "calibration_seed": 23260607,
+ "composition": {
+  "asset": {
+   "ADA": 6,
+   "BTC": 6,
+   "ETH": 5,
+   "SOL": 6,
+   "USDC": 5,
+   "USDT": 6,
+   "XRP": 6
+  },
+  "band": {
+   "M1": 11,
+   "M2": 16,
+   "M3": 13
+  },
+  "case_kind": {
+   "adversarial": 10,
+   "edge": 10,
+   "standard": 20
+  },
+  "category": {
+   "AC-1": 2,
+   "AC-2": 2,
+   "AC-3": 2,
+   "AC-4": 1,
+   "AC-5": 1,
+   "AC-6": 2,
+   "ambiguous_narrative": 3,
+   "band_boundary": 4,
+   "incomplete_data": 3,
+   "standard": 20
+  },
+  "direction": {
+   "shortfall": 20,
+   "surplus": 20
+  },
+  "evidence_state": {
+   "fully_explained": 16,
+   "partly_unexplained": 15,
+   "unexplained": 9
+  },
+  "memo_only_link": 7,
+  "n": 40,
+  "period": {
+   "2025-10": 14,
+   "2025-11": 13,
+   "2025-12": 13
+  },
+  "standard": {
+   "asset": {
+    "ADA": 3,
+    "BTC": 3,
+    "ETH": 2,
+    "SOL": 3,
+    "USDC": 3,
+    "USDT": 3,
+    "XRP": 3
+   },
+   "band": {
+    "M1": 6,
+    "M2": 7,
+    "M3": 7
+   },
+   "direction": {
+    "shortfall": 10,
+    "surplus": 10
+   },
+   "evidence_state": {
+    "fully_explained": 10,
+    "partly_unexplained": 7,
+    "unexplained": 3
+   },
+   "memo_only_link": 6,
+   "n": 20,
+   "period": {
+    "2025-10": 7,
+    "2025-11": 7,
+    "2025-12": 6
+   }
+  },
+  "template_variant": {
+   "already_resolved": 1,
+   "amount_conflict": 1,
+   "blank_memo_fields": 1,
+   "cleared_called_open": 1,
+   "controller_decoys": 1,
+   "controller_timing": 1,
+   "custodian_long_form": 1,
+   "forwarded_note_band": 1,
+   "json_fragment": 1,
+   "plain": 2,
+   "rounded_remark": 1,
+   "row_amount_missing": 1,
+   "schedule_comment_canary": 1,
+   "standard": 20,
+   "sub_custodian": 1,
+   "threshold_question": 1,
+   "timing_assertion": 1,
+   "type_conflict": 1,
+   "unnamed_counterparty": 1,
+   "vault_credit_hash": 1
+  }
+ },
+ "dataset_sha256": "e35e222203069ad0a86fcb3bfbac708e52c0ce65761a2363286c1648232964a6",
+ "disjointness": {
+  "ci": {
+   "seed": 22260607,
+   "shared_canaries": 0,
+   "shared_case_ids": 0,
+   "shared_references": 0,
+   "shared_template_instances": 0,
+   "shared_tx_hashes": 0,
+   "shared_wallets": 0,
+   "shared_wallets_or_references": 0
+  },
+  "dev": {
+   "seed": 21260607,
+   "shared_canaries": 0,
+   "shared_case_ids": 0,
+   "shared_references": 0,
+   "shared_template_instances": 0,
+   "shared_tx_hashes": 0,
+   "shared_wallets": 0,
+   "shared_wallets_or_references": 0
+  },
+  "eval": {
+   "seed": 20260607,
+   "shared_canaries": 0,
+   "shared_case_ids": 0,
+   "shared_references": 0,
+   "shared_template_instances": 0,
+   "shared_tx_hashes": 0,
+   "shared_wallets": 0,
+   "shared_wallets_or_references": 0
+  }
+ },
+ "file": "data/calibration/calibration.jsonl",
+ "file_sha256": "367f478f72f9c8e5750325fb55bb43c4f441a2601305efcd87b04c8ab40f73e0",
+ "generator_version": "G-0.1.0-dev.1",
+ "hard_composition": {
+  "AC-1": 2,
+  "AC-2": 2,
+  "AC-3": 2,
+  "AC-4": 1,
+  "AC-5": 1,
+  "AC-6": 2,
+  "ambiguous_narrative": 3,
+  "band_boundary": 4,
+  "incomplete_data": 3
+ },
+ "hard_generator_version": "H-0.1.0-dev.1"
+}
