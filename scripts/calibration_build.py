@@ -19,7 +19,9 @@ Design set by the author on 2026-11-17 (not in the pre-registration text): 40 ca
 the calibration split (data/calibration/calibration.jsonl); natural outputs from three
 workers, Sonnet 5.5, Sonnet 5 and Haiku 5.5, each answering all 40 cases once (epochs 1)
 under the locked worker prompt; one output per case is picked, and a picked output may
-be degraded by one mechanical seed rule of scripts/judge_dev_build.py (RULES).
+be degraded by one mechanical seed rule of CAL_RULES: the rules of
+scripts/judge_dev_build.py (RULES) plus one calibration-only addition seed, G-GUESS, which
+the code applies itself (no edits in the pick).
 
 Inputs:
   --log        three worker logs on the calibration split, one per worker. Each must be
@@ -28,7 +30,8 @@ Inputs:
   --cases      the 40 calibration cases (JSONL, as data/dev/dev.jsonl).
   --selection  the sealed selection input, outside the repo. Per case: the worker whose
                output is used, the target level per sub-dimension (the stratum), and for a
-               seeded record one rule of RULES with its exact edits; also the shuffle seed.
+               seeded record one rule of CAL_RULES with its exact edits (none for
+               G-GUESS); also the shuffle seed.
                This script reads it and never writes it. Shape: {"shuffle_seed": int,
                "picks": [{"sample_id", "worker" (the model id as the log names it),
                "grounding", "coverage", and optionally "epoch" (1), "rule", "basis",
@@ -135,6 +138,92 @@ SHEET_ID_RE = re.compile(r"^[0-9a-f]{64}$")
 Refused = jdb.Refused
 SeedError = jdb.SeedError
 
+# --- Calibration-only seed rules ------------------------------------------------------------
+
+# One more addition seed, for the calibration subset only, since grounding level 2
+# (overstated) is scarce among natural outputs. The rubric's level 2 example "The remaining
+# USD 7,775.35 may reflect an airdrop." is this kind of claim: a cause the case file does
+# not give, offered by the narrative as a guess with a hedge. The code applies the rule
+# itself, so a G-GUESS pick carries no edits.
+G_GUESS = "G-GUESS"
+GUESS_CAUSES: tuple[tuple[str, str], ...] = (
+    ("a network fee", "fee"),
+    ("an exchange rate difference", "exchange rate"),
+    ("a custodian rebate", "rebate"),
+)
+GUESS_CLAUSE = ", which may reflect {cause}"
+GUESS_STATE = "partly_unexplained"
+_GUESS_REMAINDER = re.compile(r"\b(?:unexplained|remaining|remains|leaving|leaves)\b", re.I)
+CAL_ONLY_RULES: dict[str, str] = {
+    G_GUESS: (
+        "Grounding, one claim made overstated: the narrative's own hedged guess at the cause of the "
+        "remainder. In the first sentence of the narrative that states the remainder (it holds "
+        "unexplained, remaining, remains, leaving or leaves) and names no item as its cause, insert "
+        "the fixed clause ', which may reflect X' just before that sentence's final full stop, where "
+        "X is the first of 'a network fee', 'an exchange rate difference', 'a custodian rebate' whose "
+        "key noun (fee, exchange rate, rebate) does not appear anywhere in the case file text, "
+        "case-insensitive. Nothing else changes. Target grounding 2; coverage unchanged from the base."
+    ),
+}
+# The judge-development tables, extended by the calibration-only rules.
+CAL_RULES: dict[str, str] = {**jdb.RULES, **CAL_ONLY_RULES}
+CAL_RULE_SOURCE: dict[str, str] = {**jdb.RULE_SOURCE, G_GUESS: "seeded_addition"}
+CAL_RULE_TARGET: dict[str, dict[str, int]] = {**jdb.RULE_TARGET, G_GUESS: {GROUNDING: 2}}
+
+
+def guess_cause(case_text: str) -> str:
+    """X of G-GUESS: the first cause whose key noun the case file text never holds."""
+    low = case_text.lower()
+    for cause, noun in GUESS_CAUSES:
+        if noun not in low:
+            return cause
+    raise SeedError("every key noun of the G-GUESS causes (fee, exchange rate, rebate) is in the case file")
+
+
+def apply_guess(narrative: str, metadata: Mapping[str, Any], case_text: str) -> jdb.SeedResult:
+    """G-GUESS. Inserts the fixed hedged clause into the first remainder sentence that names
+    no item reference of the case. Refuses a case whose answer key leaves no part of the
+    variance unexplained beside an explained part, a narrative with no such sentence, a
+    case file that holds every key noun, and an insertion that changes a protected token or
+    the number of sentences. The code-score check runs in build_records."""
+    truth = casefile.truth_of(dict(metadata))
+    if truth.evidence_state != GUESS_STATE:
+        raise SeedError(f"G-GUESS needs a case with an unexplained remainder ({GUESS_STATE}), "
+                        f"not {truth.evidence_state}")
+    if not case_text:
+        raise SeedError("G-GUESS needs the case file text")
+    refs = jdb.item_references(truth)
+    sentences = jdb.split_sentences(narrative)
+    at = next((i for i, s in enumerate(sentences)
+               if _GUESS_REMAINDER.search(s) and not jdb._names_item(s, refs)), None)
+    if at is None:
+        raise SeedError("no sentence states the remainder without naming an item")
+    sentence = sentences[at]
+    if not sentence.endswith("."):
+        raise SeedError(f"the remainder sentence does not end with a full stop: {sentence}")
+    clause = GUESS_CLAUSE.format(cause=guess_cause(case_text))
+    new_sentence = sentence[:-1] + clause + "."
+    out = " ".join([*sentences[:at], new_sentence, *sentences[at + 1:]])
+    names = jdb.entity_names(truth)
+    if jdb.protected_tokens(narrative, names) != jdb.protected_tokens(out, names):
+        raise SeedError("the clause changes a protected token (amount, reference, band, direction, asset, "
+                        "period, date, time or entity name)")
+    if len(jdb.split_sentences(out)) != len(sentences):
+        raise SeedError("the clause changed the number of sentences")
+    note = (f"Rule {G_GUESS}. {CAL_RULES[G_GUESS]} Inserted the clause {json.dumps(clause, ensure_ascii=False)} "
+            f"just before the final full stop of {json.dumps(sentence, ensure_ascii=False)}. "
+            f"Claim: the remainder's cause guessed with a hedge. Target grounding {CAL_RULE_TARGET[G_GUESS][GROUNDING]}; "
+            "coverage unchanged from the base. Nothing else was added or deleted. Only the narrative field "
+            "changed; the rest of the output is verbatim.")
+    return jdb.SeedResult(out, note, edits=[{"find": sentence, "replace": new_sentence}])
+
+
+def apply_cal_rule(pick: jdb.Pick, narrative: str, metadata: Mapping[str, Any], case_text: str) -> jdb.SeedResult:
+    """The pick's rule: a calibration-only rule here, any other through jdb.apply_rule."""
+    if pick.rule == G_GUESS:
+        return apply_guess(narrative, metadata, case_text)
+    return jdb.apply_rule(pick, narrative, metadata, case_text)
+
 
 class ShortRefused(Refused):
     """A refusal for levels that fall short. The message never names a level or a count;
@@ -166,8 +255,8 @@ class CalPick:
 
     @property
     def source(self) -> str:
-        """natural, seeded_omission or seeded_addition; "unknown" for a rule RULES does not hold."""
-        return "natural" if self.pick.rule is None else jdb.RULE_SOURCE.get(self.pick.rule, "unknown")
+        """natural, seeded_omission or seeded_addition; "unknown" for a rule CAL_RULES does not hold."""
+        return "natural" if self.pick.rule is None else CAL_RULE_SOURCE.get(self.pick.rule, "unknown")
 
     @property
     def stratum(self) -> dict[str, int]:
@@ -242,23 +331,26 @@ def level_counts(picks: Sequence[CalPick]) -> dict[str, dict[int, int]]:
 
 
 def _rule_problems(p: CalPick) -> list[str]:
-    """The judge-development rule checks for one pick: a natural record carries no edit,
-    a seeded record names a known rule, its targets follow from the rule and its edits
-    are as many as the rule takes."""
+    """The judge-development rule checks for one pick, over the calibration rule table: a
+    natural record carries no edit, a seeded record names a known rule, its targets follow
+    from the rule and its edits are as many as the rule takes (none for a rule the code
+    applies itself)."""
     pick, out = p.pick, []
     if pick.rule is None:
         if pick.edits or pick.note_words:
             out.append(f"{pick.sample_id}: a natural record carries edits or note words")
         return out
-    if pick.rule not in jdb.RULES:
+    if pick.rule not in CAL_RULES:
         return [f"{pick.sample_id}: unknown rule {pick.rule}"]
-    for d, lv in jdb.RULE_TARGET[pick.rule].items():
+    for d, lv in CAL_RULE_TARGET[pick.rule].items():
         if pick.stratum[d] != lv:
             out.append(f"{pick.sample_id}: rule {pick.rule} makes {d} level {lv}, not {pick.stratum[d]}")
     if pick.rule in jdb.EDIT_COUNT:
         lo, hi = jdb.EDIT_COUNT[pick.rule]
         if not lo <= len(pick.edits) <= hi:
             out.append(f"{pick.sample_id}: rule {pick.rule} takes {lo} to {hi} edits, not {len(pick.edits)}")
+    elif pick.edits and pick.rule in CAL_ONLY_RULES:
+        out.append(f"{pick.sample_id}: rule {pick.rule} takes no edits; the code applies it")
     elif pick.edits:
         out.append(f"{pick.sample_id}: an omission rule takes no edits")
     if (pick.rule == "G-ADOPT") != bool(pick.note_words):
@@ -444,12 +536,12 @@ def build_records(logs_by_model: Mapping[str, Any], cases: Mapping[str, dict], s
             worker_output, narrative, note = raw, base_narr, None
         else:
             try:
-                seeded = jdb.apply_rule(pick, base_narr, metadata, case_input)
+                seeded = apply_cal_rule(pick, base_narr, metadata, case_input)
                 worker_output = jdb.replace_narrative(raw, base_narr, seeded.narrative)
             except SeedError as e:
                 raise Refused(f"{pick.sample_id} from {model}, rule {pick.rule}: {e}") from e
             narrative, note = seeded.narrative, seeded.note
-            if pick.rule in jdb.EDIT_COUNT:
+            if CAL_RULE_SOURCE[pick.rule] == "seeded_addition":
                 truth = casefile.truth_of(metadata)
                 before = jdb.code_scores(parse.parsed, truth)
                 after = jdb.code_scores(scoring.parse_worker_output(worker_output).parsed, truth)
@@ -465,7 +557,7 @@ def build_records(logs_by_model: Mapping[str, Any], cases: Mapping[str, dict], s
             "log_eval_id": str(log.eval.eval_id),
             "worker_prompt_sha256": WORKER_PROMPT_SHA256,
             "worker_output": worker_output,
-            "source": pick.source,
+            "source": cp.source,
             "seed_note": note,
             "stratum": pick.stratum,
             "seed_rule": pick.rule,
@@ -568,6 +660,9 @@ def blindness_hits(sheet: str, records: Sequence[Mapping[str, Any]], log_eval_id
     """Everything sealed that the sheet must not hold. Empty when the sheet is blind."""
     hits = jdb.blindness_hits(sheet, records, "")
     low = sheet.lower()
+    for rule in CAL_ONLY_RULES:
+        if re.search(r"(?<![a-z0-9])" + re.escape(rule.lower()) + r"(?![a-z0-9])", low):
+            hits.append(f"word {rule!r}")
     if re.search(r"calibration-(?:hc|std|ac|edge|adv|hw)-", low):
         hits.append("a calibration case id prefix")
     for eid in log_eval_ids:
@@ -614,7 +709,7 @@ def plan_payload(records: Sequence[Mapping[str, Any]], *, logs: Sequence[Mapping
         "min_per_level": MIN_PER_LEVEL,
         "target_min_per_level": TARGET_MIN_PER_LEVEL,
         "unparsed": list(unparsed),
-        "rules": dict(jdb.RULES),
+        "rules": dict(CAL_RULES),
         "level_counts": {d: {str(lv): n for lv, n in c.items()} for d, c in level_counts(selection.picks).items()},
         "source_counts": seed_types(selection.picks),
         "worker_counts": {m: sum(1 for p in selection.picks if p.worker == m) for m in CAL_WORKERS},
