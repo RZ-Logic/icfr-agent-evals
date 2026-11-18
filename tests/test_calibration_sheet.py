@@ -222,8 +222,11 @@ def test_subset_size_minimum_and_split_follow_section_4():
 
 def test_the_build_reuses_the_judge_development_seed_rules_and_sheet():
     text = (REPO / "scripts" / "calibration_build.py").read_text(encoding="utf-8")
-    assert "RULES: dict" not in text and "_JS = " not in text and "_CSS = " not in text
+    assert not re.search(r"(?<![A-Z_])RULES: dict", text) and "_JS = " not in text and "_CSS = " not in text
     assert "jdb.apply_rule" in text and "jdb.replace_narrative" in text and "jdb.code_scores" in text
+    # The calibration rule table extends the judge-development one and changes none of it.
+    assert {k: v for k, v in B.CAL_RULES.items() if k in JB.RULES} == JB.RULES
+    assert set(B.CAL_RULES) - set(JB.RULES) == set(B.CAL_ONLY_RULES) == {"G-GUESS"}
 
 
 def test_public_text_has_no_dashes_or_working_words():
@@ -559,6 +562,204 @@ def test_build_records_refuses_a_bad_selection():
         B.build_records(_logs(cases), cases, _selection(_pick_rows()[:39]))
 
 
+# --- G-GUESS, the calibration-only addition seed ---------------------------------------------
+
+GUESS_SENTENCE = "The remaining $40,000.00 is unexplained."
+GUESS_NARR = ("On-chain reserves fall short of ledger liabilities by $120,000.00, a shortfall in the M2 (reportable) "
+              "band. WD-2512-04417 ($80,000.00, sent on chain but not booked in the ledger) is a possible pending "
+              f"transfer. {GUESS_SENTENCE} I excluded JE-25-12-0193 (cleared) and DP-2601-05521 (dated after the "
+              "cutoff).")
+GUESS_CASE = _case_id(39)       # picked from W[0]
+GUESS_CLAUSE = ", which may reflect a network fee"
+
+
+def _guess_rows() -> list[dict]:
+    """The stand-in selection with its last addition seed made a G-GUESS seed."""
+    rows = _pick_rows()
+    rows[39] = {"sample_id": GUESS_CASE, "worker": W[0], "grounding": 2, "coverage": 3, "rule": "G-GUESS"}
+    return rows
+
+
+def _guess_raw(cid: str, case: dict, n: int = 0) -> str:
+    if cid != GUESS_CASE:
+        return _raw(case, n)
+    return json.dumps(good_output(casefile.truth_of(case["metadata"]), narrative=GUESS_NARR), separators=(",", ":"))
+
+
+def _guess_logs(cases):
+    logs = _logs(cases)
+    logs[W[0]] = _mock_log(W[0], cases, raw_of=_guess_raw)
+    return logs
+
+
+def _meta(first) -> dict:
+    """Stand-in metadata whose explaining item is `first` (None for no explaining item)."""
+    items = ((first,) if first else ()) + _items()[1:]
+    truth = make_truth("BTC", items=items, split="calibration", case_id=_case_id(0))
+    return {"truth": truth.to_dict(), "split": "calibration", "schema_version": "1"}
+
+
+def test_g_guess_is_one_more_addition_seed_targeting_grounding_2():
+    assert B.CAL_RULE_SOURCE["G-GUESS"] == "seeded_addition"
+    assert B.CAL_RULE_TARGET["G-GUESS"] == {GROUNDING: 2}
+    assert "G-GUESS" not in JB.RULES and "G-GUESS" not in JB.EDIT_COUNT
+    text = B.CAL_RULES["G-GUESS"]
+    assert text.startswith("Grounding, one claim made overstated: the narrative's own hedged guess")
+    assert text.endswith("Target grounding 2; coverage unchanged from the base.")
+    for cause, noun in B.GUESS_CAUSES:
+        assert f"'{cause}'" in text and noun in text
+    assert "', which may reflect X'" in text
+
+
+def test_g_guess_applies_on_a_qualifying_narrative():
+    meta = _cases()[GUESS_CASE]["metadata"]
+    assert casefile.truth_of(meta).evidence_state == "partly_unexplained"
+    res = B.apply_guess(GUESS_NARR, meta, CASE_TEXT)
+    new_sentence = GUESS_SENTENCE[:-1] + GUESS_CLAUSE + "."
+    assert res.narrative == GUESS_NARR.replace(GUESS_SENTENCE, new_sentence)
+    assert res.edits == [{"find": GUESS_SENTENCE, "replace": new_sentence}] and res.deleted == []
+    assert res.note.startswith("Rule G-GUESS. " + B.CAL_RULES["G-GUESS"])
+    assert json.dumps(GUESS_CLAUSE) in res.note and json.dumps(GUESS_SENTENCE) in res.note
+    assert "Target grounding 2; coverage unchanged from the base." in res.note
+    # The pick goes through the calibration dispatcher, never through the judge-development rule table.
+    pick = JB.Pick(GUESS_CASE, 1, 2, 3, "G-GUESS")
+    assert B.apply_cal_rule(pick, GUESS_NARR, meta, CASE_TEXT).narrative == res.narrative
+    # Only the first remainder sentence that names no item takes the clause.
+    two = GUESS_NARR + " Nothing explains the remaining $40,000.00."
+    assert B.apply_guess(two, meta, CASE_TEXT).narrative.count(GUESS_CLAUSE) == 1
+
+
+@pytest.mark.parametrize("extra, cause", [
+    ("", "a network fee"),
+    ("custody FEES line\n", "an exchange rate difference"),
+    ("custody fee line\nExchange Rate note\n", "a custodian rebate"),
+])
+def test_g_guess_takes_the_first_cause_whose_key_noun_the_case_file_lacks(extra, cause):
+    meta = _cases()[GUESS_CASE]["metadata"]
+    res = B.apply_guess(GUESS_NARR, meta, CASE_TEXT + extra)
+    assert f"is unexplained, which may reflect {cause}." in res.narrative
+
+
+def test_g_guess_refuses_when_every_key_noun_is_in_the_case_file():
+    meta = _cases()[GUESS_CASE]["metadata"]
+    with pytest.raises(B.SeedError, match="every key noun"):
+        B.apply_guess(GUESS_NARR, meta, CASE_TEXT + "a fee, an exchange rate and a REBATE\n")
+
+
+@pytest.mark.parametrize("narrative", [
+    NARR,                                       # its remainder sentence names an item
+    NARR.replace(", leaving $40,000.00 unexplained", ""),   # no remainder sentence at all
+])
+def test_g_guess_refuses_a_narrative_with_no_remainder_sentence_naming_no_item(narrative):
+    meta = _cases()[GUESS_CASE]["metadata"]
+    with pytest.raises(B.SeedError, match="no sentence states the remainder"):
+        B.apply_guess(narrative, meta, CASE_TEXT)
+
+
+def test_g_guess_refuses_a_remainder_sentence_without_a_final_full_stop():
+    meta = _cases()[GUESS_CASE]["metadata"]
+    with pytest.raises(B.SeedError, match="does not end with a full stop"):
+        B.apply_guess(GUESS_NARR.replace(GUESS_SENTENCE, "The remaining $40,000.00 is unexplained!"), meta, CASE_TEXT)
+
+
+@pytest.mark.parametrize("amount, state", [(120_000.00, "fully_explained"), (None, "unexplained")])
+def test_g_guess_refuses_a_fully_explained_or_unexplained_case(amount, state):
+    first = None if amount is None else item("WD-2512-04417", amount, date=casefile.period_cutoff_date("2025-12"))
+    meta = _meta(first)
+    assert casefile.truth_of(meta).evidence_state == state
+    with pytest.raises(B.SeedError, match=f"partly_unexplained.*not {state}"):
+        B.apply_guess(GUESS_NARR, meta, CASE_TEXT)
+
+
+def test_g_guess_refuses_a_clause_on_a_protected_token(monkeypatch):
+    meta = _cases()[GUESS_CASE]["metadata"]
+    monkeypatch.setattr(B, "GUESS_CAUSES", (("a BitGo Trust rebate", "rebate"),))
+    with pytest.raises(B.SeedError, match="protected token"):
+        B.apply_guess(GUESS_NARR, meta, CASE_TEXT)
+
+
+def test_selection_accepts_g_guess_at_grounding_2_without_edits():
+    assert B.selection_problems(_selection(_guess_rows()).picks, list(_cases())) == []
+    assert B.seed_types(_selection(_guess_rows()).picks) == {"natural": 36, "seeded_omission": 2,
+                                                             "seeded_addition": 2}
+
+
+@pytest.mark.parametrize("change, message", [
+    ({"grounding": 1}, "rule G-GUESS makes faithfulness.narrative_grounding level 2, not 1"),
+    ({"edits": COPY_EDIT}, "rule G-GUESS takes no edits"),
+    ({"note_words": "desk to confirm"}, "note words go with G-ADOPT only"),
+])
+def test_selection_refuses_a_g_guess_pick_off_its_rule(change, message):
+    rows = _guess_rows()
+    rows[39] = dict(rows[39], **change)
+    problems = B.selection_problems(_selection(rows).picks, list(_cases()))
+    assert any(message in p for p in problems), problems
+
+
+def test_build_records_applies_g_guess_and_checks_the_code_scores():
+    cases = _cases()
+    by_case = {r["sample_id"]: r for r in B.build_records(_guess_logs(cases), cases, _selection(_guess_rows()))}
+    r = by_case[GUESS_CASE]
+    assert r["source"] == "seeded_addition" and r["seed_rule"] == "G-GUESS" and r["seed_deleted"] == []
+    assert r["seed_note"].startswith("Rule G-GUESS.") and json.dumps(GUESS_CLAUSE) in r["seed_note"]
+    assert r["_narrative"] == GUESS_NARR.replace(GUESS_SENTENCE, GUESS_SENTENCE[:-1] + GUESS_CLAUSE + ".")
+    a = scoring.parse_worker_output(r["worker_output"]).parsed
+    b = scoring.parse_worker_output(r["base_worker_output"]).parsed
+    assert {k: v for k, v in a.items() if k != "narrative"} == {k: v for k, v in b.items() if k != "narrative"}
+    truth = casefile.truth_of(cases[GUESS_CASE]["metadata"])
+    assert JB.code_scores(a, truth) == JB.code_scores(b, truth)
+
+
+def test_build_records_refuses_a_g_guess_seed_that_changes_a_code_score(monkeypatch):
+    cases = _cases()
+    real = JB.code_scores
+
+    def fake(parsed, truth):
+        # A score that moves only when the narrative holds the inserted clause.
+        out = real(parsed, truth)
+        return {**out, "faithfulness": ("changed",)} if GUESS_CLAUSE in parsed["narrative"] else out
+
+    monkeypatch.setattr(B.jdb, "code_scores", fake)
+    # The G-REASON-COPY seed before it passes the same check; the G-GUESS seed is refused.
+    with pytest.raises(B.Refused, match=re.escape(GUESS_CASE) + r" from .*, rule G-GUESS: the edit changes a code "
+                                        r"score \(faithfulness\)"):
+        B.build_records(_guess_logs(cases), cases, _selection(_guess_rows()))
+    monkeypatch.setattr(B.jdb, "code_scores", real)
+    assert len(B.build_records(_guess_logs(cases), cases, _selection(_guess_rows()))) == 40
+
+
+def test_build_records_refuses_g_guess_on_a_case_with_no_unexplained_remainder():
+    cases = _cases()
+    meta = _meta(item("WD-2512-04417", 120_000.00, date=casefile.period_cutoff_date("2025-12")))
+    cases[GUESS_CASE] = dict(cases[GUESS_CASE], metadata=dict(cases[GUESS_CASE]["metadata"], truth=meta["truth"]))
+    with pytest.raises(B.Refused, match="rule G-GUESS: G-GUESS needs a case with an unexplained remainder"):
+        B.build_records(_guess_logs(cases), cases, _selection(_guess_rows()))
+
+
+def test_build_keeps_the_g_guess_seed_note_in_the_sealed_plan_only(setup):
+    _write_selection(setup.sel_path, _guess_rows())
+    setup.by_path[str(setup.paths[0])] = _mock_log(W[0], setup.cases, raw_of=_guess_raw)
+    plan = _build(setup)
+    sheet = (setup.out / B.SHEET_NAME).read_text(encoding="utf-8")
+    rec = next(r for r in plan["records"] if r["sample_id"] == GUESS_CASE)
+    assert rec["seed_rule"] == "G-GUESS" and rec["source"] == "seeded_addition"
+    assert rec["seed_note"].startswith("Rule G-GUESS. " + B.CAL_RULES["G-GUESS"])
+    assert json.dumps(GUESS_CLAUSE) in rec["seed_note"]
+    assert plan["rules"]["G-GUESS"] == B.CAL_RULES["G-GUESS"]
+    assert plan["source_counts"] == {"natural": 36, "seeded_omission": 2, "seeded_addition": 2}
+    # The sheet shows the seeded narrative, never the note, the rule name or the rule text.
+    shown = next(x for x in _sheet_json(sheet)["records"] if x["code"] == rec["code"])
+    assert shown["narrative"] == scoring.parse_worker_output(rec["worker_output"]).parsed["narrative"]
+    assert GUESS_CLAUSE in shown["narrative"]
+    assert rec["seed_note"] not in sheet and "G-GUESS" not in sheet.upper()
+    assert B.CAL_RULES["G-GUESS"] not in sheet
+    assert B.blindness_hits(sheet, plan["records"], [x["eval_id"] for x in plan["logs"]]) == []
+    I.load_plan(setup.out / B.SEALED_DIR / B.PLAN_NAME)
+    # A sheet that showed the rule name would be refused.
+    leaked = sheet.replace("</body>", "<p>G-GUESS</p></body>")
+    assert "word 'G-GUESS'" in B.blindness_hits(leaked, plan["records"], [])
+
+
 # --- Sheet ----------------------------------------------------------------------------------
 
 
@@ -618,7 +819,7 @@ def test_build_writes_a_blind_sheet_and_a_sealed_plan(setup):
     assert plan["cases_sha256"] == hashlib.sha256(setup.cases_path.read_bytes()).hexdigest()
     assert plan["selection_sha256"] == hashlib.sha256(setup.sel_path.read_bytes()).hexdigest()
     assert plan["worker_prompt_sha256"] == WORKER_PROMPT_SHA256 and plan["anchors_sha256"] == B.LOCKED_ANCHOR_SHA256
-    assert plan["min_per_level"] == 4 and plan["unparsed"] == [] and plan["rules"] == JB.RULES
+    assert plan["min_per_level"] == 4 and plan["unparsed"] == [] and plan["rules"] == B.CAL_RULES
     assert plan["target_min_per_level"] == 6
     assert re.fullmatch(r"[0-9a-f]{64}", plan["sheet_id"])
     data = _sheet_json(sheet)
