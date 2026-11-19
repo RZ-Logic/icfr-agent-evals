@@ -342,7 +342,7 @@ The dataset and the repository are versioned independently: dataset version 0.1.
 - **[PCAOB AS 2201](https://pcaobus.org/oversight/standards/auditing-standards/details/AS2201)** and COSO's *[Achieving Effective Internal Control Over Generative AI](https://www.coso.org/generative-ai)* (February 2026): the severity hierarchy and the reliance distinction the two phases are built on.
 - **[FinAgent OS](https://github.com/RZ-Logic/finagent-os)**: the *"Where is the AI?"* table, itself adapted from ATLAS.
 
-Code and documents were drafted with AI assistance (Claude models); every design decision and every label in this repository was made by the author.
+Claude models assisted with code and documents. [OpenAI Codex](https://github.com/codex) contributed to the documentation. The author made every design decision and assigned every label in this repository.
 
 ---
 
