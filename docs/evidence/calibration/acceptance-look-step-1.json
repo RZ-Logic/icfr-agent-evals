@@ -1,0 +1,831 @@
+{
+ "look": "acceptance look",
+ "grader_step": 1,
+ "grader_model": "openai/gpt-6-luna",
+ "grader_generate_config": {
+  "reasoning_effort": "high"
+ },
+ "offline": false,
+ "permutation_seed": 23260607,
+ "permutation_seed_rule": "casefile.split_seed('calibration')",
+ "option_permutation": {
+  "order": [
+   3,
+   1,
+   2,
+   0
+  ],
+  "is_identity": false,
+  "is_reversal": false
+ },
+ "dimension_order": [
+  "completeness.narrative_coverage",
+  "faithfulness.narrative_grounding"
+ ],
+ "bootstrap_seed": 23260607,
+ "resamples": 10000,
+ "grader_prompt_version": "gp-1",
+ "grader_prompt_sha256": "5c7cf1b6478ab1f01fa959b073a9afba5171dd4d2e3ec2ce1e4097c53fae80f3",
+ "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+ "head": "679673af72070fa4da0a50308e626e26270bb74b",
+ "calibration_jsonl_sha256": "367f478f72f9c8e5750325fb55bb43c4f441a2601305efcd87b04c8ab40f73e0",
+ "records_sha256": "7ff6cec17f6e4f991822ff4cc4d86f11220cbec5d02726e4408fdcea359d7911",
+ "intra_rater_sha256": null,
+ "intra_rater": null,
+ "records": 40,
+ "passes": [
+  {
+   "name": "pass_1",
+   "number": 1,
+   "settings": {
+    "option_order": [
+     0,
+     1,
+     2,
+     3
+    ],
+    "labels": {
+     "0": "0",
+     "1": "1",
+     "2": "2",
+     "3": "3"
+    },
+    "dimension_order": [
+     "faithfulness.narrative_grounding",
+     "completeness.narrative_coverage"
+    ]
+   },
+   "grader_config": {
+    "response_caching": false,
+    "model": "openai/gpt-6-luna",
+    "reasoning_effort": "high"
+   },
+   "log_check": "grader.check_grader_log passed; 40 completed grader calls, one per output",
+   "errored_calls_skipped": 0,
+   "log_file": "2026-11-20T01-36-52-00-00_acceptance-look-pass-1_75D4yBrFeDWCtKs4o8NsvU.eval",
+   "log_sha256": "cd6b10160fa4e4121064a819aa9e5ac6c2f2a4a1d8bb957b7225bd3cab756503",
+   "unparsed": []
+  },
+  {
+   "name": "pass_2",
+   "number": 2,
+   "settings": {
+    "option_order": [
+     0,
+     1,
+     2,
+     3
+    ],
+    "labels": {
+     "0": "0",
+     "1": "1",
+     "2": "2",
+     "3": "3"
+    },
+    "dimension_order": [
+     "faithfulness.narrative_grounding",
+     "completeness.narrative_coverage"
+    ]
+   },
+   "grader_config": {
+    "response_caching": false,
+    "model": "openai/gpt-6-luna",
+    "reasoning_effort": "high"
+   },
+   "log_check": "grader.check_grader_log passed; 40 completed grader calls, one per output",
+   "errored_calls_skipped": 0,
+   "log_file": "2026-11-20T01-37-36-00-00_acceptance-look-pass-2_AuUPSDzjTbke9qCC8xbZNb.eval",
+   "log_sha256": "2c4463e3286b1a08c30e49b18887ae7d9479cd1d9d04a28d3a7685bc76b8092b",
+   "unparsed": []
+  },
+  {
+   "name": "pass_3",
+   "number": 3,
+   "settings": {
+    "option_order": [
+     0,
+     1,
+     2,
+     3
+    ],
+    "labels": {
+     "0": "0",
+     "1": "1",
+     "2": "2",
+     "3": "3"
+    },
+    "dimension_order": [
+     "faithfulness.narrative_grounding",
+     "completeness.narrative_coverage"
+    ]
+   },
+   "grader_config": {
+    "response_caching": false,
+    "model": "openai/gpt-6-luna",
+    "reasoning_effort": "high"
+   },
+   "log_check": "grader.check_grader_log passed; 40 completed grader calls, one per output",
+   "errored_calls_skipped": 0,
+   "log_file": "2026-11-20T01-38-28-00-00_acceptance-look-pass-3_nnGubXWmt7PBeZbfzfZmbc.eval",
+   "log_sha256": "3458589264f3b4d06cfa6df05e70e6e9ed701e42b9688a9b92e5f3988c5372ec",
+   "unparsed": []
+  },
+  {
+   "name": "option_order_reversed",
+   "number": 4,
+   "settings": {
+    "option_order": [
+     3,
+     2,
+     1,
+     0
+    ],
+    "labels": {
+     "0": "0",
+     "1": "1",
+     "2": "2",
+     "3": "3"
+    },
+    "dimension_order": [
+     "faithfulness.narrative_grounding",
+     "completeness.narrative_coverage"
+    ]
+   },
+   "grader_config": {
+    "response_caching": false,
+    "model": "openai/gpt-6-luna",
+    "reasoning_effort": "high"
+   },
+   "log_check": "grader.check_grader_log passed; 40 completed grader calls, one per output",
+   "errored_calls_skipped": 0,
+   "log_file": "2026-11-20T01-39-16-00-00_acceptance-look-option-order-reversed_E2t3N6c6gQncq2DV4RJU8e.eval",
+   "log_sha256": "8987efd467e8dfad0897db7ba0c60f59c757b8e1d626f1c58ead546e3a77cdba",
+   "unparsed": []
+  },
+  {
+   "name": "option_order_permuted",
+   "number": 5,
+   "settings": {
+    "option_order": [
+     3,
+     1,
+     2,
+     0
+    ],
+    "labels": {
+     "0": "0",
+     "1": "1",
+     "2": "2",
+     "3": "3"
+    },
+    "dimension_order": [
+     "faithfulness.narrative_grounding",
+     "completeness.narrative_coverage"
+    ]
+   },
+   "grader_config": {
+    "response_caching": false,
+    "model": "openai/gpt-6-luna",
+    "reasoning_effort": "high"
+   },
+   "log_check": "grader.check_grader_log passed; 40 completed grader calls, one per output",
+   "errored_calls_skipped": 0,
+   "log_file": "2026-11-20T01-40-09-00-00_acceptance-look-option-order-permuted_BqcVjgMxE26vfTatwMFN6m.eval",
+   "log_sha256": "44038227356697589dca0547ef323f7ac66e4395be978501b9f8a754e5e8ee16",
+   "unparsed": []
+  },
+  {
+   "name": "labels_relabeled",
+   "number": 6,
+   "settings": {
+    "option_order": [
+     0,
+     1,
+     2,
+     3
+    ],
+    "labels": {
+     "0": "D",
+     "1": "C",
+     "2": "B",
+     "3": "A"
+    },
+    "dimension_order": [
+     "faithfulness.narrative_grounding",
+     "completeness.narrative_coverage"
+    ]
+   },
+   "grader_config": {
+    "response_caching": false,
+    "model": "openai/gpt-6-luna",
+    "reasoning_effort": "high"
+   },
+   "log_check": "grader.check_grader_log passed; 40 completed grader calls, one per output",
+   "errored_calls_skipped": 0,
+   "log_file": "2026-11-20T01-40-48-00-00_acceptance-look-labels-relabeled_HnrtBWpMU3aBqk8jW2iNiZ.eval",
+   "log_sha256": "698cd7d8dfd249a723b81a0d4d4d55f73380890a6fc783c7ae4e8e0df9d121fb",
+   "unparsed": []
+  },
+  {
+   "name": "dimension_order_permuted",
+   "number": 7,
+   "settings": {
+    "option_order": [
+     0,
+     1,
+     2,
+     3
+    ],
+    "labels": {
+     "0": "0",
+     "1": "1",
+     "2": "2",
+     "3": "3"
+    },
+    "dimension_order": [
+     "completeness.narrative_coverage",
+     "faithfulness.narrative_grounding"
+    ]
+   },
+   "grader_config": {
+    "response_caching": false,
+    "model": "openai/gpt-6-luna",
+    "reasoning_effort": "high"
+   },
+   "log_check": "grader.check_grader_log passed; 40 completed grader calls, one per output",
+   "errored_calls_skipped": 0,
+   "log_file": "2026-11-20T01-41-38-00-00_acceptance-look-dimension-order-permuted_4vaXnF4cDAqKfvgoPqiBkT.eval",
+   "log_sha256": "1c81bc874091123d57f9c4aef19f4f5555d9533a66981b4274ddc1a2aa55a89f",
+   "unparsed": []
+  }
+ ],
+ "unparsed_count": 0,
+ "gates": {
+  "validity": {
+   "gate": "validity",
+   "statistic": "ICC(A,1) grader versus human",
+   "subdimensions": [
+    "faithfulness.narrative_grounding",
+    "completeness.narrative_coverage"
+   ],
+   "per_subdimension": {
+    "faithfulness.narrative_grounding": {
+     "icc_a1": {
+      "form": "ICC(A,1)",
+      "n": 40,
+      "k": 2,
+      "estimate": 0.6833810888252149,
+      "estimate_exact": "477/698",
+      "ci_lower": 0.47367615028101534,
+      "ci_upper": 0.8194180517826865,
+      "confidence": 0.95,
+      "defined": true,
+      "msr": 2.2705128205128204,
+      "msc": 0.0,
+      "mse": 0.4358974358974359,
+      "note": null,
+      "df_v": 39.0,
+      "f_lower": 1.8907189863329046,
+      "f_upper": 1.8907189863329046
+     },
+     "icc_c1": {
+      "form": "ICC(C,1)",
+      "n": 40,
+      "k": 2,
+      "estimate": 0.6778777830412127,
+      "estimate_exact": "1431/2111",
+      "ci_lower": 0.4673687826673751,
+      "ci_upper": 0.8156413822990397,
+      "confidence": 0.95,
+      "defined": true,
+      "msr": 2.2705128205128204,
+      "msc": 0.0,
+      "mse": 0.4358974358974359,
+      "note": null,
+      "f_ratio": 5.208823529411765
+     },
+     "mean_difference": {
+      "n": 40,
+      "mean": 0.0,
+      "mean_exact": "0",
+      "confidence": 0.95,
+      "sd": 0.9336995618478525,
+      "df": 39,
+      "ci_lower": -0.2986116066878503,
+      "ci_upper": 0.2986116066878503
+     },
+     "distribution": {
+      "grader": {
+       "0": 6,
+       "1": 10,
+       "2": 5,
+       "3": 19
+      },
+      "human": {
+       "0": 7,
+       "1": 7,
+       "2": 8,
+       "3": 18
+      }
+     }
+    },
+    "completeness.narrative_coverage": {
+     "icc_a1": {
+      "form": "ICC(A,1)",
+      "n": 40,
+      "k": 2,
+      "estimate": 1.0,
+      "estimate_exact": "1",
+      "ci_lower": 1.0,
+      "ci_upper": 1.0,
+      "confidence": 0.95,
+      "defined": true,
+      "msr": 2.764102564102564,
+      "msc": 0.0,
+      "mse": 0.0,
+      "note": "no residual and no rater variance: the interval is [1, 1] for any v",
+      "df_v": null
+     },
+     "icc_c1": {
+      "form": "ICC(C,1)",
+      "n": 40,
+      "k": 2,
+      "estimate": 1.0,
+      "estimate_exact": "1",
+      "ci_lower": 1.0,
+      "ci_upper": 1.0,
+      "confidence": 0.95,
+      "defined": true,
+      "msr": 2.764102564102564,
+      "msc": 0.0,
+      "mse": 0.0,
+      "note": "no residual variance: the F ratio is infinite and the interval is [1, 1]"
+     },
+     "mean_difference": {
+      "n": 40,
+      "mean": 0.0,
+      "mean_exact": "0",
+      "confidence": 0.95,
+      "sd": 0.0,
+      "df": 39,
+      "ci_lower": 0.0,
+      "ci_upper": 0.0
+     },
+     "distribution": {
+      "grader": {
+       "0": 7,
+       "1": 7,
+       "2": 7,
+       "3": 19
+      },
+      "human": {
+       "0": 7,
+       "1": 7,
+       "2": 7,
+       "3": 19
+      }
+     }
+    }
+   },
+   "threshold": 0.6,
+   "passed": false,
+   "undefined": [],
+   "gating_subdimension": "faithfulness.narrative_grounding",
+   "gating_lower_limit": 0.47367615028101534,
+   "gating_estimate": 0.6833810888252149,
+   "kappa_gate": "does not apply: the rubric defines no binary checks at rubric lock (pre-registration section 7)",
+   "estimate_label": "stratified: the calibration subset is stratified so every score level appears at least 4 times per sub-dimension, so the estimate is labeled stratified (pre-registration sections 4 and 7)"
+  },
+  "test_retest": {
+   "passes": 3,
+   "pass_1": "acceptance-look scoring",
+   "grader_step": 1,
+   "grader_pin": {
+    "reasoning_effort": "high"
+   },
+   "grader_configs": [
+    {
+     "response_caching": false,
+     "model": "openai/gpt-6-luna",
+     "reasoning_effort": "high"
+    },
+    {
+     "response_caching": false,
+     "model": "openai/gpt-6-luna",
+     "reasoning_effort": "high"
+    },
+    {
+     "response_caching": false,
+     "model": "openai/gpt-6-luna",
+     "reasoning_effort": "high"
+    }
+   ],
+   "response_caching_disabled": [
+    true,
+    true,
+    true
+   ],
+   "bootstrap_seed": 23260607,
+   "alpha": {
+    "gate": "test-retest",
+    "statistic": "Krippendorff's alpha, ordinal, over 3 grader passes",
+    "threshold": 0.8,
+    "threshold_exact": "4/5",
+    "subdimensions": [
+     "faithfulness.narrative_grounding",
+     "completeness.narrative_coverage"
+    ],
+    "per_subdimension": {
+     "faithfulness.narrative_grounding": {
+      "metric": "ordinal",
+      "alpha": 0.7721104904703734,
+      "alpha_exact": "9405047/12180960",
+      "defined": true,
+      "units": 40,
+      "pairable_units": 40,
+      "pairable_values": 120,
+      "raw_agreement": 0.8583333333333333,
+      "raw_agreement_exact": "103/120",
+      "unit_agreement": 0.8,
+      "unit_agreement_exact": "4/5",
+      "note": null,
+      "bootstrap": {
+       "seed": 23260607,
+       "resamples": 10000,
+       "defined_resamples": 10000,
+       "undefined_resamples": 0,
+       "ci_lower": 0.5776972040309183,
+       "ci_upper": 0.9160867560907948,
+       "confidence": 0.95,
+       "q": 0.6362,
+       "q_threshold": "4/5",
+       "metric": "ordinal"
+      },
+      "distribution": {
+       "pass 1": {
+        "0": 6,
+        "1": 10,
+        "2": 5,
+        "3": 19
+       },
+       "pass 2": {
+        "0": 8,
+        "1": 11,
+        "2": 4,
+        "3": 17
+       },
+       "pass 3": {
+        "0": 7,
+        "1": 9,
+        "2": 5,
+        "3": 19
+       }
+      },
+      "passed": false
+     },
+     "completeness.narrative_coverage": {
+      "metric": "ordinal",
+      "alpha": 1.0,
+      "alpha_exact": "1",
+      "defined": true,
+      "units": 40,
+      "pairable_units": 40,
+      "pairable_values": 120,
+      "raw_agreement": 1.0,
+      "raw_agreement_exact": "1",
+      "unit_agreement": 1.0,
+      "unit_agreement_exact": "1",
+      "note": null,
+      "bootstrap": {
+       "seed": 23260607,
+       "resamples": 10000,
+       "defined_resamples": 10000,
+       "undefined_resamples": 0,
+       "ci_lower": 1.0,
+       "ci_upper": 1.0,
+       "confidence": 0.95,
+       "q": 0.0,
+       "q_threshold": "4/5",
+       "metric": "ordinal"
+      },
+      "distribution": {
+       "pass 1": {
+        "0": 7,
+        "1": 7,
+        "2": 7,
+        "3": 19
+       },
+       "pass 2": {
+        "0": 7,
+        "1": 7,
+        "2": 7,
+        "3": 19
+       },
+       "pass 3": {
+        "0": 7,
+        "1": 7,
+        "2": 7,
+        "3": 19
+       }
+      },
+      "passed": true
+     }
+    },
+    "passed": false,
+    "undefined": [],
+    "gating_subdimension": "faithfulness.narrative_grounding",
+    "gating_alpha": 0.7721104904703734,
+    "bootstrap_seed": 23260607,
+    "resamples": 10000,
+    "note": "a stability screen: no reliance claim rests on it alone (pre-registration section 7)"
+   }
+  },
+  "bias_audit": {
+   "gate": "bias audit",
+   "subdimensions": [
+    "faithfulness.narrative_grounding",
+    "completeness.narrative_coverage"
+   ],
+   "per_subdimension": {
+    "faithfulness.narrative_grounding": {
+     "n": 40,
+     "baseline": 0.175,
+     "baseline_exact": "7/40",
+     "retest_pass_means": [
+      "77/40",
+      "7/4",
+      "19/10"
+     ],
+     "passes": {
+      "option_order_reversed": {
+       "shift": -0.058333333333333334,
+       "shift_exact": "-7/120",
+       "excess": -0.11666666666666667,
+       "excess_exact": "-7/60",
+       "failed": false
+      },
+      "option_order_permuted": {
+       "shift": 0.06666666666666667,
+       "shift_exact": "1/15",
+       "excess": -0.10833333333333334,
+       "excess_exact": "-13/120",
+       "failed": false
+      },
+      "labels_relabeled": {
+       "shift": 0.06666666666666667,
+       "shift_exact": "1/15",
+       "excess": -0.10833333333333334,
+       "excess_exact": "-13/120",
+       "failed": false
+      },
+      "dimension_order_permuted": {
+       "shift": 0.09166666666666666,
+       "shift_exact": "11/120",
+       "excess": -0.08333333333333333,
+       "excess_exact": "-1/12",
+       "failed": false
+      }
+     },
+     "leniency": {
+      "n": 40,
+      "mean": 0.0,
+      "mean_exact": "0",
+      "confidence": 0.95,
+      "sd": 0.9336995618478525,
+      "df": 39,
+      "ci_lower": -0.2986116066878503,
+      "ci_upper": 0.2986116066878503,
+      "failed": false
+     },
+     "icc_c1_minus_icc_a1": -0.005503305784002204,
+     "icc_c1_minus_icc_a1_exact": "-8109/1473478",
+     "failed": false
+    },
+    "completeness.narrative_coverage": {
+     "n": 40,
+     "baseline": 0.0,
+     "baseline_exact": "0",
+     "retest_pass_means": [
+      "39/20",
+      "39/20",
+      "39/20"
+     ],
+     "passes": {
+      "option_order_reversed": {
+       "shift": 0.0,
+       "shift_exact": "0",
+       "excess": 0.0,
+       "excess_exact": "0",
+       "failed": false
+      },
+      "option_order_permuted": {
+       "shift": 0.0,
+       "shift_exact": "0",
+       "excess": 0.0,
+       "excess_exact": "0",
+       "failed": false
+      },
+      "labels_relabeled": {
+       "shift": 0.0,
+       "shift_exact": "0",
+       "excess": 0.0,
+       "excess_exact": "0",
+       "failed": false
+      },
+      "dimension_order_permuted": {
+       "shift": 0.0,
+       "shift_exact": "0",
+       "excess": 0.0,
+       "excess_exact": "0",
+       "failed": false
+      }
+     },
+     "leniency": {
+      "n": 40,
+      "mean": 0.0,
+      "mean_exact": "0",
+      "confidence": 0.95,
+      "sd": 0.0,
+      "df": 39,
+      "ci_lower": 0.0,
+      "ci_upper": 0.0,
+      "failed": false
+     },
+     "icc_c1_minus_icc_a1": 0.0,
+     "icc_c1_minus_icc_a1_exact": "0",
+     "failed": false
+    }
+   },
+   "passed": true,
+   "reliability_claim_blocked": false,
+   "passes": [
+    "option_order_reversed",
+    "option_order_permuted",
+    "labels_relabeled",
+    "dimension_order_permuted"
+   ],
+   "shift_margin": "1/10",
+   "leniency_limit": "1/4",
+   "permutation_seed": 23260607,
+   "dimension_seed": 23260607,
+   "dimension_order_applies": true,
+   "dimension_order": [
+    "completeness.narrative_coverage",
+    "faithfulness.narrative_grounding"
+   ],
+   "dimension_order_note": "the two sub-dimensions are swapped, the one order that differs from the default; no seed is drawn for it, and dimension_seed repeats the permutation seed"
+  },
+  "not_computed": {},
+  "kappa": "does not apply: the rubric defines no binary checks at rubric lock (pre-registration section 7)"
+ },
+ "score_distribution": {
+  "author": {
+   "faithfulness.narrative_grounding": {
+    "0": 7,
+    "1": 7,
+    "2": 8,
+    "3": 18
+   },
+   "completeness.narrative_coverage": {
+    "0": 7,
+    "1": 7,
+    "2": 7,
+    "3": 19
+   }
+  },
+  "grader_pass_1": {
+   "faithfulness.narrative_grounding": {
+    "0": 6,
+    "1": 10,
+    "2": 5,
+    "3": 19
+   },
+   "completeness.narrative_coverage": {
+    "0": 7,
+    "1": 7,
+    "2": 7,
+    "3": 19
+   }
+  },
+  "by_source": {
+   "natural": 8,
+   "seeded_addition": 18,
+   "seeded_omission": 14
+  },
+  "by_worker_model": {
+   "anthropic/claude-haiku-5-5": 13,
+   "anthropic/claude-sonnet-5": 13,
+   "anthropic/claude-sonnet-5-5": 14
+  },
+  "label": "stratified: the calibration subset is stratified so every score level appears at least 4 times per sub-dimension, so the estimate is labeled stratified (pre-registration sections 4 and 7)"
+ },
+ "seed_types": {
+  "per_source": {
+   "natural": {
+    "faithfulness.narrative_grounding": {
+     "n": 8,
+     "author_mean": 2.125,
+     "grader_mean": 1.875,
+     "exact_matches": 3
+    },
+    "completeness.narrative_coverage": {
+     "n": 8,
+     "author_mean": 2.75,
+     "grader_mean": 2.75,
+     "exact_matches": 8
+    }
+   },
+   "seeded_addition": {
+    "faithfulness.narrative_grounding": {
+     "n": 18,
+     "author_mean": 1.0,
+     "grader_mean": 1.2222222222222223,
+     "exact_matches": 15
+    },
+    "completeness.narrative_coverage": {
+     "n": 18,
+     "author_mean": 2.7222222222222223,
+     "grader_mean": 2.7222222222222223,
+     "exact_matches": 18
+    }
+   },
+   "seeded_omission": {
+    "faithfulness.narrative_grounding": {
+     "n": 14,
+     "author_mean": 3.0,
+     "grader_mean": 2.857142857142857,
+     "exact_matches": 13
+    },
+    "completeness.narrative_coverage": {
+     "n": 14,
+     "author_mean": 0.5,
+     "grader_mean": 0.5,
+     "exact_matches": 14
+    }
+   }
+  },
+  "note": "descriptive, not a gate (pre-registration section 7)"
+ },
+ "low_confidence": {
+  "per_pass": {
+   "pass_1": {
+    "faithfulness.narrative_grounding": 4,
+    "completeness.narrative_coverage": 0
+   },
+   "pass_2": {
+    "faithfulness.narrative_grounding": 5,
+    "completeness.narrative_coverage": 0
+   },
+   "pass_3": {
+    "faithfulness.narrative_grounding": 2,
+    "completeness.narrative_coverage": 0
+   },
+   "option_order_reversed": {
+    "faithfulness.narrative_grounding": 4,
+    "completeness.narrative_coverage": 0
+   },
+   "option_order_permuted": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 0
+   },
+   "labels_relabeled": {
+    "faithfulness.narrative_grounding": 4,
+    "completeness.narrative_coverage": 0
+   },
+   "dimension_order_permuted": {
+    "faithfulness.narrative_grounding": 4,
+    "completeness.narrative_coverage": 0
+   }
+  },
+  "pass_1_outputs_flagged": 4,
+  "total": 26
+ },
+ "verdict": {
+  "validity": "FAIL",
+  "test_retest": "FAIL",
+  "bias_audit": "PASS",
+  "overall": "FAIL",
+  "next": "judge remedy order step 2: the intra-rater check first, then the grader moves to GPT-6.1 Terra on the OpenAI Batch API (pre-registration section 7); this script does not run it"
+ },
+ "estimate_label": "stratified: the calibration subset is stratified so every score level appears at least 4 times per sub-dimension, so the estimate is labeled stratified (pre-registration sections 4 and 7)",
+ "note": "one acceptance look per grader (pre-registration section 7, decision D-T1)",
+ "attempts": [
+  {
+   "attempt": 1,
+   "started": "2026-11-20T01:36:51+00:00",
+   "resume": false
+  }
+ ],
+ "failures": [],
+ "ledger": {
+  "file": "step-1.json",
+  "folder": "<git common dir>/icfr-acceptance-looks"
+ },
+ "rows": {
+  "sealed": true,
+  "file": "acceptance-look-step-1-rows.json",
+  "sha256": "c6bf526c179963cb1c525aad0caf2b93591b4100606a84796604e3fe58839393",
+  "records": 40,
+  "note": "the per-record rows are sealed outside the repository: the grading that follows a failed look at step 1 or 2 stays blind to this grader's scores (pre-registration section 7)"
+ }
+}
