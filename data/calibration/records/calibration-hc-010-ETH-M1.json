@@ -1,0 +1,21 @@
+{
+  "sample_id": "calibration-hc-010-ETH-M1",
+  "epoch": 1,
+  "log_eval_id": "YSJhZg2LffJyc8Sqqb9nDZ",
+  "worker_prompt_sha256": "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d",
+  "worker_output": "{\n  \"asset\": \"ETH\",\n  \"period\": \"2025-11\",\n  \"variance_amount_usd\": 24999.99,\n  \"variance_direction\": \"shortfall\",\n  \"materiality_band\": \"M1\",\n  \"entities_cited\": [\n    \"Hot 1\",\n    \"Vault 1\",\n    \"DP-2511-118183\",\n    \"DP-2511-186523\",\n    \"TRF-2511-29891\"\n  ],\n  \"reconciling_items\": [\n    {\n      \"reference\": \"DP-2511-118183\",\n      \"amount_usd\": 8811.02,\n      \"type\": \"pending transfer\"\n    },\n    {\n      \"reference\": \"DP-2511-186523\",\n      \"amount_usd\": 5284.37,\n      \"type\": \"timing difference\"\n    },\n    {\n      \"reference\": \"TRF-2511-29891\",\n      \"amount_usd\": 6445.25,\n      \"type\": \"in-flight settlement\"\n    }\n  ],\n  \"narrative\": \"For ETH in the 2025-11 period, on-chain reserves of $1,626,140,476.43 were $24,999.99 below ledger liabilities of $1,626,165,476.42. Three open items at Hot 1, all dated on or before the 11/30/2025 cutoff, explain $20,540.64 of this gap: pending transfer DP-2511-118183 ($8,811.02), timing difference DP-2511-186523 ($5,284.37), and in-flight settlement TRF-2511-29891 ($6,445.25) representing funds in transit to Vault 1.\"\n}",
+  "source": "seeded_omission",
+  "seed_note": "Rule O-BAND+O-REM. O-BAND, then O-REM, on the same narrative. Deleted, in order: \", a shortfall that falls just under the M1 reportable floor\"; \"After applying these eligible items, $4,459.35 of the shortfall remains unexplained.\". Nothing was added. Only the narrative field changed; the rest of the output is verbatim.",
+  "stratum": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 0
+  },
+  "grades": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 0
+  },
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "graded_by": "RA",
+  "graded_on": "2026-11-19",
+  "worker_model": "anthropic/claude-sonnet-5"
+}

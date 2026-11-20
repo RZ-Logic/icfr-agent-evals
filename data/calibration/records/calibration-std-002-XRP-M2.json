@@ -1,0 +1,21 @@
+{
+  "sample_id": "calibration-std-002-XRP-M2",
+  "epoch": 1,
+  "log_eval_id": "M8TWTcQgABfpimKRT24keM",
+  "worker_prompt_sha256": "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d",
+  "worker_output": "{\"asset\":\"XRP\",\"period\":\"2025-11\",\"variance_amount_usd\":41741.22,\"variance_direction\":\"surplus\",\"materiality_band\":\"M2\",\"entities_cited\":[\"hot-1\",\"DP-2511-841479\",\"DP-2511-650939\",\"DP-2512-826327\",\"DP-2511-192939\"],\"reconciling_items\":[{\"reference\":\"DP-2511-841479\",\"amount_usd\":22863.57,\"type\":\"pending transfer\"},{\"reference\":\"DP-2511-650939\",\"amount_usd\":18877.65,\"type\":\"timing difference\"}],\"narrative\":\"On-chain reserves of $732,705,572.07 exceed ledger liabilities of $732,663,830.85, a surplus of $41,741.22 that falls in the M2 (reportable) band. Two deposits to hot-1 that were open at the 30-Nov cutoff explain all of it: DP-2511-841479 ($22,863.57, on chain 22:44 with credit cleared) and DP-2511-650939 ($18,877.65, on chain 23:34 and credited in the ledger only at 00:34 on 12/1). Together they total $41,741.22, so the explained portion is $41,741.22 and the unexplained remainder is $0.00. I excluded DP-2512-826327 because it is dated 01-Dec, after the cutoff, and DP-2511-192939 because it is cleared and booked in both the ledger and on chain.\"}",
+  "source": "seeded_addition",
+  "seed_note": "Rule G-EVENT. Grounding, one claim made unsupported: what has happened to one item. In one span that names the item by its reference, replace exactly one event word by its pair (before and after the cutoff in words, cleared and open, cleared and pending). No date or time changes. Target grounding 1. Edits, in order: \"DP-2511-841479 ($22,863.57, on chain 22:44 with credit pending\" became \"DP-2511-841479 ($22,863.57, on chain 22:44 with credit cleared\". Claim: DP-2511-841479: pending became cleared. Target grounding 1; coverage unchanged from the base. Nothing else was added or deleted. Only the narrative field changed; the rest of the output is verbatim.",
+  "stratum": {
+    "faithfulness.narrative_grounding": 1,
+    "completeness.narrative_coverage": 3
+  },
+  "grades": {
+    "faithfulness.narrative_grounding": 1,
+    "completeness.narrative_coverage": 3
+  },
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "graded_by": "RA",
+  "graded_on": "2026-11-19",
+  "worker_model": "anthropic/claude-sonnet-5-5"
+}

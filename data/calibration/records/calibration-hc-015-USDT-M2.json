@@ -1,0 +1,21 @@
+{
+  "sample_id": "calibration-hc-015-USDT-M2",
+  "epoch": 1,
+  "log_eval_id": "M8TWTcQgABfpimKRT24keM",
+  "worker_prompt_sha256": "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d",
+  "worker_output": "{\"asset\":\"USDT\",\"period\":\"2025-10\",\"variance_amount_usd\":25000.00,\"variance_direction\":\"surplus\",\"materiality_band\":\"M2\",\"entities_cited\":[\"DP-2510-590639\",\"hot-1\",\"WD-2510-932527\",\"DP-2511-904019\",\"treasury-ops\"],\"reconciling_items\":[{\"reference\":\"DP-2510-590639\",\"amount_usd\":25000.00,\"type\":\"pending transfer\"}],\"narrative\":\"On-chain reserves of $424,942,093.04 exceed ledger liabilities of $424,917,093.04, a surplus of $25,000.00 that falls in band M2 (reportable). The surplus is fully explained by DP-2510-590639, a $25,000.00 deposit to hot-1 that confirmed on chain at 22:40 UTC on 31-Oct but has no ledger posting in the extract, leaving $0.00 unexplained. WD-2510-932527 is excluded because it is cleared and booked in both records, DP-2511-904019 is excluded because it is cleared and booked in both records, and treasury-ops because it is an out-of-scope wallet.\"}",
+  "source": "seeded_addition",
+  "seed_note": "Rule G-REASON-COPY. Grounding, one claim made unsupported: why one item is left out. In one span that names an item by its reference followed by the reason the narrative gives for it, replace that reason with the reason the narrative gives, in the same words, for another item it names. Target grounding 1. Edits, in order: \"DP-2511-904019 because it is dated after the cutoff\" became \"DP-2511-904019 is excluded because it is cleared and booked in both records\". Claim: DP-2511-904019: reason replaced. Target grounding 1; coverage unchanged from the base. Nothing else was added or deleted. Only the narrative field changed; the rest of the output is verbatim.",
+  "stratum": {
+    "faithfulness.narrative_grounding": 1,
+    "completeness.narrative_coverage": 3
+  },
+  "grades": {
+    "faithfulness.narrative_grounding": 1,
+    "completeness.narrative_coverage": 3
+  },
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "graded_by": "RA",
+  "graded_on": "2026-11-19",
+  "worker_model": "anthropic/claude-sonnet-5-5"
+}

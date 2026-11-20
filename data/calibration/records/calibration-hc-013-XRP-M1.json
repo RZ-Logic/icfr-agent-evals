@@ -1,0 +1,21 @@
+{
+  "sample_id": "calibration-hc-013-XRP-M1",
+  "epoch": 1,
+  "log_eval_id": "M8TWTcQgABfpimKRT24keM",
+  "worker_prompt_sha256": "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d",
+  "worker_output": "{\"asset\":\"XRP\",\"period\":\"2025-10\",\"variance_amount_usd\":22326.35,\"variance_direction\":\"surplus\",\"materiality_band\":\"M1\",\"entities_cited\":[\"WD-2510-041075\",\"Hot 1\",\"JE-25-10-1327\"],\"reconciling_items\":[{\"reference\":\"WD-2510-041075\",\"amount_usd\":22326.35,\"type\":\"pending transfer\"}],\"narrative\":\"On-chain reserves of USD 452,944,449.04 exceed ledger liabilities of USD 452,922,122.69 by USD 22,326.35. The open Hot 1 withdrawal WD-2510-041075 (USD 22,326.35) was booked in the ledger at 23:05 on 10/31 with no matching on-chain transfer at cutoff. The manual adjustment JE-25-10-1327 is excluded from the explanation, and the cleared deposits are not relied on.\"}",
+  "source": "seeded_omission",
+  "seed_note": "Rule O-BAND+O-REM. O-BAND, then O-REM, on the same narrative. Deleted, in order: \", a surplus that falls in band M1 (below the $25,000 floor)\"; \"It is an eligible pending transfer and explains the whole variance, leaving USD 0.00 unexplained.\". Nothing was added. Only the narrative field changed; the rest of the output is verbatim.",
+  "stratum": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 0
+  },
+  "grades": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 0
+  },
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "graded_by": "RA",
+  "graded_on": "2026-11-19",
+  "worker_model": "anthropic/claude-sonnet-5-5"
+}

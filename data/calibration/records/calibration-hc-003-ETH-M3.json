@@ -1,0 +1,21 @@
+{
+  "sample_id": "calibration-hc-003-ETH-M3",
+  "epoch": 1,
+  "log_eval_id": "M8TWTcQgABfpimKRT24keM",
+  "worker_prompt_sha256": "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d",
+  "worker_output": "{\"asset\":\"ETH\",\"period\":\"2025-12\",\"variance_amount_usd\":493618.61,\"variance_direction\":\"shortfall\",\"materiality_band\":\"M3\",\"entities_cited\":[\"TRF-2512-00063\",\"TRF-2512-70071\",\"WD-2512-617007\",\"JE-25-12-9687\",\"hot-1\",\"cold-2\",\"treasury-ops\"],\"reconciling_items\":[{\"reference\":\"TRF-2512-00063\",\"amount_usd\":169394.34,\"type\":\"in-flight settlement\"},{\"reference\":\"TRF-2512-70071\",\"amount_usd\":61456.66,\"type\":\"in-flight\"}],\"narrative\":\"On-chain reserves of $3,383,251,551.90 sit $493,618.61 below ledger liabilities of $3,383,745,170.51, a shortfall in the M3 (material-risk) band. Two open in-scope hot-1 items dated at the cutoff explain $230,851.00 of it: TRF-2512-00063 ($169,394.34, in transit to cold-2) and TRF-2512-70071 ($61,456.66). WD-2512-617007 is excluded because it belongs to treasury-ops, which is outside the reserve scope, and JE-25-12-9687 is excluded because it is a prior-period adjustment. The case file does not contain the vault credit tx hash for TRF-2512-00063 that the preparer asked to be included, so none is cited.\"}",
+  "source": "seeded_omission",
+  "seed_note": "Rule O-REM. Omission of the remainder. Delete every sentence that contains the word unexplained and names no item reference of the case. In a sentence that does name one, delete only the clause from ', leaving', ', which leaves' or ', and leaves' to the end of the sentence (its final full stop kept). Afterwards no remainder wording may be left (unexplained, remaining, leaving, leaves, in full, whole, all of it). Deleted, in order: \"That leaves $262,767.61 unexplained, which is still above the M3 threshold and needs investigation (no ticket number is recorded).\". Nothing was added. Only the narrative field changed; the rest of the output is verbatim.",
+  "stratum": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 1
+  },
+  "grades": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 1
+  },
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "graded_by": "RA",
+  "graded_on": "2026-11-19",
+  "worker_model": "anthropic/claude-sonnet-5-5"
+}

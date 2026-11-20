@@ -1,0 +1,21 @@
+{
+  "sample_id": "calibration-std-003-SOL-M2",
+  "epoch": 1,
+  "log_eval_id": "FyzdHX34BxZFNR9DKHLqkK",
+  "worker_prompt_sha256": "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d",
+  "worker_output": "{\"asset\":\"SOL\",\"period\":\"2025-12\",\"variance_amount_usd\":28659.13,\"variance_direction\":\"surplus\",\"materiality_band\":\"M2\",\"entities_cited\":[\"HOT01\",\"HOT02\",\"COLD01\",\"TREAS01\",\"JE-25-12-6515\",\"WD-2601-373499\",\"DP-2512-404267\",\"DP-2512-598391\",\"OPS-2512-22239\"],\"reconciling_items\":[],\"narrative\":\"On-chain reserves of $1,770,742,359.86 exceed ledger liabilities of $1,770,713,700.73 by a $28,659.13 surplus (230.0091 SOL at the 124.60 mark), which is reportable (M2). None of the open items qualifies: JE-25-12-6515 is a prior-period adjustment, WD-2601-373499 is dated after cutoff, DP-2512-404267 sits in TREAS01, which is outside reserve scope, and DP-2512-598391 is a USDC transfer rather than SOL, so the full $28,659.13 surplus remains unexplained. The ledger close ran at 02:10 UTC on 2026-01-01, after the cutoff snapshot, so the two sides may be on different time bases, and this should be checked under OPS-2512-22239 before sign-off.\"}",
+  "source": "natural",
+  "seed_note": null,
+  "stratum": {
+    "faithfulness.narrative_grounding": 2,
+    "completeness.narrative_coverage": 3
+  },
+  "grades": {
+    "faithfulness.narrative_grounding": 2,
+    "completeness.narrative_coverage": 3
+  },
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "graded_by": "RA",
+  "graded_on": "2026-11-19",
+  "worker_model": "anthropic/claude-haiku-5-5"
+}

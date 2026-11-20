@@ -1,0 +1,21 @@
+{
+  "sample_id": "calibration-std-009-ADA-M2",
+  "epoch": 1,
+  "log_eval_id": "M8TWTcQgABfpimKRT24keM",
+  "worker_prompt_sha256": "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d",
+  "worker_output": "{\"asset\":\"ADA\",\"period\":\"2025-12\",\"variance_amount_usd\":39886.31,\"variance_direction\":\"shortfall\",\"materiality_band\":\"M2\",\"entities_cited\":[\"hot-1\",\"DP-2512-204679\",\"DP-2512-399191\",\"WD-2512-011747\",\"treasury-ops\",\"DP-2512-093651\"],\"reconciling_items\":[{\"reference\":\"DP-2512-204679\",\"amount_usd\":15436.86,\"type\":\"pending transfer\"},{\"reference\":\"DP-2512-399191\",\"amount_usd\":24449.45,\"type\":\"pending transfer\"}],\"narrative\":\"On-chain reserves of $328,845,317.41 are $39,886.31 below ledger liabilities of $328,885,203.72. Two hot-1 deposits were credited in the ledger ahead of on-chain receipt and were open at cutoff: DP-2512-204679 ($15,436.86) and DP-2512-399191 ($24,449.45). DP-2512-399191 is supported by the ledger posting and the preparer's note but is not on the open-items schedule, so it should be added. WD-2512-011747 was excluded because it relates to treasury-ops, which is out of scope, and DP-2512-093651 was excluded because it is already cleared.\"}",
+  "source": "seeded_omission",
+  "seed_note": "Rule O-BAND+O-REM. O-BAND, then O-REM, on the same narrative. Deleted, in order: \", a shortfall in the M2 (reportable) band\"; \"Together they explain $39,886.31, so the full variance is explained and $0.00 is unexplained.\". Nothing was added. Only the narrative field changed; the rest of the output is verbatim.",
+  "stratum": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 0
+  },
+  "grades": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 0
+  },
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "graded_by": "RA",
+  "graded_on": "2026-11-19",
+  "worker_model": "anthropic/claude-sonnet-5-5"
+}

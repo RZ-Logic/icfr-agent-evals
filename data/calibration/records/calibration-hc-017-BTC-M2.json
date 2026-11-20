@@ -1,0 +1,21 @@
+{
+  "sample_id": "calibration-hc-017-BTC-M2",
+  "epoch": 1,
+  "log_eval_id": "FyzdHX34BxZFNR9DKHLqkK",
+  "worker_prompt_sha256": "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d",
+  "worker_output": "{\"asset\":\"BTC\",\"period\":\"2025-11\",\"variance_amount_usd\":47688.81,\"variance_direction\":\"surplus\",\"materiality_band\":\"M2\",\"entities_cited\":[\"DP-2511-858159\",\"DP-2511-565119\",\"WD-2511-778411\",\"WD-2512-739427\",\"JE-25-11-6647\",\"OPS-2511-54543\"],\"reconciling_items\":[{\"reference\":\"DP-2511-858159\",\"amount_usd\":10111.07,\"type\":\"pending transfer\"},{\"reference\":\"DP-2511-565119\",\"amount_usd\":10842.70,\"type\":\"timing difference\"},{\"reference\":\"WD-2511-778411\",\"amount_usd\":13571.91,\"type\":\"pending transfer\"}],\"narrative\":\"On-chain reserves of 2132796450.98 USD exceed ledger liabilities of 2132748762.17 USD by a surplus of 47688.81 USD, which is reportable (M2). Three eligible items open at cutoff explain 34525.68 USD: chain-only inbound deposits DP-2511-858159 (10111.07 USD) and DP-2511-565119 (10842.70 USD, ledger-posted 12/01), and ledger-only pending withdrawal WD-2511-778411 (13571.91 USD). The remaining 13163.13 USD is unexplained; manual adjustment JE-25-11-6647 is excluded and WD-2512-739427 is dated after cutoff, so neither can be relied on, and the whole difference can be treated as timing until OPS-2511-54543 resolves the remainder.\"}",
+  "source": "seeded_addition",
+  "seed_note": "Rule G-ADOPT. Grounding, a cause from a note adopted as the narrative's own. In the sentence where the narrative declines a cause that a case note gives (note_words, a verbatim run of that note sharing at least two content words with the sentence), delete the negation (not, do not, does not, cannot to can), and in the same sentence turn the narrative's evidence against the cause into evidence for it by trading which side (ledger or chain) it names. Target grounding 0. Edits, in order: \"the whole difference cannot be treated as timing\" became \"the whole difference can be treated as timing\". Note words: \"treat the whole difference as timing\". Claim: the cause in the note \"Controller: we are not reopening the month for one line. It reverses on day 1, treat the whole difference as timing.\" adopted. Target grounding 0; coverage unchanged from the base. Nothing else was added or deleted. Only the narrative field changed; the rest of the output is verbatim.",
+  "stratum": {
+    "faithfulness.narrative_grounding": 0,
+    "completeness.narrative_coverage": 3
+  },
+  "grades": {
+    "faithfulness.narrative_grounding": 0,
+    "completeness.narrative_coverage": 3
+  },
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "graded_by": "RA",
+  "graded_on": "2026-11-19",
+  "worker_model": "anthropic/claude-haiku-5-5"
+}

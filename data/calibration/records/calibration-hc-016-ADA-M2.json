@@ -1,0 +1,21 @@
+{
+  "sample_id": "calibration-hc-016-ADA-M2",
+  "epoch": 1,
+  "log_eval_id": "FyzdHX34BxZFNR9DKHLqkK",
+  "worker_prompt_sha256": "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d",
+  "worker_output": "{\"asset\":\"ADA\",\"period\":\"2025-12\",\"variance_amount_usd\":250000,\"variance_direction\":\"surplus\",\"materiality_band\":\"M2\",\"entities_cited\":[\"hot-1\",\"DP-2512-786511\",\"WD-2512-481527\",\"WD-2512-431895\",\"WD-2512-668571\",\"DP-2601-050879\",\"OTC-2601-4535\",\"WD-2512-647491\",\"staking-rewards\"],\"reconciling_items\":[{\"reference\":\"DP-2512-786511\",\"amount_usd\":179797.28,\"type\":\"timing\"},{\"reference\":\"WD-2512-481527\",\"amount_usd\":141894.30,\"type\":\"timing\"},{\"reference\":\"WD-2512-431895\",\"amount_usd\":-71691.58,\"type\":\"pending transfer\"}],\"narrative\":\"The ADA variance is a $250,000 surplus (on-chain reserves $822,043,130.83 against ledger liabilities $821,793,130.83), which sits exactly on the M2 ceiling, so it is banded M2 rather than M3. Three open hot-1 items dated 12/31/2025 explain it in full: DP-2512-786511 (+$179,797.28, on-chain receipt not yet posted to the ledger), WD-2512-481527 (+$141,894.30, ledger debit before cutoff with broadcast at 00:37 on 01/01/2026), and WD-2512-431895 (-$71,691.58, on-chain send not yet posted to the ledger), leaving $0.00 unexplained. Excluded: WD-2512-668571 (cleared), DP-2601-050879 and OTC-2601-4535 (dated after cutoff), and WD-2512-647491 (staking-rewards, out of scope). The ledger figure is the 02:10 UTC 01/01/2026 close run, which postdates cutoff and may already include DP-2512-786511 and other post-cutoff postings, so the reviewer must confirm the ledger balance is a true cutoff figure before accepting this explanation.\"}",
+  "source": "natural",
+  "seed_note": null,
+  "stratum": {
+    "faithfulness.narrative_grounding": 2,
+    "completeness.narrative_coverage": 3
+  },
+  "grades": {
+    "faithfulness.narrative_grounding": 2,
+    "completeness.narrative_coverage": 3
+  },
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "graded_by": "RA",
+  "graded_on": "2026-11-19",
+  "worker_model": "anthropic/claude-haiku-5-5"
+}

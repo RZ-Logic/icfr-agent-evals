@@ -1,0 +1,21 @@
+{
+  "sample_id": "calibration-std-015-BTC-M2",
+  "epoch": 1,
+  "log_eval_id": "YSJhZg2LffJyc8Sqqb9nDZ",
+  "worker_prompt_sha256": "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d",
+  "worker_output": "```json\n{\n  \"asset\": \"BTC\",\n  \"period\": \"2025-11\",\n  \"variance_amount_usd\": 41837.98,\n  \"variance_direction\": \"shortfall\",\n  \"materiality_band\": \"M2\",\n  \"entities_cited\": [\"HOT01\", \"COLD01\", \"TRF-2511-27307\", \"OPS-2511-52303\"],\n  \"reconciling_items\": [\n    {\n      \"reference\": \"TRF-2511-27307\",\n      \"amount_usd\": 9540.90,\n      \"type\": \"in-flight settlement\"\n    }\n  ],\n  \"narrative\": \"On-chain reserves of $5,627,929,852.38 were $41,837.98 below ledger liabilities of $5,627,971,690.36, a shortfall classified M2. The only eligible open item is TRF-2511-27307, an in-flight settlement of $9,540.90 moving BTC from HOT01 to COLD01 that had settled on-chain but was not yet booked in the ledger at the 11/30/2025 cutoff. Applying this item explains $9,540.90 of the shortfall, leaving $32,297.08 unexplained, which per preparer notes remains under investigation (ticket OPS-2511-52303), which may reflect an exchange rate difference.\"\n}\n```",
+  "source": "seeded_addition",
+  "seed_note": "Rule G-GUESS. Grounding, one claim made overstated: the narrative's own hedged guess at the cause of the remainder. In the first sentence of the narrative that states the remainder (it holds unexplained, remaining, remains, leaving or leaves) and names no item as its cause, insert the fixed clause ', which may reflect X' just before that sentence's final full stop, where X is the first of 'a network fee', 'an exchange rate difference', 'a custodian rebate' whose key noun (fee, exchange rate, rebate) does not appear anywhere in the case file text, case-insensitive. Nothing else changes. Target grounding 2; coverage unchanged from the base. Inserted the clause \", which may reflect an exchange rate difference\" just before the final full stop of \"Applying this item explains $9,540.90 of the shortfall, leaving $32,297.08 unexplained, which per preparer notes remains under investigation (ticket OPS-2511-52303).\". Claim: the remainder's cause guessed with a hedge. Target grounding 2; coverage unchanged from the base. Nothing else was added or deleted. Only the narrative field changed; the rest of the output is verbatim.",
+  "stratum": {
+    "faithfulness.narrative_grounding": 2,
+    "completeness.narrative_coverage": 2
+  },
+  "grades": {
+    "faithfulness.narrative_grounding": 2,
+    "completeness.narrative_coverage": 2
+  },
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "graded_by": "RA",
+  "graded_on": "2026-11-19",
+  "worker_model": "anthropic/claude-sonnet-5"
+}

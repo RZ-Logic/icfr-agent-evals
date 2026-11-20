@@ -1,0 +1,21 @@
+{
+  "sample_id": "calibration-std-004-XRP-M1",
+  "epoch": 1,
+  "log_eval_id": "M8TWTcQgABfpimKRT24keM",
+  "worker_prompt_sha256": "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d",
+  "worker_output": "{\"asset\":\"XRP\",\"period\":\"2025-12\",\"variance_amount_usd\":17306.24,\"variance_direction\":\"shortfall\",\"materiality_band\":\"M1\",\"entities_cited\":[\"HOT01\",\"TREAS01\",\"WD-2512-836951\",\"WD-2512-672939\",\"DP-2512-377007\",\"WD-2601-636899\",\"WD-2512-229107\"],\"reconciling_items\":[{\"reference\":\"WD-2512-836951\",\"amount_usd\":4191.10,\"type\":\"pending transfer\"},{\"reference\":\"WD-2512-672939\",\"amount_usd\":5830.83,\"type\":\"timing difference\"},{\"reference\":\"DP-2512-377007\",\"amount_usd\":7284.31,\"type\":\"timing difference\"}],\"narrative\":\"On-chain reserves of USD 1,486,103,669.53 are below ledger liabilities of USD 1,486,120,975.77, a shortfall of USD 17,306.24. Three HOT01 items open at cutoff explain the whole variance: WD-2512-836951 (USD 4,191.10) and WD-2512-672939 (USD 5,830.83) were withdrawals that went out on chain by 31-Dec but were not in the ledger until after cutoff or at all in the extract, and DP-2512-377007 (USD 7,284.31) was a deposit booked in the ledger on 31-Dec but credited on chain only on 1-Jan. These total USD 17,306.24, leaving USD 0.00 unexplained. WD-2601-636899 is excluded because it is dated after cutoff, and WD-2512-229107 is excluded because it sits in TREAS01, which is out of scope.\"}",
+  "source": "seeded_omission",
+  "seed_note": "Rule O-BAND. Omission of the band. In the first sentence, delete the first of these spans that holds a band word: a parenthesis that opens with the label (M1, M2 or M3); a clause from ', which' or ', that' plus is, falls or sits, to the end of the sentence; a clause from ', a shortfall' or ', a surplus' plus in, that, which, falls, sits or is, to the end of the sentence. Afterwards no band wording may be left anywhere (M1, M2, M3, reportable, material-risk, floor, threshold, band), and the variance amount must still be there. Deleted, in order: \", which falls in band M1 (below the reportable floor)\". Nothing was added. Only the narrative field changed; the rest of the output is verbatim.",
+  "stratum": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 1
+  },
+  "grades": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 1
+  },
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "graded_by": "RA",
+  "graded_on": "2026-11-19",
+  "worker_model": "anthropic/claude-sonnet-5-5"
+}

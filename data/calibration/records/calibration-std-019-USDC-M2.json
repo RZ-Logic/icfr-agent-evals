@@ -1,0 +1,21 @@
+{
+  "sample_id": "calibration-std-019-USDC-M2",
+  "epoch": 1,
+  "log_eval_id": "FyzdHX34BxZFNR9DKHLqkK",
+  "worker_prompt_sha256": "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d",
+  "worker_output": "{\"asset\":\"USDC\",\"period\":\"2025-11\",\"variance_amount_usd\":65961.47,\"variance_direction\":\"shortfall\",\"materiality_band\":\"M2\",\"entities_cited\":[\"Hot 1\",\"Vault 1\",\"DP-2511-994135\",\"TRF-2511-87051\",\"JE-25-11-4775\",\"DP-2511-165143\",\"WD-2512-590267\"],\"reconciling_items\":[{\"reference\":\"DP-2511-994135\",\"amount_usd\":21523.24,\"type\":\"pending transfer\"},{\"reference\":\"TRF-2511-87051\",\"amount_usd\":15000.72,\"type\":\"in-flight transfer\"}],\"narrative\":\"On-chain in-scope reserves of 1,505,323,117.45 USD are 65,961.47 USD below ledger liabilities of 1,505,389,078.92 USD, a shortfall in the reportable band. Two eligible items explain 36,523.96 USD: DP-2511-994135, a ledger credit on Hot 1 ahead of receipt (21,523.24 USD), and TRF-2511-87051, a Hot 1 to Vault 1 transfer sent before cutoff that the preparer reports as in flight (15,000.72 USD); the Vault 1 credit is not evidenced in the file, so this item needs confirmation against the custody report. That leaves 29,437.51 USD unexplained, which remains open under the ops ticket. JE-25-11-4775 (prior-period adjustment), DP-2511-165143 (booked after cutoff) and WD-2512-590267 (cleared) are excluded, and the ledger figure is a 02:10 UTC Dec 1 close that falls after cutoff, so the cutoff timing needs to be resolved before sign-off.\"}",
+  "source": "seeded_addition",
+  "seed_note": "Rule G-REASON-SWAP. Grounding, two claims made unsupported: why two items are left out. Two spans, each an item reference followed by the reason the narrative gives for it, exchange their reasons word for word. Target grounding 0. Edits, in order: \"DP-2511-165143 (cleared)\" became \"DP-2511-165143 (booked after cutoff)\"; \"WD-2512-590267 (booked after cutoff)\" became \"WD-2512-590267 (cleared)\". Claim: DP-2511-165143 and WD-2512-590267: reasons exchanged. Target grounding 0; coverage unchanged from the base. Nothing else was added or deleted. Only the narrative field changed; the rest of the output is verbatim.",
+  "stratum": {
+    "faithfulness.narrative_grounding": 0,
+    "completeness.narrative_coverage": 2
+  },
+  "grades": {
+    "faithfulness.narrative_grounding": 0,
+    "completeness.narrative_coverage": 2
+  },
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "graded_by": "RA",
+  "graded_on": "2026-11-19",
+  "worker_model": "anthropic/claude-haiku-5-5"
+}

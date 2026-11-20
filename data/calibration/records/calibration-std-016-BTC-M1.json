@@ -1,0 +1,21 @@
+{
+  "sample_id": "calibration-std-016-BTC-M1",
+  "epoch": 1,
+  "log_eval_id": "YSJhZg2LffJyc8Sqqb9nDZ",
+  "worker_prompt_sha256": "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d",
+  "worker_output": "{\n  \"asset\": \"BTC\",\n  \"period\": \"2025-11\",\n  \"variance_amount_usd\": 3135.67,\n  \"variance_direction\": \"surplus\",\n  \"materiality_band\": \"M1\",\n  \"entities_cited\": [\"hot-2\", \"WD-2511-815471\"],\n  \"reconciling_items\": [\n    {\n      \"reference\": \"WD-2511-815471\",\n      \"amount_usd\": 3135.67,\n      \"type\": \"pending transfer\"\n    }\n  ],\n  \"narrative\": \"On-chain reserves of $5,928,778,166.25 exceed ledger liabilities of $5,928,775,030.58 by $3,135.67, a surplus classified M1 (below reportable floor). This is fully explained by WD-2511-815471, a $3,135.67 customer withdrawal from wallet hot-2 that was booked in the ledger at cutoff but not yet broadcast on-chain, leaving the corresponding funds still reflected in on-chain reserves. After applying this reconciling item, no unexplained variance remains.\"\n}",
+  "source": "natural",
+  "seed_note": null,
+  "stratum": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 3
+  },
+  "grades": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 3
+  },
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "graded_by": "RA",
+  "graded_on": "2026-11-19",
+  "worker_model": "anthropic/claude-sonnet-5"
+}

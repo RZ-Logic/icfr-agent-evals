@@ -1,0 +1,21 @@
+{
+  "sample_id": "calibration-std-011-ETH-M3",
+  "epoch": 1,
+  "log_eval_id": "YSJhZg2LffJyc8Sqqb9nDZ",
+  "worker_prompt_sha256": "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d",
+  "worker_output": "```json\n{\n  \"asset\": \"ETH\",\n  \"period\": \"2025-10\",\n  \"variance_amount_usd\": 2311622.83,\n  \"variance_direction\": \"surplus\",\n  \"materiality_band\": \"M3\",\n  \"entities_cited\": [\"hot-1\", \"WD-2510-245443\", \"DP-2511-494995\"],\n  \"reconciling_items\": [],\n  \"narrative\": \"At the 10/31/2025 23:59:59 UTC cutoff, on-chain reserves of USD 1,166,543,343.65 exceeded ledger liabilities of USD 1,164,231,720.82, producing a surplus variance of USD 2,311,622.83, which falls in the M3 (material-risk) band. Two candidate open items on wallet hot-1 do not qualify to explain this variance: WD-2510-245443 (USD 1,761,479.59) was pending on both ledger and chain by cutoff, and DP-2511-494995 (USD 1,413,616.15) is dated 11/01/2025, after the cutoff. With no eligible reconciling items identified, the full USD 2,311,622.83 surplus remains unexplained and requires further investigation with operations.\"\n}\n```",
+  "source": "seeded_addition",
+  "seed_note": "Rule G-EVENT. Grounding, one claim made unsupported: what has happened to one item. In one span that names the item by its reference, replace exactly one event word by its pair (before and after the cutoff in words, cleared and open, cleared and pending). No date or time changes. Target grounding 1. Edits, in order: \"WD-2510-245443 (USD 1,761,479.59) was cleared on both ledger and chain by cutoff\" became \"WD-2510-245443 (USD 1,761,479.59) was pending on both ledger and chain by cutoff\". Claim: WD-2510-245443: cleared became pending. Target grounding 1; coverage unchanged from the base. Nothing else was added or deleted. Only the narrative field changed; the rest of the output is verbatim.",
+  "stratum": {
+    "faithfulness.narrative_grounding": 1,
+    "completeness.narrative_coverage": 3
+  },
+  "grades": {
+    "faithfulness.narrative_grounding": 1,
+    "completeness.narrative_coverage": 3
+  },
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "graded_by": "RA",
+  "graded_on": "2026-11-19",
+  "worker_model": "anthropic/claude-sonnet-5"
+}

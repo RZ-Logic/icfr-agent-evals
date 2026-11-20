@@ -1,0 +1,21 @@
+{
+  "sample_id": "calibration-std-014-XRP-M3",
+  "epoch": 1,
+  "log_eval_id": "FyzdHX34BxZFNR9DKHLqkK",
+  "worker_prompt_sha256": "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d",
+  "worker_output": "{\"asset\":\"XRP\",\"period\":\"2025-11\",\"variance_amount_usd\":2175100.33,\"variance_direction\":\"shortfall\",\"materiality_band\":\"M3\",\"entities_cited\":[\"hot-1\",\"hot-2\",\"cold-1\",\"WD-2511-866335\",\"TRF-2511-98587\",\"DP-2511-116939\",\"DP-2511-055063\",\"JE-25-11-2659\",\"WD-2511-359951\",\"DP-2512-567919\"],\"reconciling_items\":[{\"reference\":\"WD-2511-866335\",\"amount_usd\":973710.89,\"type\":\"pending transfer, chain-only outflow from hot-1\"},{\"reference\":\"TRF-2511-98587\",\"amount_usd\":1038832.35,\"type\":\"in-flight settlement, chain-only outflow from hot-1 to cold-1\"},{\"reference\":\"DP-2511-116939\",\"amount_usd\":795697.05,\"type\":\"pending transfer, ledger-only credit to hot-2 ahead of receipt\"},{\"reference\":\"DP-2511-055063\",\"amount_usd\":633139.96,\"type\":\"pending transfer, chain-only inflow to hot-2 (runs opposite to the shortfall)\"}],\"narrative\":\"On-chain in-scope reserves of 381,271,933.45 USD against ledger liabilities of 383,447,033.78 USD give a 2,175,100.33 USD shortfall, which is M3. Four eligible open items at cutoff, all on XRP in-scope wallets, net to the full variance: WD-2511-866335 and TRF-2511-98587 are chain-side outflows not yet reflected in the ledger, DP-2511-116939 is a ledger credit ahead of receipt, and DP-2511-055063 is a chain-side inflow not yet credited that runs against the shortfall and is netted off. Explained portion is 2,175,100.33 USD with 0.00 USD unexplained. JE-25-11-2659 (manual adjustment on cold-1), WD-2511-359951 (posted after cutoff) and DP-2512-567919 (cleared) were excluded, and the workpaper is still draft with no reviewer assigned.\"}",
+  "source": "seeded_addition",
+  "seed_note": "Rule G-REASON-SWAP. Grounding, two claims made unsupported: why two items are left out. Two spans, each an item reference followed by the reason the narrative gives for it, exchange their reasons word for word. Target grounding 0. Edits, in order: \"WD-2511-359951 (cleared)\" became \"WD-2511-359951 (posted after cutoff)\"; \"DP-2512-567919 (posted after cutoff)\" became \"DP-2512-567919 (cleared)\". Claim: WD-2511-359951 and DP-2512-567919: reasons exchanged. Target grounding 0; coverage unchanged from the base. Nothing else was added or deleted. Only the narrative field changed; the rest of the output is verbatim.",
+  "stratum": {
+    "faithfulness.narrative_grounding": 0,
+    "completeness.narrative_coverage": 2
+  },
+  "grades": {
+    "faithfulness.narrative_grounding": 0,
+    "completeness.narrative_coverage": 2
+  },
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "graded_by": "RA",
+  "graded_on": "2026-11-19",
+  "worker_model": "anthropic/claude-haiku-5-5"
+}

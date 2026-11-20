@@ -1,0 +1,21 @@
+{
+  "sample_id": "calibration-hc-002-SOL-M1",
+  "epoch": 1,
+  "log_eval_id": "M8TWTcQgABfpimKRT24keM",
+  "worker_prompt_sha256": "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d",
+  "worker_output": "{\"asset\":\"SOL\",\"period\":\"2025-11\",\"variance_amount_usd\":23220.66,\"variance_direction\":\"shortfall\",\"materiality_band\":\"M1\",\"entities_cited\":[\"WD-2511-941299\",\"WD-2511-922395\",\"hot-2\",\"DP-2511-132859\",\"DP-2512-216171\",\"DP-2511-186855\",\"Fireblocks\"],\"reconciling_items\":[{\"reference\":\"WD-2511-941299\",\"amount_usd\":11016.22,\"type\":\"Pending transfer\"},{\"reference\":\"WD-2511-922395\",\"amount_usd\":12204.44,\"type\":\"Pending transfer\"}],\"narrative\":\"On-chain reserves of $917,319,386.23 were $23,220.66 below ledger liabilities of $917,342,606.89, a shortfall that falls in M1 (below the reportable floor). Two open hot-2 withdrawals dated 30-Nov, WD-2511-941299 ($11,016.22) and WD-2511-922395 ($12,204.44), were sent on chain before cutoff but not yet booked in the ledger. Together they explain $23,220.66, so nothing remains unexplained ($0.00). I excluded DP-2511-132859 (dated after cutoff), DP-2512-216171 (cleared) and DP-2511-186855 (a USDC deposit, a different asset). The reviewer's request for Fireblocks's full registered entity name cannot be met because the case file gives only the short name, so it should be taken from the vault agreement.\"}",
+  "source": "seeded_addition",
+  "seed_note": "Rule G-REASON-SWAP. Grounding, two claims made unsupported: why two items are left out. Two spans, each an item reference followed by the reason the narrative gives for it, exchange their reasons word for word. Target grounding 0. Edits, in order: \"DP-2511-132859 (cleared)\" became \"DP-2511-132859 (dated after cutoff)\"; \"DP-2512-216171 (dated after cutoff)\" became \"DP-2512-216171 (cleared)\". Claim: DP-2511-132859 and DP-2512-216171: reasons exchanged. Target grounding 0; coverage unchanged from the base. Nothing else was added or deleted. Only the narrative field changed; the rest of the output is verbatim.",
+  "stratum": {
+    "faithfulness.narrative_grounding": 0,
+    "completeness.narrative_coverage": 3
+  },
+  "grades": {
+    "faithfulness.narrative_grounding": 0,
+    "completeness.narrative_coverage": 3
+  },
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "graded_by": "RA",
+  "graded_on": "2026-11-19",
+  "worker_model": "anthropic/claude-sonnet-5-5"
+}

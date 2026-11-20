@@ -1,0 +1,21 @@
+{
+  "sample_id": "calibration-std-010-ETH-M2",
+  "epoch": 1,
+  "log_eval_id": "YSJhZg2LffJyc8Sqqb9nDZ",
+  "worker_prompt_sha256": "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d",
+  "worker_output": "```json\n{\n  \"asset\": \"ETH\",\n  \"period\": \"2025-10\",\n  \"variance_amount_usd\": 87493.19,\n  \"variance_direction\": \"surplus\",\n  \"materiality_band\": \"M2\",\n  \"entities_cited\": [\n    \"ETH\",\n    \"hot-1\",\n    \"DP-2510-623515\",\n    \"DP-2510-920551\",\n    \"DP-2510-642883\",\n    \"OI-251031-431\"\n  ],\n  \"reconciling_items\": [\n    {\"reference\": \"DP-2510-623515\", \"amount_usd\": 13250.66, \"type\": \"Timing\"},\n    {\"reference\": \"DP-2510-920551\", \"amount_usd\": 17016.34, \"type\": \"Pending transfer\"},\n    {\"reference\": \"DP-2510-642883\", \"amount_usd\": 21791.51, \"type\": \"Pending transfer\"},\n    {\"reference\": \"OI-251031-431\", \"amount_usd\": 0.80, \"type\": \"Fee\"}\n  ],\n  \"narrative\": \"ETH on-chain reserves of $2,030,629,841.64 exceeded ledger liabilities of $2,030,542,348.45 at the 31-Oct-2025 cutoff, a surplus variance of $87,493.19 (M2 - reportable). Of this, $52,057.71 is explained by four open items in the hot-1 wallet dated on or before cutoff: pending transfers DP-2510-920551 ($17,016.34) and DP-2510-642883 ($21,791.51), timing difference DP-2510-623515 ($13,250.66), each recorded on-chain but not yet credited on the ledger, partly offset by the unbooked sweep fee OI-251031-431 (-$0.80). The remaining $35,435.48 of the surplus is unexplained by eligible open items and remains under investigation with Ops, which may reflect an exchange rate difference.\"\n}\n```",
+  "source": "seeded_addition",
+  "seed_note": "Rule G-GUESS. Grounding, one claim made overstated: the narrative's own hedged guess at the cause of the remainder. In the first sentence of the narrative that states the remainder (it holds unexplained, remaining, remains, leaving or leaves) and names no item as its cause, insert the fixed clause ', which may reflect X' just before that sentence's final full stop, where X is the first of 'a network fee', 'an exchange rate difference', 'a custodian rebate' whose key noun (fee, exchange rate, rebate) does not appear anywhere in the case file text, case-insensitive. Nothing else changes. Target grounding 2; coverage unchanged from the base. Inserted the clause \", which may reflect an exchange rate difference\" just before the final full stop of \"The remaining $35,435.48 of the surplus is unexplained by eligible open items and remains under investigation with Ops.\". Claim: the remainder's cause guessed with a hedge. Target grounding 2; coverage unchanged from the base. Nothing else was added or deleted. Only the narrative field changed; the rest of the output is verbatim.",
+  "stratum": {
+    "faithfulness.narrative_grounding": 2,
+    "completeness.narrative_coverage": 3
+  },
+  "grades": {
+    "faithfulness.narrative_grounding": 2,
+    "completeness.narrative_coverage": 3
+  },
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "graded_by": "RA",
+  "graded_on": "2026-11-19",
+  "worker_model": "anthropic/claude-sonnet-5"
+}

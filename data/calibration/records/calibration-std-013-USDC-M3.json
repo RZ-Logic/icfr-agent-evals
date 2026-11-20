@@ -1,0 +1,21 @@
+{
+  "sample_id": "calibration-std-013-USDC-M3",
+  "epoch": 1,
+  "log_eval_id": "YSJhZg2LffJyc8Sqqb9nDZ",
+  "worker_prompt_sha256": "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d",
+  "worker_output": "{\n  \"asset\": \"USDC\",\n  \"period\": \"2025-12\",\n  \"variance_amount_usd\": 1059015.93,\n  \"variance_direction\": \"shortfall\",\n  \"materiality_band\": \"M3\",\n  \"entities_cited\": [\"Hot 1\", \"DP-2512-988515\", \"JE-25-12-6171\", \"WD-2512-070771\", \"DP-2512-765859\"],\n  \"reconciling_items\": [\n    {\n      \"reference\": \"DP-2512-988515\",\n      \"amount_usd\": 546304.75,\n      \"type\": \"timing difference\"\n    }\n  ],\n  \"narrative\": \"On-chain reserves of $1,298,598,208.28 were $1,059,015.93 below ledger liabilities of $1,299,657,224.21. Of this, $546,304.75 is explained by DP-2512-988515, an open timing difference on in-scope wallet Hot 1 where the customer deposit was booked in the ledger on 2025-12-31 but the corresponding on-chain receipt did not settle until 2026-01-01, after cutoff. JE-25-12-6171 (suspense clearing), WD-2512-070771 (cleared, matched 12/31), and DP-2512-765859 (USDT, wrong asset) were excluded as ineligible reconciling items.\"\n}",
+  "source": "seeded_omission",
+  "seed_note": "Rule O-BAND+O-REM. O-BAND, then O-REM, on the same narrative. Deleted, in order: \", a shortfall that falls in the M3 (material-risk) band\"; \"After applying the eligible item, $512,711.18 of the shortfall remains unexplained and requires further investigation.\". Nothing was added. Only the narrative field changed; the rest of the output is verbatim.",
+  "stratum": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 0
+  },
+  "grades": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 0
+  },
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "graded_by": "RA",
+  "graded_on": "2026-11-19",
+  "worker_model": "anthropic/claude-sonnet-5"
+}

@@ -1,0 +1,21 @@
+{
+  "sample_id": "calibration-std-008-USDT-M1",
+  "epoch": 1,
+  "log_eval_id": "M8TWTcQgABfpimKRT24keM",
+  "worker_prompt_sha256": "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d",
+  "worker_output": "{\"asset\":\"USDT\",\"period\":\"2025-11\",\"variance_amount_usd\":8596.67,\"variance_direction\":\"shortfall\",\"materiality_band\":\"M1\",\"entities_cited\":[\"HOT01\",\"HOT02\",\"TRF-2511-90491\",\"WD-2511-361023\",\"DP-2511-564851\",\"WD-2512-116843\",\"DP-2511-598491\",\"WD-2511-946607\"],\"reconciling_items\":[{\"reference\":\"TRF-2511-90491\",\"amount_usd\":-5595.98,\"type\":\"in-flight settlement\"},{\"reference\":\"WD-2511-361023\",\"amount_usd\":-5544.32,\"type\":\"pending transfer\"},{\"reference\":\"DP-2511-564851\",\"amount_usd\":2543.63,\"type\":\"pending transfer\"}],\"narrative\":\"On-chain reserves of $987,509,369.80 are below ledger liabilities of $987,517,966.47, a shortfall of $8,596.67, which falls in band M1 (below the $25,000 floor). Three eligible open items dated on or before cutoff explain it in full. Two are outflows on HOT01 that are on chain but not in the ledger: TRF-2511-90491 (-$5,595.98) and WD-2511-361023 (-$5,544.32). One is an inflow on HOT02 that is on chain but not yet credited in the ledger: DP-2511-564851 (+$2,543.63). Their net effect is -$8,596.67, so the explained portion is $8,596.67 and the unexplained remainder is $0.00. I excluded WD-2512-116843 (cleared), DP-2511-598491 (ETH, not USDT) and WD-2511-946607 (dated after cutoff).\"}",
+  "source": "seeded_addition",
+  "seed_note": "Rule G-REASON-SWAP. Grounding, two claims made unsupported: why two items are left out. Two spans, each an item reference followed by the reason the narrative gives for it, exchange their reasons word for word. Target grounding 0. Edits, in order: \"WD-2512-116843 (dated after cutoff)\" became \"WD-2512-116843 (cleared)\"; \"WD-2511-946607 (cleared)\" became \"WD-2511-946607 (dated after cutoff)\". Claim: WD-2512-116843 and WD-2511-946607: reasons exchanged. Target grounding 0; coverage unchanged from the base. Nothing else was added or deleted. Only the narrative field changed; the rest of the output is verbatim.",
+  "stratum": {
+    "faithfulness.narrative_grounding": 0,
+    "completeness.narrative_coverage": 3
+  },
+  "grades": {
+    "faithfulness.narrative_grounding": 0,
+    "completeness.narrative_coverage": 3
+  },
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "graded_by": "RA",
+  "graded_on": "2026-11-19",
+  "worker_model": "anthropic/claude-sonnet-5-5"
+}

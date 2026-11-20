@@ -1,0 +1,21 @@
+{
+  "sample_id": "calibration-hc-014-USDC-M2",
+  "epoch": 1,
+  "log_eval_id": "FyzdHX34BxZFNR9DKHLqkK",
+  "worker_prompt_sha256": "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d",
+  "worker_output": "{\"asset\":\"USDC\",\"period\":\"2025-10\",\"variance_amount_usd\":79618.37,\"variance_direction\":\"shortfall\",\"materiality_band\":\"M2\",\"entities_cited\":[\"hot-2\",\"DP-2510-389399\",\"WD-2510-794435\",\"JE-25-10-5727\",\"DP-2511-881283\"],\"reconciling_items\":[{\"reference\":\"DP-2510-389399\",\"amount_usd\":79618.37,\"type\":\"pending transfer\"}],\"narrative\":\"On-chain reserves of $306,234,607.97 sit $79,618.37 below ledger liabilities of $306,314,226.34, a shortfall in the M2 band. DP-2510-389399, a USDC inbound transfer to hot-2 that was pre-credited on the ledger on 2025-10-31 but not received on chain, explains the full shortfall, leaving no unexplained residual. WD-2510-794435 was not relied on despite the preparer note because it cleared on both sides on 2025-10-31, and JE-25-10-5727 (dated after cutoff) and DP-2511-881283 (dated after cutoff) are ineligible. The workpaper is prepared but unreviewed and unsigned, and the pre-credit should be confirmed as received before the reconciliation is closed.\"}",
+  "source": "seeded_addition",
+  "seed_note": "Rule G-REASON-COPY. Grounding, one claim made unsupported: why one item is left out. In one span that names an item by its reference followed by the reason the narrative gives for it, replace that reason with the reason the narrative gives, in the same words, for another item it names. Target grounding 1. Edits, in order: \"JE-25-10-5727 (suspense)\" became \"JE-25-10-5727 (dated after cutoff)\". Claim: JE-25-10-5727: reason replaced. Target grounding 1; coverage unchanged from the base. Nothing else was added or deleted. Only the narrative field changed; the rest of the output is verbatim.",
+  "stratum": {
+    "faithfulness.narrative_grounding": 1,
+    "completeness.narrative_coverage": 2
+  },
+  "grades": {
+    "faithfulness.narrative_grounding": 1,
+    "completeness.narrative_coverage": 2
+  },
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "graded_by": "RA",
+  "graded_on": "2026-11-19",
+  "worker_model": "anthropic/claude-haiku-5-5"
+}

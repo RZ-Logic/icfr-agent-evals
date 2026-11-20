@@ -1,0 +1,21 @@
+{
+  "sample_id": "calibration-hc-018-USDT-M2",
+  "epoch": 1,
+  "log_eval_id": "FyzdHX34BxZFNR9DKHLqkK",
+  "worker_prompt_sha256": "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d",
+  "worker_output": "{\"asset\":\"USDT\",\"period\":\"2025-11\",\"variance_amount_usd\":133841.26,\"variance_direction\":\"surplus\",\"materiality_band\":\"M2\",\"entities_cited\":[\"DP-2511-202091\",\"DP-2511-774835\",\"WD-2511-583179\",\"WD-2511-632867\",\"WD-2511-404931\",\"JE-25-11-6143\",\"DP-2512-859535\",\"TREAS01\",\"HOT01\",\"OPS-2511-41519\"],\"reconciling_items\":[{\"reference\":\"DP-2511-202091\",\"amount_usd\":44863.11,\"type\":\"timing difference\"},{\"reference\":\"DP-2511-774835\",\"amount_usd\":41712.65,\"type\":\"pending transfer\"}],\"narrative\":\"USDT on-chain reserves exceed the customer sub-ledger by a surplus of $133,841.26 at the 2025-11-30 23:59:59 UTC cutoff, a reportable (M2) variance. Two eligible open USDT deposits on HOT01 dated 2025-11-30 explain $86,575.76 of it: timing difference DP-2511-202091 of $44,863.11 (on-chain before cutoff, ledger credit posted 00:11 on 1 December) and pending transfer DP-2511-774835 of $41,712.65 (on-chain, not yet in the ledger), leaving $47,265.50 unexplained. WD-2511-632867 is excluded as it sits on out-of-scope wallet TREAS01, WD-2511-404931 as it is an ETH item, JE-25-11-6143 as a prior-period adjustment, and DP-2512-859535 as dated after cutoff. The preparer's proposed explanation via WD-2511-583179 is not relied on because it is not on the open items schedule and does not appear in the chain extract, so it is not evidenced as open at cutoff; the unexplained balance stays open pending ops ticket OPS-2511-41519 and the sub-custodian confirmation reference.\"}",
+  "source": "natural",
+  "seed_note": null,
+  "stratum": {
+    "faithfulness.narrative_grounding": 1,
+    "completeness.narrative_coverage": 3
+  },
+  "grades": {
+    "faithfulness.narrative_grounding": 1,
+    "completeness.narrative_coverage": 3
+  },
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "graded_by": "RA",
+  "graded_on": "2026-11-19",
+  "worker_model": "anthropic/claude-haiku-5-5"
+}

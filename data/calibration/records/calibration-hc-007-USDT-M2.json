@@ -1,0 +1,21 @@
+{
+  "sample_id": "calibration-hc-007-USDT-M2",
+  "epoch": 1,
+  "log_eval_id": "FyzdHX34BxZFNR9DKHLqkK",
+  "worker_prompt_sha256": "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d",
+  "worker_output": "{\"asset\":\"USDT\",\"period\":\"2025-12\",\"variance_amount_usd\":26759.38,\"variance_direction\":\"surplus\",\"materiality_band\":\"M2\",\"entities_cited\":[\"WD-2512-084523\",\"WD-2512-137655\",\"MNT-2601-1903\",\"treasury-ops\"],\"reconciling_items\":[],\"narrative\":\"In-scope on-chain USDT reserves of $1,144,081,301.68 exceed the ledger liabilities of $1,144,054,542.30 by a $26,759.38 surplus, which is reportable (M2). No open item can be relied on: WD-2512-137655 is an ETH item, MNT-2601-1903 is dated after cutoff, and WD-2512-084523 is a USDT pending transfer dated before cutoff but has no amount in the export, so $0.00 is explained and the full $26,759.38 remains unexplained. Treasury-ops is correctly excluded from scope, and the remaining ledger-to-chain postings before cutoff appear to match, so the amount of WD-2512-084523 must be obtained before the variance can be explained or signed off.\"}",
+  "source": "natural",
+  "seed_note": null,
+  "stratum": {
+    "faithfulness.narrative_grounding": 2,
+    "completeness.narrative_coverage": 3
+  },
+  "grades": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 3
+  },
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "graded_by": "RA",
+  "graded_on": "2026-11-19",
+  "worker_model": "anthropic/claude-haiku-5-5"
+}

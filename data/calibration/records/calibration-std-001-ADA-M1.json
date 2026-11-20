@@ -1,0 +1,21 @@
+{
+  "sample_id": "calibration-std-001-ADA-M1",
+  "epoch": 1,
+  "log_eval_id": "FyzdHX34BxZFNR9DKHLqkK",
+  "worker_prompt_sha256": "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d",
+  "worker_output": "{\"asset\":\"ADA\",\"period\":\"2025-10\",\"variance_amount_usd\":6743.69,\"variance_direction\":\"shortfall\",\"materiality_band\":\"M1\",\"entities_cited\":[\"TRF-2510-34923\",\"WD-2510-344923\",\"DP-2510-065495\"],\"reconciling_items\":[{\"reference\":\"TRF-2510-34923\",\"amount_usd\":606.95,\"type\":\"in-flight\"},{\"reference\":\"WD-2510-344923\",\"amount_usd\":409.94,\"type\":\"pending transfer\"},{\"reference\":\"DP-2510-065495\",\"amount_usd\":518.24,\"type\":\"pending transfer\"}],\"narrative\":\"On-chain in-scope reserves of $153,229,718.61 are $6,743.69 below the ledger liability of $153,236,462.30. Three items open at the 10/31/2025 23:59:59 UTC cutoff explain $1,535.13 of it: TRF-2510-34923 ($606.95, chain-only outflow in flight), WD-2510-344923 ($409.94, chain-only outflow at 10/31 23:50 UTC with ledger posting on 11/01, not on the open-items schedule), and DP-2510-065495 ($518.24, ledger-only credit with no chain receipt).\"}",
+  "source": "seeded_omission",
+  "seed_note": "Rule O-BAND+O-REM. O-BAND, then O-REM, on the same narrative. Deleted, in order: \", a shortfall in band M1 (below $25,000)\"; \"The remaining $5,208.56 is unexplained, the root cause is recorded as tbd, and the ops ticket is still open, so the workpaper should not be signed off until that residual is investigated.\". Nothing was added. Only the narrative field changed; the rest of the output is verbatim.",
+  "stratum": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 0
+  },
+  "grades": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 0
+  },
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "graded_by": "RA",
+  "graded_on": "2026-11-19",
+  "worker_model": "anthropic/claude-haiku-5-5"
+}

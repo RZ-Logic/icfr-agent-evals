@@ -1,0 +1,21 @@
+{
+  "sample_id": "calibration-std-006-SOL-M1",
+  "epoch": 1,
+  "log_eval_id": "M8TWTcQgABfpimKRT24keM",
+  "worker_prompt_sha256": "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d",
+  "worker_output": "{\"asset\":\"SOL\",\"period\":\"2025-10\",\"variance_amount_usd\":3344.25,\"variance_direction\":\"shortfall\",\"materiality_band\":\"M1\",\"entities_cited\":[\"HOT02\",\"TRF-2510-61143\",\"WD-2510-799347\",\"WD-2510-039359\",\"TREAS01\",\"WD-2510-071451\",\"TRF-2510-91895\"],\"reconciling_items\":[{\"reference\":\"TRF-2510-61143\",\"amount_usd\":1765.29,\"type\":\"In flight\"}],\"narrative\":\"On-chain reserves of USD 1,449,998,197.63 are USD 3,344.25 below ledger liabilities of USD 1,450,001,541.88. Only one open item qualifies: in-flight transfer TRF-2510-61143 from HOT02 (USD 1,765.29), which was on-chain only at cutoff. I excluded WD-2510-799347 (USDC, a different asset), WD-2510-039359 (TREAS01, out of scope), and WD-2510-071451 (already cleared). I also did not rely on TRF-2510-91895, which the preparer notes describe as open but which is not on the open items schedule; the reviewer should confirm its status.\"}",
+  "source": "seeded_omission",
+  "seed_note": "Rule O-BAND+O-REM. O-BAND, then O-REM, on the same narrative. Deleted, in order: \", a shortfall in the M1 band (below the $25,000 floor)\"; \"That leaves USD 1,578.96 unexplained, and the root cause is still open.\". Nothing was added. Only the narrative field changed; the rest of the output is verbatim.",
+  "stratum": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 0
+  },
+  "grades": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 0
+  },
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "graded_by": "RA",
+  "graded_on": "2026-11-19",
+  "worker_model": "anthropic/claude-sonnet-5-5"
+}

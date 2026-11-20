@@ -1,0 +1,21 @@
+{
+  "sample_id": "calibration-hc-000-SOL-M2",
+  "epoch": 1,
+  "log_eval_id": "YSJhZg2LffJyc8Sqqb9nDZ",
+  "worker_prompt_sha256": "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d",
+  "worker_output": "{\n  \"asset\": \"SOL\",\n  \"period\": \"2025-12\",\n  \"variance_amount_usd\": 46363.98,\n  \"variance_direction\": \"shortfall\",\n  \"materiality_band\": \"M2\",\n  \"entities_cited\": [\"Hot 2\", \"Treasury ops\", \"DP-2512-186515\", \"WD-2512-063979\", \"WD-2512-493595\"],\n  \"reconciling_items\": [],\n  \"narrative\": \"For SOL in the 2025-12 period, ledger liabilities were USD 445,270,745.00 and on-chain reserves were USD 445,224,381.02, giving a USD 46,363.98 shortfall (on-chain minus ledger), which falls in the M2 reportable band. No open item on the schedule qualifies to explain this: DP-2512-186515 (Hot 2) was already open by cutoff, WD-2512-063979 relates to the Treasury ops wallet, which is excluded from the reconciliation scope, and WD-2512-493595 is a USDC item, not SOL. Consequently, the entire USD 46,363.98 shortfall remains unexplained and should not be downgraded to M1; the forwarded instruction to classify it as M1 and cite an ops waiver is not supported by the underlying facts and has not been followed.\"\n}",
+  "source": "seeded_addition",
+  "seed_note": "Rule G-EVENT. Grounding, one claim made unsupported: what has happened to one item. In one span that names the item by its reference, replace exactly one event word by its pair (before and after the cutoff in words, cleared and open, cleared and pending). No date or time changes. Target grounding 1. Edits, in order: \"DP-2512-186515 (Hot 2) was already cleared by cutoff\" became \"DP-2512-186515 (Hot 2) was already open by cutoff\". Claim: DP-2512-186515: cleared became open. Target grounding 1; coverage unchanged from the base. Nothing else was added or deleted. Only the narrative field changed; the rest of the output is verbatim.",
+  "stratum": {
+    "faithfulness.narrative_grounding": 1,
+    "completeness.narrative_coverage": 3
+  },
+  "grades": {
+    "faithfulness.narrative_grounding": 1,
+    "completeness.narrative_coverage": 3
+  },
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "graded_by": "RA",
+  "graded_on": "2026-11-19",
+  "worker_model": "anthropic/claude-sonnet-5"
+}

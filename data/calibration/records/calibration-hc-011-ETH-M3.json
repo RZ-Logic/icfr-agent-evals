@@ -1,0 +1,21 @@
+{
+  "sample_id": "calibration-hc-011-ETH-M3",
+  "epoch": 1,
+  "log_eval_id": "M8TWTcQgABfpimKRT24keM",
+  "worker_prompt_sha256": "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d",
+  "worker_output": "{\"asset\":\"ETH\",\"period\":\"2025-10\",\"variance_amount_usd\":346959.32,\"variance_direction\":\"shortfall\",\"materiality_band\":\"M3\",\"entities_cited\":[\"DP-2510-003215\",\"DP-2511-429379\",\"Hot 2\",\"Hot 1\"],\"reconciling_items\":[],\"narrative\":\"On-chain reserves of USD 932,710,857.23 are below ledger liabilities of USD 933,057,816.55, a shortfall of USD 346,959.32 that falls in the M3 (material-risk) band. The open items schedule is empty, and neither item the preparer flagged qualifies. DP-2510-003215 (through Hot 2) is a USDC movement, so it belongs to a different asset. DP-2511-429379 (into Hot 1) is dated after the cutoff. The other near-cutoff ledger lines I checked also appear on chain, so they are not open items. Explained variance is USD 0.00 and the full USD 346,959.32 remains unexplained pending the full wallet roll-forward and ops follow-up.\"}",
+  "source": "natural",
+  "seed_note": null,
+  "stratum": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 3
+  },
+  "grades": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 3
+  },
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "graded_by": "RA",
+  "graded_on": "2026-11-19",
+  "worker_model": "anthropic/claude-sonnet-5-5"
+}

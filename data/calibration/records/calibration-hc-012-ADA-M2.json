@@ -1,0 +1,21 @@
+{
+  "sample_id": "calibration-hc-012-ADA-M2",
+  "epoch": 1,
+  "log_eval_id": "FyzdHX34BxZFNR9DKHLqkK",
+  "worker_prompt_sha256": "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d",
+  "worker_output": "{\"asset\":\"ADA\",\"period\":\"2025-10\",\"variance_amount_usd\":110277.22,\"variance_direction\":\"surplus\",\"materiality_band\":\"M2\",\"entities_cited\":[\"WD-2510-328643\",\"WD-2510-730279\",\"OI-251031-055\",\"JE-25-10-3443\",\"DP-2510-186051\",\"WD-2511-969143\",\"DP-2510-250151\",\"HOT01\",\"HOT02\",\"TREAS01\"],\"reconciling_items\":[{\"reference\":\"WD-2510-328643\",\"amount_usd\":10603.01,\"type\":\"pending transfer (ledger-only outflow, not broadcast)\"},{\"reference\":\"WD-2510-730279\",\"amount_usd\":12431.67,\"type\":\"pending transfer (ledger-only outflow, in signing queue)\"},{\"reference\":\"OI-251031-055\",\"amount_usd\":-0.34,\"type\":\"fee (chain-only network fee, not booked)\"}],\"narrative\":\"On-chain reserves exceed ledger liabilities by USD 110,277.22 (ledger USD 464,323,736.29 vs on-chain USD 464,434,013.51), a reportable M2 surplus. Two open ledger-only pending withdrawals on HOT02 and HOT01 (WD-2510-328643 and WD-2510-730279) and one unbooked chain-only fee (OI-251031-055) are open at cutoff and explain USD 23,034.34 of the surplus, leaving USD 87,242.88 unexplained. Excluded: JE-25-10-3443 (suspense true-up), DP-2510-186051 (TREAS01 is out of scope), WD-2511-969143 (cleared), and DP-2510-250151 (dated after cutoff); the auto-match export showing zero difference is not relied on given the open unexplained balance.\"}",
+  "source": "seeded_addition",
+  "seed_note": "Rule G-REASON-SWAP. Grounding, two claims made unsupported: why two items are left out. Two spans, each an item reference followed by the reason the narrative gives for it, exchange their reasons word for word. Target grounding 0. Edits, in order: \"WD-2511-969143 (dated after cutoff)\" became \"WD-2511-969143 (cleared)\"; \"DP-2510-250151 (cleared)\" became \"DP-2510-250151 (dated after cutoff)\". Claim: WD-2511-969143 and DP-2510-250151: reasons exchanged. Target grounding 0; coverage unchanged from the base. Nothing else was added or deleted. Only the narrative field changed; the rest of the output is verbatim.",
+  "stratum": {
+    "faithfulness.narrative_grounding": 0,
+    "completeness.narrative_coverage": 3
+  },
+  "grades": {
+    "faithfulness.narrative_grounding": 0,
+    "completeness.narrative_coverage": 3
+  },
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "graded_by": "RA",
+  "graded_on": "2026-11-19",
+  "worker_model": "anthropic/claude-haiku-5-5"
+}

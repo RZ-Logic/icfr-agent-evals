@@ -1,0 +1,21 @@
+{
+  "sample_id": "calibration-std-000-USDT-M3",
+  "epoch": 1,
+  "log_eval_id": "FyzdHX34BxZFNR9DKHLqkK",
+  "worker_prompt_sha256": "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d",
+  "worker_output": "{\"asset\":\"USDT\",\"period\":\"2025-11\",\"variance_amount_usd\":1534919.61,\"variance_direction\":\"surplus\",\"materiality_band\":\"M3\",\"entities_cited\":[\"HOT01\",\"HOT02\",\"TREAS01\",\"DP-2511-589163\",\"WD-2511-921083\",\"DP-2511-330367\",\"JE-25-11-6179\",\"DP-2512-030251\"],\"reconciling_items\":[{\"reference\":\"DP-2511-589163\",\"amount_usd\":267190.48,\"type\":\"pending transfer\"},{\"reference\":\"WD-2511-921083\",\"amount_usd\":281949.11,\"type\":\"timing difference\"},{\"reference\":\"DP-2511-330367\",\"amount_usd\":110954.15,\"type\":\"pending transfer\"}],\"narrative\":\"On-chain reserves of 1,390,942,408.48 exceed ledger liabilities of 1,389,407,488.87 by 1,534,919.61, a surplus in M3 territory, with in-scope wallets only (TREAS01 excluded as own funds). Three open items at cutoff are relied on: DP-2511-589163 on HOT01 (received on-chain at 22:39 on 11-30 but not yet in the ledger) adds 267,190.48 to the surplus; WD-2511-921083 on HOT01 (debited in the ledger at 23:54 on 11-30 but broadcast on-chain at 00:45 on 12/1) adds 281,949.11; and DP-2511-330367 on HOT02 (in the ledger only) reduces the surplus by 110,954.15. Net explained variance is 438,185.44, leaving 1,096,734.17 unexplained and open pending the ops ticket, which may reflect an exchange rate difference. JE-25-11-6179 was excluded as a prior-period adjustment and DP-2512-030251 as dated after cutoff.\"}",
+  "source": "seeded_addition",
+  "seed_note": "Rule G-GUESS. Grounding, one claim made overstated: the narrative's own hedged guess at the cause of the remainder. In the first sentence of the narrative that states the remainder (it holds unexplained, remaining, remains, leaving or leaves) and names no item as its cause, insert the fixed clause ', which may reflect X' just before that sentence's final full stop, where X is the first of 'a network fee', 'an exchange rate difference', 'a custodian rebate' whose key noun (fee, exchange rate, rebate) does not appear anywhere in the case file text, case-insensitive. Nothing else changes. Target grounding 2; coverage unchanged from the base. Inserted the clause \", which may reflect an exchange rate difference\" just before the final full stop of \"Net explained variance is 438,185.44, leaving 1,096,734.17 unexplained and open pending the ops ticket.\". Claim: the remainder's cause guessed with a hedge. Target grounding 2; coverage unchanged from the base. Nothing else was added or deleted. Only the narrative field changed; the rest of the output is verbatim.",
+  "stratum": {
+    "faithfulness.narrative_grounding": 2,
+    "completeness.narrative_coverage": 2
+  },
+  "grades": {
+    "faithfulness.narrative_grounding": 2,
+    "completeness.narrative_coverage": 2
+  },
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "graded_by": "RA",
+  "graded_on": "2026-11-19",
+  "worker_model": "anthropic/claude-haiku-5-5"
+}

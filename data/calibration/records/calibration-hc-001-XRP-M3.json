@@ -1,0 +1,21 @@
+{
+  "sample_id": "calibration-hc-001-XRP-M3",
+  "epoch": 1,
+  "log_eval_id": "YSJhZg2LffJyc8Sqqb9nDZ",
+  "worker_prompt_sha256": "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d",
+  "worker_output": "```json\n{\n  \"asset\": \"XRP\",\n  \"period\": \"2025-11\",\n  \"variance_amount_usd\": 428059.53,\n  \"variance_direction\": \"surplus\",\n  \"materiality_band\": \"M3\",\n  \"entities_cited\": [\"hot-1\", \"DP-2511-999363\", \"WD-2511-011799\"],\n  \"reconciling_items\": [\n    {\"reference\": \"DP-2511-999363\", \"amount_usd\": 163479.10, \"type\": \"pending transfer (chain only, in)\"},\n    {\"reference\": \"WD-2511-011799\", \"amount_usd\": 264580.43, \"type\": \"pending transfer (ledger only, out)\"}\n  ],\n  \"narrative\": \"On-chain reserves of USD 1,826,346,216.78 exceeded ledger liabilities of USD 1,825,918,157.25 at the 30-Nov-2025 cutoff, a surplus of USD 428,059.53, which falls in the M3 (material-risk) band. Two open items in wallet hot-1 at or before cutoff fully explain the variance: DP-2511-999363 (USD 163,479.10), network fees on the sweep not yet credited in the ledger, and WD-2511-011799 (USD 264,580.43), a ledger-only pending withdrawal not yet settled on-chain. Together these reconciling items account for USD 428,059.53 of the surplus, leaving USD 0.00 unexplained.\"\n}\n```",
+  "source": "seeded_addition",
+  "seed_note": "Rule G-HEDGE-TYPE. Grounding, one claim made overstated: what kind of item something is. In one span that names the item by its reference, replace the item's type words with a run of words copied verbatim from a case note that names the item and gives that type only with a hedge (looks like, may, might, likely, probably, possibly, to confirm). The hedge itself is not copied, so the narrative states as fact what the case file gives as uncertain. Target grounding 2. Edits, in order: \"DP-2511-999363 (USD 163,479.10), an on-chain-only pending deposit not yet credited\" became \"DP-2511-999363 (USD 163,479.10), network fees on the sweep not yet credited\". Claim: DP-2511-999363: type stated as fact from the hedged note \"DP-2511-999363 looks like network fees on the sweep, ops to confirm.\". Target grounding 2; coverage unchanged from the base. Nothing else was added or deleted. Only the narrative field changed; the rest of the output is verbatim.",
+  "stratum": {
+    "faithfulness.narrative_grounding": 2,
+    "completeness.narrative_coverage": 3
+  },
+  "grades": {
+    "faithfulness.narrative_grounding": 2,
+    "completeness.narrative_coverage": 3
+  },
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "graded_by": "RA",
+  "graded_on": "2026-11-19",
+  "worker_model": "anthropic/claude-sonnet-5"
+}

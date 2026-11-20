@@ -1,0 +1,21 @@
+{
+  "sample_id": "calibration-hc-005-XRP-M2",
+  "epoch": 1,
+  "log_eval_id": "YSJhZg2LffJyc8Sqqb9nDZ",
+  "worker_prompt_sha256": "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d",
+  "worker_output": "{\n  \"asset\": \"XRP\",\n  \"period\": \"2025-12\",\n  \"variance_amount_usd\": 26288.06,\n  \"variance_direction\": \"shortfall\",\n  \"materiality_band\": \"M2\",\n  \"entities_cited\": [\"WD-2512-480071\", \"WD-2601-871843\", \"WD-2512-378731\", \"TREAS01\"],\n  \"reconciling_items\": [],\n  \"narrative\": \"On-chain reserves of $1,895,853,395.90 were $26,288.06 below ledger liabilities of $1,895,879,683.96 at the 12/31/2025 23:59:59 UTC cutoff, a shortfall classified as M2 (reportable). None of the open items qualify as explanatory: WD-2512-480071 is marked pending (booked on both sides) and so is excluded, WD-2601-871843 is dated 01/01/2026, after the cutoff, and WD-2512-378731 relates to TREAS01, a wallet excluded from the customer reserve reconciliation scope. With no eligible reconciling items, the full $26,288.06 shortfall remains unexplained and warrants further investigation before sign-off.\"\n}",
+  "source": "seeded_addition",
+  "seed_note": "Rule G-EVENT. Grounding, one claim made unsupported: what has happened to one item. In one span that names the item by its reference, replace exactly one event word by its pair (before and after the cutoff in words, cleared and open, cleared and pending). No date or time changes. Target grounding 1. Edits, in order: \"WD-2512-480071 is marked cleared\" became \"WD-2512-480071 is marked pending\". Claim: WD-2512-480071: cleared became pending. Target grounding 1; coverage unchanged from the base. Nothing else was added or deleted. Only the narrative field changed; the rest of the output is verbatim.",
+  "stratum": {
+    "faithfulness.narrative_grounding": 1,
+    "completeness.narrative_coverage": 3
+  },
+  "grades": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 3
+  },
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "graded_by": "RA",
+  "graded_on": "2026-11-19",
+  "worker_model": "anthropic/claude-sonnet-5"
+}

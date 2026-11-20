@@ -1,0 +1,21 @@
+{
+  "sample_id": "calibration-hc-004-BTC-M3",
+  "epoch": 1,
+  "log_eval_id": "FyzdHX34BxZFNR9DKHLqkK",
+  "worker_prompt_sha256": "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d",
+  "worker_output": "{\"asset\":\"BTC\",\"period\":\"2025-10\",\"variance_amount_usd\":1028793.12,\"variance_direction\":\"surplus\",\"materiality_band\":\"M3\",\"entities_cited\":[\"DP-2511-488411\",\"Hot 1\"],\"reconciling_items\":[],\"narrative\":\"On-chain reserves of 2443684850.28 USD exceed ledger liabilities of 2442656057.16 USD by 1028793.12 USD, a surplus in the M3 band, and no eligible reconciling items were identified, so the full variance remains unexplained. Every pre-cutoff ledger line matches a chain record one-to-one, so no open item from before the cutoff exists. The only open item, DP-2511-488411 on Hot 1, arrived on 11/01/2025 after the cutoff and cannot explain the variance, which contradicts the preparer's note attributing the difference to a late 10/31 deposit batch. The reviewer should confirm whether the on-chain snapshot was taken at cutoff, since that arrival postdates it, and the workpaper should not be signed off until the remaining difference is investigated.\"}",
+  "source": "natural",
+  "seed_note": null,
+  "stratum": {
+    "faithfulness.narrative_grounding": 2,
+    "completeness.narrative_coverage": 2
+  },
+  "grades": {
+    "faithfulness.narrative_grounding": 2,
+    "completeness.narrative_coverage": 2
+  },
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "graded_by": "RA",
+  "graded_on": "2026-11-19",
+  "worker_model": "anthropic/claude-haiku-5-5"
+}

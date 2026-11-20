@@ -1,0 +1,21 @@
+{
+  "sample_id": "calibration-std-018-ADA-M3",
+  "epoch": 1,
+  "log_eval_id": "FyzdHX34BxZFNR9DKHLqkK",
+  "worker_prompt_sha256": "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d",
+  "worker_output": "{\"asset\":\"ADA\",\"period\":\"2025-10\",\"variance_amount_usd\":486586.08,\"variance_direction\":\"surplus\",\"materiality_band\":\"M3\",\"entities_cited\":[\"Hot 1\",\"Treasury ops\",\"DP-2510-583419\",\"WD-2510-553151\",\"JE-25-10-0503\",\"DP-2511-264051\",\"DP-2510-764591\"],\"reconciling_items\":[{\"reference\":\"DP-2510-583419\",\"amount_usd\":642046.25,\"type\":\"timing difference: inbound deposit on chain to Hot 1 at 31-Oct 23:56 UTC, not yet in ledger (increases on-chain surplus)\"},{\"reference\":\"WD-2510-553151\",\"amount_usd\":155460.17,\"type\":\"timing difference: outbound withdrawal on chain from Hot 1 at 31-Oct 23:45 UTC, not yet in ledger (reduces on-chain surplus)\"}],\"narrative\":\"The ADA surplus of $486,586.08 (on-chain $313,430,699.90 against ledger $312,944,113.82) is classified M3 and is fully explained by two chain-only timing items open at cutoff: DP-2510-583419 adds $642,046.25 and WD-2510-553151 reduces it by $155,460.17, leaving no unexplained residual. JE-25-10-0503 (manual true-up), DP-2511-264051 (dated after cutoff, credit pending) and DP-2510-764591 (Treasury ops, own funds outside reserve scope) were excluded. The workpaper is draft with no reviewer, root cause recorded as tbd, and the timing items still open in the ledger, so it should not be signed off until these are cleared and the root cause is documented.\"}",
+  "source": "natural",
+  "seed_note": null,
+  "stratum": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 2
+  },
+  "grades": {
+    "faithfulness.narrative_grounding": 1,
+    "completeness.narrative_coverage": 2
+  },
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "graded_by": "RA",
+  "graded_on": "2026-11-19",
+  "worker_model": "anthropic/claude-haiku-5-5"
+}

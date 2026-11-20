@@ -1,0 +1,21 @@
+{
+  "sample_id": "calibration-hc-008-BTC-M1",
+  "epoch": 1,
+  "log_eval_id": "M8TWTcQgABfpimKRT24keM",
+  "worker_prompt_sha256": "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d",
+  "worker_output": "{\"asset\":\"BTC\",\"period\":\"2025-12\",\"variance_amount_usd\":12210.86,\"variance_direction\":\"shortfall\",\"materiality_band\":\"M1\",\"entities_cited\":[\"hot-1\",\"DP-2512-270631\",\"WD-2512-843755\",\"DP-2601-795643\",\"OPS-2512-50483\"],\"reconciling_items\":[{\"reference\":\"DP-2512-270631\",\"amount_usd\":5623.54,\"type\":\"timing diff\"},{\"reference\":\"WD-2512-843755\",\"amount_usd\":2877.33,\"type\":\"pending xfer\"}],\"narrative\":\"On-chain reserves of USD 2,285,416,878.52 are USD 12,210.86 below ledger liabilities of USD 2,285,429,089.38. Two open items on hot-1 explain USD 8,500.87: DP-2512-270631 (USD 5,623.54) was booked in the ledger at 23:58 on 31 Dec but reached the chain only on 1 Jan, and WD-2512-843755 (USD 2,877.33) went out on chain on 31 Dec but is not booked in the ledger; I used the on-chain amount, not the preparer's desk figure. DP-2601-795643 is dated after the cutoff and is excluded.\"}",
+  "source": "seeded_omission",
+  "seed_note": "Rule O-BAND+O-REM. O-BAND, then O-REM, on the same narrative. Deleted, in order: \", a shortfall that falls in M1 (below the reportable floor)\"; \"USD 3,709.99 remains unexplained and is still under investigation (ticket OPS-2512-50483), with root cause not yet determined.\". Nothing was added. Only the narrative field changed; the rest of the output is verbatim.",
+  "stratum": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 0
+  },
+  "grades": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 0
+  },
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "graded_by": "RA",
+  "graded_on": "2026-11-19",
+  "worker_model": "anthropic/claude-sonnet-5-5"
+}

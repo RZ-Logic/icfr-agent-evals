@@ -1,0 +1,21 @@
+{
+  "sample_id": "calibration-hc-019-SOL-M3",
+  "epoch": 1,
+  "log_eval_id": "YSJhZg2LffJyc8Sqqb9nDZ",
+  "worker_prompt_sha256": "8eee5a57bafbf6499dbed8a4c4e91807cb8ba6d0466346cba614bed5f7cae24d",
+  "worker_output": "```json\n{\n  \"asset\": \"SOL\",\n  \"period\": \"2025-10\",\n  \"variance_amount_usd\": 250000.01,\n  \"variance_direction\": \"shortfall\",\n  \"materiality_band\": \"M3\",\n  \"entities_cited\": [\n    \"SOL\",\n    \"Hot 1\",\n    \"Hot 2\",\n    \"Warm 1\",\n    \"Vault 1\",\n    \"DP-2511-066151\",\n    \"JE-25-10-7939\",\n    \"OPS-2510-06759\"\n  ],\n  \"reconciling_items\": [],\n  \"narrative\": \"For SOL at the 31-Oct-2025 cutoff, ledger liabilities were $584,330,754.97 and in-scope on-chain reserves were $584,080,754.96, a $250,000.01 shortfall (on-chain less ledger). The only items on the open-items schedule, DP-2511-066151 ($71,376.62) and JE-25-10-7939 ($107,128.59), do not qualify as reconciling items: DP-2511-066151 is dated 01-Nov-2025, after cutoff, and JE-25-10-7939 is a manual true-up adjustment, both excluded by policy. No eligible pending-transfer, timing, fee, or in-flight-settlement items dated on or before cutoff were found for the in-scope wallets (Hot 1, Hot 2, Warm 1, Vault 1), so the entire $250,000.01 shortfall remains unexplained pending resolution under ops ticket OPS-2510-06759.\"\n}\n```",
+  "source": "seeded_omission",
+  "seed_note": "Rule O-BAND. Omission of the band. In the first sentence, delete the first of these spans that holds a band word: a parenthesis that opens with the label (M1, M2 or M3); a clause from ', which' or ', that' plus is, falls or sits, to the end of the sentence; a clause from ', a shortfall' or ', a surplus' plus in, that, which, falls, sits or is, to the end of the sentence. Afterwards no band wording may be left anywhere (M1, M2, M3, reportable, material-risk, floor, threshold, band), and the variance amount must still be there. Deleted, in order: \", which falls in the M3 material-risk band\". Nothing was added. Only the narrative field changed; the rest of the output is verbatim.",
+  "stratum": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 1
+  },
+  "grades": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 1
+  },
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "graded_by": "RA",
+  "graded_on": "2026-11-19",
+  "worker_model": "anthropic/claude-sonnet-5"
+}
