@@ -386,6 +386,12 @@ def check_intra_rater(path: str | None, step: int, repo: pathlib.Path = REPO) ->
         raise Refused(f"the intra-rater record {rel} is not tracked in HEAD; commit it before the look")
     if _git_out(repo, "status", "--porcelain", "--", rel).strip():
         raise Refused(f"the intra-rater record {rel} differs from HEAD; commit it before the look")
+    body = json.loads(p.read_text(encoding="utf-8"))
+    revise = body.get("revise") if isinstance(body, dict) else None
+    if revise and body.get("anchors_sha256") == rubric.llm_anchor_sha256():
+        raise Refused(f"the intra-rater record {rel} calls for a rubric revision of {', '.join(revise)}, and the "
+                      f"anchors have not changed since it; revise the wording and grade the subset again under it "
+                      f"before the look (pre-registration section 7)")
     return {"file": rel, "sha256": _sha256_file(p)}
 
 
