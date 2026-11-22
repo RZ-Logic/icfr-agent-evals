@@ -26,6 +26,7 @@ from icfr_agent_evals.casefile import (
 )
 from icfr_agent_evals.chainformats import verify_address
 from icfr_agent_evals.dataset import CUSTODIANS, build_cases
+from icfr_agent_evals.handwritten import HANDWRITTEN_ID_PREFIX
 from icfr_agent_evals.generator import (
     BOOK_RANGE_USD,
     COUNTERPARTIES,
@@ -57,7 +58,11 @@ MARKER_SUBSTRINGS = ("test_", "eval_", "for_grader")
 
 @lru_cache(maxsize=None)
 def cases(split: str):
-    return tuple(build_cases(split))
+    """The generated cases of a split. The 54 hand-written evaluation cases, committed at
+    the dataset 0.1.0 freeze, are not generator output: they hold incomplete-data items
+    with no wallet, date or amount, a noise role and no presentation block by design, and
+    scripts/build_handwritten.py and tests/test_handwritten.py check them."""
+    return tuple(c for c in build_cases(split) if not c.truth.case_id.startswith(HANDWRITTEN_ID_PREFIX))
 
 
 def all_cases():

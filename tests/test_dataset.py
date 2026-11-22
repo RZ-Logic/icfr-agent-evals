@@ -22,6 +22,7 @@ from icfr_agent_evals.dataset import (
     build_cases,
     build_dataset,
 )
+from icfr_agent_evals.handwritten import HANDWRITTEN_CASES
 from icfr_agent_evals.hardcases import build_hard_cases
 from icfr_agent_evals.policy import materiality_band
 
@@ -49,10 +50,11 @@ def test_reproducible_ids_and_truth():
 
 def test_default_sizes():
     """Pre-registration section 4: the evaluation split's 146 synthetic cases come
-    from the generator (its 54 hand-written cases are written after the tag); the
-    dev split is 30 cases; the CI regression split is 146 standard plus 54 generated
-    hard cases. Hard cases come from hardcases.build_hard_cases."""
-    assert len(_ds("eval").samples) == STANDARD_CASES == 146
+    from the generator and its 54 hand-written cases join at the dataset 0.1.0 freeze;
+    the dev split is 30 cases; the CI regression split is 146 standard plus 54
+    generated hard cases. Hard cases come from hardcases.build_hard_cases."""
+    assert len(_ds("eval").samples) == 200 == STANDARD_CASES + HANDWRITTEN_CASES
+    assert len(_standard("eval")) == STANDARD_CASES == 146
     assert len(_ds("dev").samples) == 30 == 14 + sum(DEV_HARD_COMPOSITION.values())
     assert len(_ds("ci").samples) == 200 == 146 + sum(CI_HARD_COMPOSITION.values())
     assert len(_standard("dev")) == 14 and len(_standard("ci")) == 146

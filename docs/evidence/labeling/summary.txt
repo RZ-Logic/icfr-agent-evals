@@ -1,0 +1,16 @@
+Labeling comparison, dataset version 0.1.0
+Cases: 54 in each pass and in the answer key
+1. Pass against pass
+  items compared for the kappa: 203 (labeled in both 202, first only 0, second only 1)
+  adjudicated-case count: 26
+  disagreement rows: 28 (eligibility 1, variance_direction 0, band 1, evidence_state 1, variance_usd 1, explained_usd 5, unexplained_usd 19)
+  cases with a disagreement: 26
+  the kappa, its CI and the name are in summary.json
+2. Labels against the answer key
+  key items: 204 (60 eligible); labeled in neither pass: 1
+  labeled references not in the key: first 0, second 0
+  difference rows: 35 (eligibility 2, variance_direction 0, band 1, evidence_state 3, variance_usd 1, explained_usd 7, unexplained_usd 21)
+  first pass differs from the key: 34 rows in 26 cases (eligibility 2, variance_direction 0, band 1, evidence_state 2, variance_usd 1, explained_usd 7, unexplained_usd 21)
+  second pass differs from the key: 9 rows in 3 cases (eligibility 2, variance_direction 0, band 0, evidence_state 3, variance_usd 0, explained_usd 2, unexplained_usd 2)
+  cases with a difference in either pass: 26
+Warnings: 0 (listed in summary.json)

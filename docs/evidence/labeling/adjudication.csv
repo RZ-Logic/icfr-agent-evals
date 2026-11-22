@@ -1,0 +1,64 @@
+﻿case_id,kind,field,item_ref,pass1_value,pass2_value,key_value,differs_from_key,author_decision,author_reasoning
+eval-hw-001,pass_vs_pass,unexplained_usd,,,0,,,0 (pass 2 value),"Pass 1 left the unexplained amount blank on a case marked Fully explained; the intended value is 0, as pass 2 records."
+eval-hw-002,pass_vs_pass,unexplained_usd,,,0,,,0 (pass 2 value),"Pass 1 left the unexplained amount blank on a case marked Fully explained; the intended value is 0, as pass 2 records."
+eval-hw-003,pass_vs_pass,unexplained_usd,,,0,,,0 (pass 2 value),"Pass 1 left the unexplained amount blank on a case marked Fully explained; the intended value is 0, as pass 2 records."
+eval-hw-006,pass_vs_pass,unexplained_usd,,,0,,,0 (pass 2 value),"Pass 1 left the unexplained amount blank on a case marked Fully explained; the intended value is 0, as pass 2 records."
+eval-hw-010,pass_vs_pass,band,,M1,M3,,,pass 2 value,careless mistake.
+eval-hw-011,pass_vs_pass,unexplained_usd,,,0,,,0 (pass 2 value),"Pass 1 left the unexplained amount blank on a case marked Fully explained; the intended value is 0, as pass 2 records."
+eval-hw-012,pass_vs_pass,unexplained_usd,,,0,,,0 (pass 2 value),"Pass 1 left the unexplained amount blank on a case marked Fully explained; the intended value is 0, as pass 2 records."
+eval-hw-014,pass_vs_pass,unexplained_usd,,,0,,,0 (pass 2 value),"Pass 1 left the unexplained amount blank on a case marked Fully explained; the intended value is 0, as pass 2 records."
+eval-hw-016,pass_vs_pass,unexplained_usd,,,0,,,0 (pass 2 value),"Pass 1 left the unexplained amount blank on a case marked Fully explained; the intended value is 0, as pass 2 records."
+eval-hw-024,pass_vs_pass,variance_usd,,"$17,203.66 ","($17,203.66)",,,pass2,careless mistake
+eval-hw-024,pass_vs_pass,unexplained_usd,,,0,,,0 (pass 2 value),"Pass 1 left the unexplained amount blank on a case marked Fully explained; the intended value is 0, as pass 2 records."
+eval-hw-025,pass_vs_pass,explained_usd,,,0,,,0 (pass 2 value),"Pass 1 left the explained amount blank on a case marked Unexplained; the intended value is 0, as pass 2 records."
+eval-hw-029,pass_vs_pass,unexplained_usd,,,0,,,0 (pass 2 value),"Pass 1 left the unexplained amount blank on a case marked Fully explained; the intended value is 0, as pass 2 records."
+eval-hw-033,pass_vs_pass,unexplained_usd,,,0,,,0 (pass 2 value),"Pass 1 left the unexplained amount blank on a case marked Fully explained; the intended value is 0, as pass 2 records."
+eval-hw-035,pass_vs_pass,unexplained_usd,,,0,,,0 (pass 2 value),"Pass 1 left the unexplained amount blank on a case marked Fully explained; the intended value is 0, as pass 2 records."
+eval-hw-036,pass_vs_pass,unexplained_usd,,,0,,,0 (pass 2 value),"Pass 1 left the unexplained amount blank on a case marked Fully explained; the intended value is 0, as pass 2 records."
+eval-hw-043,pass_vs_pass,unexplained_usd,,,0,,,0 (pass 2 value),"Pass 1 left the unexplained amount blank on a case marked Fully explained; the intended value is 0, as pass 2 records."
+eval-hw-044,pass_vs_pass,explained_usd,,,0,,,0 (pass 2 value),"Pass 1 left the explained amount blank on a case marked Unexplained; the intended value is 0, as pass 2 records."
+eval-hw-045,pass_vs_pass,explained_usd,,,0,,,0 (pass 2 value),"Pass 1 left the explained amount blank on a case marked Unexplained; the intended value is 0, as pass 2 records."
+eval-hw-046,pass_vs_pass,unexplained_usd,,,0,,,0 (pass 2 value),"Pass 1 left the unexplained amount blank on a case marked Fully explained; the intended value is 0, as pass 2 records."
+eval-hw-047,pass_vs_pass,eligibility,DP-2512-198640,not labeled,no,,,no (pass 2 value),careless mistake
+eval-hw-048,pass_vs_pass,evidence_state,,full,part,,,pass 1,"according to policy, $1 is within a dollar of zero. So, pass 1 is correct"
+eval-hw-048,pass_vs_pass,unexplained_usd,,,($1.00),,,pass 2 value,"according to policy, $1 is within a dollar of zero, but actual difference is -1"
+eval-hw-049,pass_vs_pass,unexplained_usd,,,0,,,0 (pass 2 value),"Pass 1 left the unexplained amount blank on a case marked Fully explained; the intended value is 0, as pass 2 records."
+eval-hw-050,pass_vs_pass,explained_usd,,,0,,,0 (pass 2 value),"Pass 1 left the explained amount blank on a case marked Unexplained; the intended value is 0, as pass 2 records."
+eval-hw-051,pass_vs_pass,explained_usd,,,0,,,0 (pass 2 value),"Pass 1 left the explained amount blank on a case marked Unexplained; the intended value is 0, as pass 2 records."
+eval-hw-052,pass_vs_pass,unexplained_usd,,,0,,,0 (pass 2 value),"Pass 1 left the unexplained amount blank on a case marked Fully explained; the intended value is 0, as pass 2 records."
+eval-hw-053,pass_vs_pass,unexplained_usd,,,0,,,0 (pass 2 value),"Pass 1 left the unexplained amount blank on a case marked Fully explained; the intended value is 0, as pass 2 records."
+eval-hw-001,label_vs_key,unexplained_usd,,,0,0,first,0 (pass 2 value),"Pass 1 left the unexplained amount blank on a case marked Fully explained; the intended value is 0, as pass 2 records and the key holds."
+eval-hw-002,label_vs_key,unexplained_usd,,,0,0,first,0 (pass 2 value),"Pass 1 left the unexplained amount blank on a case marked Fully explained; the intended value is 0, as pass 2 records and the key holds."
+eval-hw-003,label_vs_key,unexplained_usd,,,0,0,first,0 (pass 2 value),"Pass 1 left the unexplained amount blank on a case marked Fully explained; the intended value is 0, as pass 2 records and the key holds."
+eval-hw-006,label_vs_key,unexplained_usd,,,0,0,first,0 (pass 2 value),"Pass 1 left the unexplained amount blank on a case marked Fully explained; the intended value is 0, as pass 2 records and the key holds."
+eval-hw-010,label_vs_key,eligibility,DP-2511-318764,yes,yes,"no (not_open, recorded_both)",both,"no (not_open, recorded_both)",overlooked chain and ledger
+eval-hw-010,label_vs_key,band,,M1,M3,M3,first,M3,careless mistake
+eval-hw-010,label_vs_key,evidence_state,,partly_unexplained,partly_unexplained,unexplained,both,unexplained,overlooked chain and ledger
+eval-hw-010,label_vs_key,explained_usd,,"($55,354.84)","($55,354.84)",0,both,0,overlooked chain and ledger
+eval-hw-010,label_vs_key,unexplained_usd,,"($415,529.50)","($415,529.50)",-470884.34,both,-470884.34,overlooked chain and ledger
+eval-hw-011,label_vs_key,unexplained_usd,,,0,0,first,0 (pass 2 value),"Pass 1 left the unexplained amount blank on a case marked Fully explained; the intended value is 0, as pass 2 records and the key holds."
+eval-hw-012,label_vs_key,unexplained_usd,,,0,0,first,0 (pass 2 value),"Pass 1 left the unexplained amount blank on a case marked Fully explained; the intended value is 0, as pass 2 records and the key holds."
+eval-hw-014,label_vs_key,unexplained_usd,,,0,0,first,0 (pass 2 value),"Pass 1 left the unexplained amount blank on a case marked Fully explained; the intended value is 0, as pass 2 records and the key holds."
+eval-hw-016,label_vs_key,unexplained_usd,,,0,0,first,0 (pass 2 value),"Pass 1 left the unexplained amount blank on a case marked Fully explained; the intended value is 0, as pass 2 records and the key holds."
+eval-hw-024,label_vs_key,variance_usd,,"$17,203.66 ","($17,203.66)",-17203.66,first,-17203.66,careless mistake
+eval-hw-024,label_vs_key,unexplained_usd,,,0,0,first,0 (pass 2 value),"Pass 1 left the unexplained amount blank on a case marked Fully explained; the intended value is 0, as pass 2 records and the key holds."
+eval-hw-025,label_vs_key,explained_usd,,,0,0,first,0 (pass 2 value),"Pass 1 left the explained amount blank on a case marked Unexplained; the intended value is 0, as pass 2 records and the key holds."
+eval-hw-029,label_vs_key,unexplained_usd,,,0,0,first,0 (pass 2 value),"Pass 1 left the unexplained amount blank on a case marked Fully explained; the intended value is 0, as pass 2 records and the key holds."
+eval-hw-033,label_vs_key,unexplained_usd,,,0,0,first,0 (pass 2 value),"Pass 1 left the unexplained amount blank on a case marked Fully explained; the intended value is 0, as pass 2 records and the key holds."
+eval-hw-035,label_vs_key,unexplained_usd,,,0,0,first,0 (pass 2 value),"Pass 1 left the unexplained amount blank on a case marked Fully explained; the intended value is 0, as pass 2 records and the key holds."
+eval-hw-036,label_vs_key,unexplained_usd,,,0,0,first,0 (pass 2 value),"Pass 1 left the unexplained amount blank on a case marked Fully explained; the intended value is 0, as pass 2 records and the key holds."
+eval-hw-040,label_vs_key,eligibility,DP-2510-447316,yes,yes,"no (not_open, recorded_both)",both,"no (not_open, recorded_both)",overlooked chain and ledger
+eval-hw-040,label_vs_key,evidence_state,,partly_unexplained,partly_unexplained,unexplained,both,unexplained,overlooked chain and ledger
+eval-hw-040,label_vs_key,explained_usd,,"$35,060.25 ","$35,060.25 ",0,both,0,overlooked chain and ledger
+eval-hw-040,label_vs_key,unexplained_usd,,"$108,452.43 ","$108,452.43 ",143512.68,both,143512.68,overlooked chain and ledger
+eval-hw-043,label_vs_key,unexplained_usd,,,0,0,first,0 (pass 2 value),"Pass 1 left the unexplained amount blank on a case marked Fully explained; the intended value is 0, as pass 2 records and the key holds."
+eval-hw-044,label_vs_key,explained_usd,,,0,0,first,0 (pass 2 value),"Pass 1 left the explained amount blank on a case marked Unexplained; the intended value is 0, as pass 2 records and the key holds."
+eval-hw-045,label_vs_key,explained_usd,,,0,0,first,0 (pass 2 value),"Pass 1 left the explained amount blank on a case marked Unexplained; the intended value is 0, as pass 2 records and the key holds."
+eval-hw-046,label_vs_key,unexplained_usd,,,0,0,first,0 (pass 2 value),"Pass 1 left the unexplained amount blank on a case marked Fully explained; the intended value is 0, as pass 2 records and the key holds."
+eval-hw-048,label_vs_key,evidence_state,,fully_explained,partly_unexplained,fully_explained,second,fully_explained,"according to policy, $1 is within a dollar of zero. So, pass 1/key_value is correct"
+eval-hw-048,label_vs_key,unexplained_usd,,,($1.00),-1,first,-1,actual difference is -1
+eval-hw-049,label_vs_key,unexplained_usd,,,0,0,first,0 (pass 2 value),"Pass 1 left the unexplained amount blank on a case marked Fully explained; the intended value is 0, as pass 2 records and the key holds."
+eval-hw-050,label_vs_key,explained_usd,,,0,0,first,0 (pass 2 value),"Pass 1 left the explained amount blank on a case marked Unexplained; the intended value is 0, as pass 2 records and the key holds."
+eval-hw-051,label_vs_key,explained_usd,,,0,0,first,0 (pass 2 value),"Pass 1 left the explained amount blank on a case marked Unexplained; the intended value is 0, as pass 2 records and the key holds."
+eval-hw-052,label_vs_key,unexplained_usd,,,0,0,first,0 (pass 2 value),"Pass 1 left the unexplained amount blank on a case marked Fully explained; the intended value is 0, as pass 2 records and the key holds."
+eval-hw-053,label_vs_key,unexplained_usd,,,0,0,first,0 (pass 2 value),"Pass 1 left the unexplained amount blank on a case marked Fully explained; the intended value is 0, as pass 2 records and the key holds."

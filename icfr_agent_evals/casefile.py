@@ -44,7 +44,7 @@ from .policy import ASSET_TIERS, asset_tier, materiality_band
 SCHEMA_VERSION = "1.0.0"
 # Planned dataset SemVer while the generator is pre-tag. The post-tag build
 # records its own SemVer and SHA-256 in Task metadata at the dataset freeze.
-DATASET_VERSION = "0.1.0-dev.1"
+DATASET_VERSION = "0.1.0"
 
 USD_TOLERANCE = 1.0  # dollars, the pre-registered amount tolerance
 
