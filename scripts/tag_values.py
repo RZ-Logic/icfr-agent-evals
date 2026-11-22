@@ -78,6 +78,9 @@ PREREGISTERED = {
     "split_seeds": {"eval": 20260607, "dev": 21260607, "ci": 22260607, "calibration": 23260607},
     "composition": {
         "eval": {"standard": 146},  # the 54 hand-written cases join in the post-tag build (section 4)
+        # the evaluation split after the dataset 0.1.0 freeze: the 146 synthetic cases plus the
+        # 54 hand-written ones, 30 edge and 24 adversarial (section 4)
+        "eval_frozen": {"standard": 146, "edge": 30, "adversarial": 24},
         "ci": {"standard": 146, "edge": 30, "adversarial": 24},
         "dev": {"standard": 14, "edge": 6, "adversarial": 10},
     },
@@ -244,6 +247,7 @@ def collect(root: pathlib.Path = ROOT) -> dict:
     from icfr_agent_evals.casefile import split_seed, truth_of
     from icfr_agent_evals.dataset import build_dataset, select_subset
     from icfr_agent_evals.generator import GENERATOR_VERSION
+    from icfr_agent_evals.handwritten import HANDWRITTEN_CASES, HANDWRITTEN_ID_PREFIX
     from icfr_agent_evals.hardcases import HARD_GENERATOR_VERSION
 
     mismatches: list[str] = []
@@ -299,7 +303,23 @@ def collect(root: pathlib.Path = ROOT) -> dict:
             "case_kind": kinds,
             "category": cats,
         }
-        if kinds != PREREGISTERED["composition"][split]:
+        if split == "eval":
+            # The tag value covers the generator's cases; the hand-written ones join at the freeze.
+            synthetic = [s for s, t in zip(samples, truths) if not t.case_id.startswith(HANDWRITTEN_ID_PREFIX)]
+            hand = len(samples) - len(synthetic)
+            skinds = dict(sorted(Counter(truth_of(s.metadata).case_kind for s in synthetic).items()))
+            splits[split].update(synthetic_n=len(synthetic), synthetic_dataset_sha256=dataset_sha256(synthetic),
+                                 handwritten_n=hand)
+            if skinds != PREREGISTERED["composition"]["eval"]:
+                mismatches.append(f"eval synthetic composition {skinds} != pre-registered "
+                                  f"{PREREGISTERED['composition']['eval']}")
+            if hand not in (0, HANDWRITTEN_CASES):
+                mismatches.append(f"eval holds {hand} hand-written cases; expected 0 before the freeze "
+                                  f"or {HANDWRITTEN_CASES} after it")
+            elif hand and kinds != PREREGISTERED["composition"]["eval_frozen"]:
+                mismatches.append(f"eval composition {kinds} != pre-registered after the freeze "
+                                  f"{PREREGISTERED['composition']['eval_frozen']}")
+        elif kinds != PREREGISTERED["composition"][split]:
             mismatches.append(f"{split} composition {kinds} != pre-registered {PREREGISTERED['composition'][split]}")
         if split == "ci":
             want = {"standard": 146, **PREREGISTERED["ci_categories"]}

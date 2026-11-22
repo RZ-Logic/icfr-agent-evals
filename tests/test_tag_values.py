@@ -73,7 +73,9 @@ def test_values_cover_section13_fields(two_runs):
     assert g["source_sha256"] == tv.combine_hashes(g["source_files"])
     for split in ("dev", "ci", "eval"):
         assert len(values["splits"][split]["dataset_sha256"]) == 64
-    assert values["splits"]["eval"]["n"] == 146
+    ev = values["splits"]["eval"]
+    assert ev["synthetic_n"] == 146  # the tag value: the generator's cases
+    assert ev["handwritten_n"] in (0, 54) and ev["n"] == 146 + ev["handwritten_n"]  # 54 join at the 0.1.0 freeze
     assert values["dataset"]["dataset_version"] and values["dataset"]["schema_version"]
     prompt = values["worker_prompt"]
     assert prompt["worker_prompt_sha256"] == prompt["recomputed_sha256"]
