@@ -1,0 +1,641 @@
+{
+ "check": "intra-rater check, judge remedy order step 2 (pre-registration section 7)",
+ "agreement": "intra-rater (test-retest) agreement",
+ "statistic": "ICC(A,1), author first pass versus author re-grade, two-sided 95% McGraw-Wong CI",
+ "threshold": 0.6,
+ "kappa": "does not apply: the rubric defines no binary checks at rubric lock (pre-registration section 7)",
+ "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+ "head": "0c745021275f67d8a3349f0ff0e71bada299b07b",
+ "look_file": "acceptance-look-step-1.json",
+ "look_sha256": "998ca041e084deb1a2cce75127cc223e5b73a47fff30672c25ee1b5b92f910f7",
+ "records_sha256": "7ff6cec17f6e4f991822ff4cc4d86f11220cbec5d02726e4408fdcea359d7911",
+ "regrade_plan_sha256": "4c5f1d8df61266f397bdd19fd99e3c2defacc493df032f6da8ee8bdad38cdd25",
+ "regrade_sheet_id": "94ad4a9901c4ebc15850352d9fd80c6d3305706cc6e0e6eb60f61a1d106d8b2b",
+ "regrade_grades_sha256": "e7a97c1ed12757d4afb3c693adfeb0c61447eaef1a58ac69651055be70a33fcb",
+ "first_grading_ended": "2026-11-19T19:52:43-05:00",
+ "earliest_start": "2026-11-21T19:52:43-05:00",
+ "regrade_first_stamp": "2026-11-22T15:25:39-05:00",
+ "regrade_last_stamp": "2026-11-22T19:01:22-05:00",
+ "sittings": {
+  "file_sha256": "280875e60e1edf9f896c3bf0fc22bd1687720b8dce46ae5dbafbe24141fcad7e",
+  "sittings": 2,
+  "minutes": 155.7,
+  "first_start": "2026-11-22T15:24:42-05:00"
+ },
+ "records": 40,
+ "per_subdimension": {
+  "faithfulness.narrative_grounding": {
+   "icc_a1": {
+    "form": "ICC(A,1)",
+    "n": 40,
+    "k": 2,
+    "estimate": 0.9008092485549133,
+    "estimate_exact": "3896/4325",
+    "ci_lower": 0.8203603857607167,
+    "ci_upper": 0.9462886615936243,
+    "confidence": 0.95,
+    "defined": true,
+    "msr": 2.638141025641026,
+    "msc": 0.0125,
+    "mse": 0.1407051282051282,
+    "note": null,
+    "df_v": 39.16126070160766,
+    "f_lower": 1.8890444631902035,
+    "f_upper": 1.8898409385988884,
+    "agreement": "intra-rater (test-retest) agreement"
+   },
+   "icc_c1": {
+    "form": "ICC(C,1)",
+    "n": 40,
+    "k": 2,
+    "estimate": 0.8987312572087659,
+    "estimate_exact": "3896/4335",
+    "ci_lower": 0.8167921230033841,
+    "ci_upper": 0.9451301714007765,
+    "confidence": 0.95,
+    "defined": true,
+    "msr": 2.638141025641026,
+    "msc": 0.0125,
+    "mse": 0.1407051282051282,
+    "note": null,
+    "f_ratio": 18.749430523917994
+   },
+   "mean_difference_regrade_minus_first": {
+    "n": 40,
+    "mean": -0.025,
+    "mean_exact": "-1/40",
+    "confidence": 0.95,
+    "sd": 0.5304811555656397,
+    "df": 39,
+    "ci_lower": -0.1946561042264855,
+    "ci_upper": 0.1446561042264855
+   },
+   "exact_agreement": 35,
+   "within_one": 38,
+   "n": 40,
+   "distribution": {
+    "first_pass": {
+     "0": 7,
+     "1": 7,
+     "2": 8,
+     "3": 18
+    },
+    "regrade": {
+     "0": 7,
+     "1": 9,
+     "2": 5,
+     "3": 19
+    }
+   },
+   "decision": "keep",
+   "next": "the first-pass grades stay the human reference for the GPT-6.1 Terra acceptance look and, if step 3 runs, the GPT-6.1 Sol look; the re-grade is reported only as intra-rater agreement"
+  },
+  "completeness.narrative_coverage": {
+   "icc_a1": {
+    "form": "ICC(A,1)",
+    "n": 40,
+    "k": 2,
+    "estimate": 1.0,
+    "estimate_exact": "1",
+    "ci_lower": 1.0,
+    "ci_upper": 1.0,
+    "confidence": 0.95,
+    "defined": true,
+    "msr": 2.764102564102564,
+    "msc": 0.0,
+    "mse": 0.0,
+    "note": "no residual and no rater variance: the interval is [1, 1] for any v",
+    "df_v": null,
+    "agreement": "intra-rater (test-retest) agreement"
+   },
+   "icc_c1": {
+    "form": "ICC(C,1)",
+    "n": 40,
+    "k": 2,
+    "estimate": 1.0,
+    "estimate_exact": "1",
+    "ci_lower": 1.0,
+    "ci_upper": 1.0,
+    "confidence": 0.95,
+    "defined": true,
+    "msr": 2.764102564102564,
+    "msc": 0.0,
+    "mse": 0.0,
+    "note": "no residual variance: the F ratio is infinite and the interval is [1, 1]"
+   },
+   "mean_difference_regrade_minus_first": {
+    "n": 40,
+    "mean": 0.0,
+    "mean_exact": "0",
+    "confidence": 0.95,
+    "sd": 0.0,
+    "df": 39,
+    "ci_lower": 0.0,
+    "ci_upper": 0.0
+   },
+   "exact_agreement": 40,
+   "within_one": 40,
+   "n": 40,
+   "distribution": {
+    "first_pass": {
+     "0": 7,
+     "1": 7,
+     "2": 7,
+     "3": 19
+    },
+    "regrade": {
+     "0": 7,
+     "1": 7,
+     "2": 7,
+     "3": 19
+    }
+   },
+   "decision": "keep",
+   "next": "the first-pass grades stay the human reference for the GPT-6.1 Terra acceptance look and, if step 3 runs, the GPT-6.1 Sol look; the re-grade is reported only as intra-rater agreement"
+  }
+ },
+ "revise": [],
+ "next": "every sub-dimension keeps its first-pass reference: move the grader to GPT-6.1 Terra on the Batch API and run its acceptance look with --intra-rater on this file",
+ "rows": [
+  {
+   "file_name": "calibration-hc-000-SOL-M2.json",
+   "first_pass": {
+    "faithfulness.narrative_grounding": 1,
+    "completeness.narrative_coverage": 3
+   },
+   "regrade": {
+    "faithfulness.narrative_grounding": 1,
+    "completeness.narrative_coverage": 3
+   },
+   "regraded_at": "2026-11-22T16:22:38-05:00"
+  },
+  {
+   "file_name": "calibration-hc-001-XRP-M3.json",
+   "first_pass": {
+    "faithfulness.narrative_grounding": 2,
+    "completeness.narrative_coverage": 3
+   },
+   "regrade": {
+    "faithfulness.narrative_grounding": 2,
+    "completeness.narrative_coverage": 3
+   },
+   "regraded_at": "2026-11-22T18:05:10-05:00"
+  },
+  {
+   "file_name": "calibration-hc-002-SOL-M1.json",
+   "first_pass": {
+    "faithfulness.narrative_grounding": 0,
+    "completeness.narrative_coverage": 3
+   },
+   "regrade": {
+    "faithfulness.narrative_grounding": 0,
+    "completeness.narrative_coverage": 3
+   },
+   "regraded_at": "2026-11-22T16:08:34-05:00"
+  },
+  {
+   "file_name": "calibration-hc-003-ETH-M3.json",
+   "first_pass": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 1
+   },
+   "regrade": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 1
+   },
+   "regraded_at": "2026-11-22T16:37:31-05:00"
+  },
+  {
+   "file_name": "calibration-hc-004-BTC-M3.json",
+   "first_pass": {
+    "faithfulness.narrative_grounding": 2,
+    "completeness.narrative_coverage": 2
+   },
+   "regrade": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 2
+   },
+   "regraded_at": "2026-11-22T18:31:17-05:00"
+  },
+  {
+   "file_name": "calibration-hc-005-XRP-M2.json",
+   "first_pass": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 3
+   },
+   "regrade": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 3
+   },
+   "regraded_at": "2026-11-22T18:26:15-05:00"
+  },
+  {
+   "file_name": "calibration-hc-006-ADA-M1.json",
+   "first_pass": {
+    "faithfulness.narrative_grounding": 2,
+    "completeness.narrative_coverage": 3
+   },
+   "regrade": {
+    "faithfulness.narrative_grounding": 2,
+    "completeness.narrative_coverage": 3
+   },
+   "regraded_at": "2026-11-22T15:59:59-05:00"
+  },
+  {
+   "file_name": "calibration-hc-007-USDT-M2.json",
+   "first_pass": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 3
+   },
+   "regrade": {
+    "faithfulness.narrative_grounding": 1,
+    "completeness.narrative_coverage": 3
+   },
+   "regraded_at": "2026-11-22T15:54:00-05:00"
+  },
+  {
+   "file_name": "calibration-hc-008-BTC-M1.json",
+   "first_pass": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 0
+   },
+   "regrade": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 0
+   },
+   "regraded_at": "2026-11-22T18:35:01-05:00"
+  },
+  {
+   "file_name": "calibration-hc-009-USDC-M3.json",
+   "first_pass": {
+    "faithfulness.narrative_grounding": 0,
+    "completeness.narrative_coverage": 3
+   },
+   "regrade": {
+    "faithfulness.narrative_grounding": 0,
+    "completeness.narrative_coverage": 3
+   },
+   "regraded_at": "2026-11-22T18:07:48-05:00"
+  },
+  {
+   "file_name": "calibration-hc-010-ETH-M1.json",
+   "first_pass": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 0
+   },
+   "regrade": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 0
+   },
+   "regraded_at": "2026-11-22T16:28:12-05:00"
+  },
+  {
+   "file_name": "calibration-hc-011-ETH-M3.json",
+   "first_pass": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 3
+   },
+   "regrade": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 3
+   },
+   "regraded_at": "2026-11-22T16:37:20-05:00"
+  },
+  {
+   "file_name": "calibration-hc-012-ADA-M2.json",
+   "first_pass": {
+    "faithfulness.narrative_grounding": 0,
+    "completeness.narrative_coverage": 3
+   },
+   "regrade": {
+    "faithfulness.narrative_grounding": 0,
+    "completeness.narrative_coverage": 3
+   },
+   "regraded_at": "2026-11-22T17:55:13-05:00"
+  },
+  {
+   "file_name": "calibration-hc-013-XRP-M1.json",
+   "first_pass": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 0
+   },
+   "regrade": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 0
+   },
+   "regraded_at": "2026-11-22T16:03:55-05:00"
+  },
+  {
+   "file_name": "calibration-hc-014-USDC-M2.json",
+   "first_pass": {
+    "faithfulness.narrative_grounding": 1,
+    "completeness.narrative_coverage": 2
+   },
+   "regrade": {
+    "faithfulness.narrative_grounding": 1,
+    "completeness.narrative_coverage": 2
+   },
+   "regraded_at": "2026-11-22T18:18:12-05:00"
+  },
+  {
+   "file_name": "calibration-hc-015-USDT-M2.json",
+   "first_pass": {
+    "faithfulness.narrative_grounding": 1,
+    "completeness.narrative_coverage": 3
+   },
+   "regrade": {
+    "faithfulness.narrative_grounding": 1,
+    "completeness.narrative_coverage": 3
+   },
+   "regraded_at": "2026-11-22T18:14:18-05:00"
+  },
+  {
+   "file_name": "calibration-hc-016-ADA-M2.json",
+   "first_pass": {
+    "faithfulness.narrative_grounding": 2,
+    "completeness.narrative_coverage": 3
+   },
+   "regrade": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 3
+   },
+   "regraded_at": "2026-11-22T16:40:01-05:00"
+  },
+  {
+   "file_name": "calibration-hc-017-BTC-M2.json",
+   "first_pass": {
+    "faithfulness.narrative_grounding": 0,
+    "completeness.narrative_coverage": 3
+   },
+   "regrade": {
+    "faithfulness.narrative_grounding": 0,
+    "completeness.narrative_coverage": 3
+   },
+   "regraded_at": "2026-11-22T16:16:57-05:00"
+  },
+  {
+   "file_name": "calibration-hc-018-USDT-M2.json",
+   "first_pass": {
+    "faithfulness.narrative_grounding": 1,
+    "completeness.narrative_coverage": 3
+   },
+   "regrade": {
+    "faithfulness.narrative_grounding": 1,
+    "completeness.narrative_coverage": 3
+   },
+   "regraded_at": "2026-11-22T18:43:48-05:00"
+  },
+  {
+   "file_name": "calibration-hc-019-SOL-M3.json",
+   "first_pass": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 1
+   },
+   "regrade": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 1
+   },
+   "regraded_at": "2026-11-22T18:21:14-05:00"
+  },
+  {
+   "file_name": "calibration-std-000-USDT-M3.json",
+   "first_pass": {
+    "faithfulness.narrative_grounding": 2,
+    "completeness.narrative_coverage": 2
+   },
+   "regrade": {
+    "faithfulness.narrative_grounding": 2,
+    "completeness.narrative_coverage": 2
+   },
+   "regraded_at": "2026-11-22T18:51:51-05:00"
+  },
+  {
+   "file_name": "calibration-std-001-ADA-M1.json",
+   "first_pass": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 0
+   },
+   "regrade": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 0
+   },
+   "regraded_at": "2026-11-22T15:47:03-05:00"
+  },
+  {
+   "file_name": "calibration-std-002-XRP-M2.json",
+   "first_pass": {
+    "faithfulness.narrative_grounding": 1,
+    "completeness.narrative_coverage": 3
+   },
+   "regrade": {
+    "faithfulness.narrative_grounding": 1,
+    "completeness.narrative_coverage": 3
+   },
+   "regraded_at": "2026-11-22T16:18:02-05:00"
+  },
+  {
+   "file_name": "calibration-std-003-SOL-M2.json",
+   "first_pass": {
+    "faithfulness.narrative_grounding": 2,
+    "completeness.narrative_coverage": 3
+   },
+   "regrade": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 3
+   },
+   "regraded_at": "2026-11-22T18:42:24-05:00"
+  },
+  {
+   "file_name": "calibration-std-004-XRP-M1.json",
+   "first_pass": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 1
+   },
+   "regrade": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 1
+   },
+   "regraded_at": "2026-11-22T18:50:53-05:00"
+  },
+  {
+   "file_name": "calibration-std-005-SOL-M3.json",
+   "first_pass": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 1
+   },
+   "regrade": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 1
+   },
+   "regraded_at": "2026-11-22T17:52:14-05:00"
+  },
+  {
+   "file_name": "calibration-std-006-SOL-M1.json",
+   "first_pass": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 0
+   },
+   "regrade": {
+    "faithfulness.narrative_grounding": 1,
+    "completeness.narrative_coverage": 0
+   },
+   "regraded_at": "2026-11-22T15:41:24-05:00"
+  },
+  {
+   "file_name": "calibration-std-007-USDT-M2.json",
+   "first_pass": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 1
+   },
+   "regrade": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 1
+   },
+   "regraded_at": "2026-11-22T15:25:39-05:00"
+  },
+  {
+   "file_name": "calibration-std-008-USDT-M1.json",
+   "first_pass": {
+    "faithfulness.narrative_grounding": 0,
+    "completeness.narrative_coverage": 3
+   },
+   "regrade": {
+    "faithfulness.narrative_grounding": 0,
+    "completeness.narrative_coverage": 3
+   },
+   "regraded_at": "2026-11-22T16:14:41-05:00"
+  },
+  {
+   "file_name": "calibration-std-009-ADA-M2.json",
+   "first_pass": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 0
+   },
+   "regrade": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 0
+   },
+   "regraded_at": "2026-11-22T16:25:43-05:00"
+  },
+  {
+   "file_name": "calibration-std-010-ETH-M2.json",
+   "first_pass": {
+    "faithfulness.narrative_grounding": 2,
+    "completeness.narrative_coverage": 3
+   },
+   "regrade": {
+    "faithfulness.narrative_grounding": 2,
+    "completeness.narrative_coverage": 3
+   },
+   "regraded_at": "2026-11-22T15:56:21-05:00"
+  },
+  {
+   "file_name": "calibration-std-011-ETH-M3.json",
+   "first_pass": {
+    "faithfulness.narrative_grounding": 1,
+    "completeness.narrative_coverage": 3
+   },
+   "regrade": {
+    "faithfulness.narrative_grounding": 1,
+    "completeness.narrative_coverage": 3
+   },
+   "regraded_at": "2026-11-22T17:52:51-05:00"
+  },
+  {
+   "file_name": "calibration-std-012-BTC-M3.json",
+   "first_pass": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 1
+   },
+   "regrade": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 1
+   },
+   "regraded_at": "2026-11-22T15:45:29-05:00"
+  },
+  {
+   "file_name": "calibration-std-013-USDC-M3.json",
+   "first_pass": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 0
+   },
+   "regrade": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 0
+   },
+   "regraded_at": "2026-11-22T16:07:33-05:00"
+  },
+  {
+   "file_name": "calibration-std-014-XRP-M3.json",
+   "first_pass": {
+    "faithfulness.narrative_grounding": 0,
+    "completeness.narrative_coverage": 2
+   },
+   "regrade": {
+    "faithfulness.narrative_grounding": 0,
+    "completeness.narrative_coverage": 2
+   },
+   "regraded_at": "2026-11-22T15:42:20-05:00"
+  },
+  {
+   "file_name": "calibration-std-015-BTC-M2.json",
+   "first_pass": {
+    "faithfulness.narrative_grounding": 2,
+    "completeness.narrative_coverage": 2
+   },
+   "regrade": {
+    "faithfulness.narrative_grounding": 2,
+    "completeness.narrative_coverage": 2
+   },
+   "regraded_at": "2026-11-22T18:09:07-05:00"
+  },
+  {
+   "file_name": "calibration-std-016-BTC-M1.json",
+   "first_pass": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 3
+   },
+   "regrade": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 3
+   },
+   "regraded_at": "2026-11-22T18:34:28-05:00"
+  },
+  {
+   "file_name": "calibration-std-017-USDC-M1.json",
+   "first_pass": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 1
+   },
+   "regrade": {
+    "faithfulness.narrative_grounding": 3,
+    "completeness.narrative_coverage": 1
+   },
+   "regraded_at": "2026-11-22T19:01:22-05:00"
+  },
+  {
+   "file_name": "calibration-std-018-ADA-M3.json",
+   "first_pass": {
+    "faithfulness.narrative_grounding": 1,
+    "completeness.narrative_coverage": 2
+   },
+   "regrade": {
+    "faithfulness.narrative_grounding": 1,
+    "completeness.narrative_coverage": 2
+   },
+   "regraded_at": "2026-11-22T19:00:29-05:00"
+  },
+  {
+   "file_name": "calibration-std-019-USDC-M2.json",
+   "first_pass": {
+    "faithfulness.narrative_grounding": 0,
+    "completeness.narrative_coverage": 2
+   },
+   "regrade": {
+    "faithfulness.narrative_grounding": 0,
+    "completeness.narrative_coverage": 2
+   },
+   "regraded_at": "2026-11-22T18:47:48-05:00"
+  }
+ ]
+}

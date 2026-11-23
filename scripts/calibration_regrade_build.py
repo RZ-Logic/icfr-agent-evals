@@ -96,6 +96,7 @@ DEFAULT_RECORDS = REPO / "data" / "calibration" / "records"
 _NOT_BEFORE_JS = (
     'function notYet(){ if (D.not_before && Date.now() < Date.parse(D.not_before)) { '
     'status("The re-grade opens at " + D.not_before_text + ". Nothing was recorded."); return true; } return false; }\n')
+_SCOPE_OPEN = '(function(){\n"use strict";\n'
 _REGRADE_JS_EDITS = (
     ('function setGrade(dim, v){ var r = R[state.pos], x = g(r.code);',
      'function setGrade(dim, v){ if (notYet()) return; var r = R[state.pos], x = g(r.code);'),
@@ -305,7 +306,10 @@ def regrade_script() -> str:
         if js.count(old) != 1:
             raise Refused("the sheet script changed; the earliest-start edits no longer apply")
         js = js.replace(old, new)
-    return _NOT_BEFORE_JS + js
+    # The guard reads D and status, which live inside the page's function, so it goes in there.
+    if js.count(_SCOPE_OPEN) != 1:
+        raise Refused("the sheet script changed; the earliest-start guard has no place to go")
+    return js.replace(_SCOPE_OPEN, _SCOPE_OPEN + _NOT_BEFORE_JS)
 
 
 def compute_sheet_id(records: Sequence[Mapping[str, Any]], source_sheet_id: str, seed: str) -> str:

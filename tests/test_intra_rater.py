@@ -345,6 +345,17 @@ def test_the_page_refuses_grades_and_sittings_before_the_earliest_start(source):
     assert "function start(){ if (notYet()) return;" in sheet and "function notYet()" in sheet
 
 
+def test_the_earliest_start_guard_sits_inside_the_page_function(source):
+    # notYet reads D and status, which the page's function declares; defined outside it,
+    # every click on Start sitting or a grade threw a ReferenceError and did nothing.
+    src, _ = source
+    _, out = _build(src)
+    sheet = (out / rb.SHEET_NAME).read_text(encoding="utf-8")
+    script = sheet[sheet.index('<script>') + len('<script>'):]
+    assert script.startswith('(function(){\n"use strict";\nfunction notYet()')
+    assert sheet.count("function notYet()") == 1
+
+
 def test_a_later_last_grade_than_sitting_end_sets_the_earliest_start(source):
     src, _ = source
     late = SITTING_END + dt.timedelta(hours=1)
