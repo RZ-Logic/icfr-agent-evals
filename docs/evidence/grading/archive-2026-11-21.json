@@ -1,0 +1,19 @@
+{
+  "commit": "4749ea711506aeed10fdb265effe34899285727a",
+  "url": "https://web.archive.org/web/20261123235017/https://api.github.com/repos/RZ-Logic/icfr-agent-evals/commits/4749ea711506aeed10fdb265effe34899285727a",
+  "date": "2026-11-23",
+  "snapshot_utc": "2026-11-23T23:50:17Z",
+  "page": "the GitHub API record of the commit: its SHA, committer date, message and the 13 files it adds or changes",
+  "note": "Save Page Now got HTTP 404 from GitHub for the commit's HTML page on 2026-11-23, though the page loaded for an ordinary visitor. The API record of the same commit was saved instead. It names the commit by its full SHA and lists every file it adds or changes.",
+  "worker_log_shas": [
+    "56e3260294b1c4f5f15b8b6575096a18c01795b1b14044b2ddcc802c5837e9d1",
+    "798baa739c393f157ebe971bf2a23d7496e7ab45d310c7423073d8aaa443b29d",
+    "80416551e6ab3f90f740fda75bd26268ecd10a00e8c04dc5d6edc1accb87f7d1",
+    "d4e5b116472c2dce33445a7b7742f2c4a5037d8a50011680596a04bb6b91702a"
+  ],
+  "plan_file_shas": {
+    "unit-map.json": "ee65ead822f8eaa21555539254f3298b6c13f0f0b569e035dc74f022fdc0396e",
+    "draw-pool.json": "b78e2448c840ddf88c5dd7cd48664cf14f428213f29758ba7faff09aee4b9084",
+    "drawn.json": "e5becba1f01eabfae5de78e54953d2b4bf3d565cb074e0d10de34f6cd01291c5"
+  }
+}
