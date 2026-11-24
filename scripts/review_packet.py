@@ -1178,6 +1178,10 @@ UI_TEXT: dict[str, str] = {
     "confirm_clear": "Remove every saved answer for this packet from this device? Save the answers file first.",
     "loaded": ("Loaded {n} rows. Rows skipped because their unit id is not in this packet: {m}. "
                "Rows skipped because their answer is not one of that unit's choices: {k}."),
+    "loaded_sittings": ("Loaded {n} sittings. Sittings already on this device: {m}. "
+                        "Rows skipped because a time is missing or unreadable, or the end is before the start: {k}."),
+    "next_open": "Next unanswered",
+    "all_answered": "Every unit has an answer.",
     "sitting_open": "Sitting open since {t}.",
     "sittings_closed": "Sittings recorded on this device: {n}.",
     "case_facts": "Case facts",
@@ -1240,7 +1244,8 @@ INTRO: tuple[str, ...] = (
     "For each code audit, record real_error (the output holds the mistake the code names) or extractor_error "
     "(the code fired, but the output does not hold that mistake), with a note, and read that narrative whole.",
     "Answers are kept on this device as you go. Use Save answers file to keep a copy and Save sittings file "
-    "for your sitting times. This page states no scoring effect of any answer.",
+    "for your sitting times. Load answers file takes either saved file back. Next unanswered moves to the "
+    "first unit, in page order, that still needs an answer. This page states no scoring effect of any answer.",
 )
 
 _CSS = """
@@ -1286,6 +1291,7 @@ th{color:var(--mute);font-weight:600}
 pre{white-space:pre-wrap;font-size:12px;overflow-wrap:anywhere;margin:6px 0}
 .rec-row{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:4px 0}
 .hide-done .unit.done{display:none}
+.unit.jump{outline:3px solid var(--acc);outline-offset:3px}
 .done{opacity:.6}.done:hover{opacity:1}
 """
 
@@ -1369,7 +1375,8 @@ function complete(uid){
   if (!(a.note && a.note.trim()) || !a.rows || !a.rows.length) return false;
   return a.rows.every(function(r){ return r[0] !== "" && r[1] !== "" && (r[0] !== D.whole_sentence || r[1] === "missing_required_element"); });
 }
-var refreshers = {};
+var refreshers = {}, nodes = {}, pageOrder = [];
+function place(uid, box){ nodes[uid] = box; pageOrder.push(uid); box.setAttribute("data-unit", uid); }
 function progress(){
   var n = 0; D.order.forEach(function(uid){ if (complete(uid)) n++; });
   document.getElementById("count").textContent = fmt(U.progress, {n:n, m:D.order.length});
@@ -1416,7 +1423,7 @@ function findingUnit(parent, uid){
     note.classList.toggle("open", D.note_required.indexOf(a.verdict) >= 0 || !!(a.note));
     box.classList.toggle("done", complete(uid));
   };
-  refreshers[uid](); parent.appendChild(box);
+  refreshers[uid](); place(uid, box); parent.appendChild(box);
 }
 function auditUnit(parent, uid){
   var u = D.units[uid], box = el("div", "unit");
@@ -1427,7 +1434,7 @@ function auditUnit(parent, uid){
   var paint = verdictButtons(box, uid, u.allowed, null);
   var note = noteBox(box, uid, U.audit_note); note.classList.add("open");
   refreshers[uid] = function(){ paint(); box.classList.toggle("done", complete(uid)); };
-  refreshers[uid](); parent.appendChild(box);
+  refreshers[uid](); place(uid, box); parent.appendChild(box);
 }
 function recordUnit(parent, uid){
   var u = D.units[uid], box = el("div", "unit");
@@ -1461,7 +1468,7 @@ function recordUnit(parent, uid){
   box.appendChild(wrongBox);
   drawRows();
   refreshers[uid] = function(){ paint(); var a = state.answers[uid] || {}; wrongBox.style.display = a.verdict === "wrong" ? "" : "none"; box.classList.toggle("done", complete(uid)); };
-  refreshers[uid](); parent.appendChild(box);
+  refreshers[uid](); place(uid, box); parent.appendChild(box);
 }
 function narrativeCard(parent, nid){
   var n = D.units[nid], card = el("div", "card ncard");
@@ -1497,7 +1504,7 @@ function narrativeCard(parent, nid){
 function build(){
   var root = document.getElementById("cases");
   while (root.firstChild) root.removeChild(root.firstChild);
-  refreshers = {};
+  refreshers = {}; nodes = {}; pageOrder = [];
   D.cases.forEach(function(c){
     root.appendChild(el("h2", null, c.case_id));
     var cc = el("div", "card");
@@ -1550,9 +1557,32 @@ function parseCsv(text){
   if (f !== "" || row.length) { row.push(f); rows.push(row); }
   return rows;
 }
+function stamp(t){ return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:Z|[+-]\d{2}:\d{2})$/.test(t || "") ? Date.parse(t) : NaN; }
+function restoreSittings(rows, idx){
+  var have = {}, n = 0, m = 0, k = 0;
+  state.sittings.forEach(function(s){ have[s.start + "|" + s.end] = true; });
+  rows.slice(1).forEach(function(r){
+    var a = r[idx.start] || "", b = r[idx.end] || "", ta = stamp(a), tb = stamp(b);
+    if (isNaN(ta) || isNaN(tb) || tb < ta) { k++; return; }
+    if (have[a + "|" + b]) { m++; return; }
+    have[a + "|" + b] = true; state.sittings.push({start:a, end:b}); n++;
+  });
+  state.sittings.sort(function(x, y){ return stamp(x.start) - stamp(y.start); });
+  save(); sittingStatus();
+  document.getElementById("status").textContent = fmt(U.loaded_sittings, {n:n, m:m, k:k});
+}
+function nextOpen(){
+  var uid = null;
+  for (var i = 0; i < pageOrder.length; i++) { if (!complete(pageOrder[i])) { uid = pageOrder[i]; break; } }
+  if (uid === null) { document.getElementById("status").textContent = U.all_answered; return; }
+  var box = nodes[uid];
+  box.classList.add("jump"); box.scrollIntoView({block:"center"});
+  setTimeout(function(){ box.classList.remove("jump"); }, 1500);
+}
 function restore(text){
   var rows = parseCsv(text); if (!rows.length) return;
   var head = rows[0], idx = {}; head.forEach(function(h, i){ idx[h] = i; });
+  if (!("unit_id" in idx) && ("start" in idx) && ("end" in idx)) { restoreSittings(rows, idx); return; }
   var n = 0, skipped = 0, refused = 0;
   rows.slice(1).forEach(function(r){
     var uid = r[idx.unit_id]; var u = D.units[uid];
@@ -1574,6 +1604,7 @@ function restore(text){
   document.getElementById("status").textContent = fmt(U.loaded, {n:n, m:skipped, k:refused});
 }
 document.getElementById("reviewer").addEventListener("input", function(e){ state.reviewer = e.target.value; save(); });
+document.getElementById("next").addEventListener("click", nextOpen);
 document.getElementById("hide").addEventListener("change", function(e){ document.body.classList.toggle("hide-done", e.target.checked); });
 document.getElementById("start").addEventListener("click", function(){ if (!state.open) { state.open = isoLocal(new Date()); save(); } sittingStatus(); });
 document.getElementById("end").addEventListener("click", function(){ if (state.open) { state.sittings.push({start:state.open, end:isoLocal(new Date())}); state.open = null; save(); } sittingStatus(); });
@@ -1607,6 +1638,7 @@ _PAGE = """<!doctype html>
 <h1>__TITLE__</h1>
 <div class="bar"><i id="bar"></i></div><span class="count" id="count"></span>
 <label class="toggle"><input type="checkbox" id="hide"> __HIDE__</label>
+<button type="button" id="next">__NEXT__</button>
 <input type="text" id="reviewer" placeholder="__REVIEWER__" aria-label="__REVIEWER__">
 <button type="button" id="start">__START__</button><button type="button" id="end">__END__</button>
 <button type="button" id="save">__SAVE__</button><button type="button" id="save-sittings">__SAVE_SITTINGS__</button>
@@ -1690,7 +1722,7 @@ def render_html(packet: Packet, *, title: str = "Grouped review", mode: str = "r
     intro = "".join(f"<p>{esc(p)}</p>" for p in INTRO)
     page = _PAGE
     for marker, value in (
-        ("__CSS__", _CSS.strip()), ("__HIDE__", esc(UI_TEXT["hide_done"])),
+        ("__CSS__", _CSS.strip()), ("__HIDE__", esc(UI_TEXT["hide_done"])), ("__NEXT__", esc(UI_TEXT["next_open"])),
         ("__REVIEWER__", esc(UI_TEXT["reviewer"])), ("__START__", esc(UI_TEXT["start_sitting"])),
         ("__END__", esc(UI_TEXT["end_sitting"])), ("__SAVE_SITTINGS__", esc(UI_TEXT["save_sittings"])),
         ("__SAVE__", esc(UI_TEXT["save_answers"])), ("__LOAD__", esc(UI_TEXT["load_answers"])),

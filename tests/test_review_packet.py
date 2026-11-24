@@ -14,6 +14,7 @@ import copy
 import importlib.util
 import json
 import re
+import shutil
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -777,3 +778,118 @@ def test_intro_says_facts_include_answer_key_values():
     intro = " ".join(rp.INTRO)
     assert "answer key" in intro and "were not shown to the worker" in intro
     assert "The facts are lookups from the case file and the worker output" not in intro
+
+
+_PAGE_HARNESS = r"""
+const DATA = __DATA__;
+const SCRIPT = __SCRIPT__;
+const LOADS = __LOADS__;
+const els = {}, store = {}, blobs = [], jumps = [], statuses = [];
+function fake(tag){
+  const n = {tag: tag, style: {}, children: [], listeners: {}, files: [], value: "", textContent: "", attrs: {},
+    classes: new Set(),
+    get firstChild(){ return this.children[0] || null; },
+    appendChild(c){ this.children.push(c); return c; },
+    removeChild(c){ this.children.splice(this.children.indexOf(c), 1); return c; },
+    addEventListener(t, f){ this.listeners[t] = f; },
+    setAttribute(k, v){ this.attrs[k] = String(v); }, getAttribute(k){ return k in this.attrs ? this.attrs[k] : null; },
+    scrollIntoView(){ jumps.push(this.attrs["data-unit"]); }, click(){}};
+  n.classList = {add(c){ n.classes.add(c); }, remove(c){ n.classes.delete(c); }, contains(c){ return n.classes.has(c); },
+                 toggle(c, on){ if (on === undefined) on = !n.classes.has(c); if (on) n.classes.add(c); else n.classes.delete(c); return on; }};
+  return n;
+}
+global.document = {
+  getElementById(id){ if (id === "data") return {textContent: DATA}; if (!els[id]) els[id] = fake(id); return els[id]; },
+  createElement(tag){ return fake(tag); }, createTextNode(t){ return fake("#text"); }, body: fake("body")};
+global.Option = function(text, value){ this.text = text; this.value = value; };
+global.window = {localStorage: {getItem(k){ return k in store ? store[k] : null; }, setItem(k, v){ store[k] = v; },
+                                removeItem(k){ delete store[k]; }}, confirm(){ return true; }};
+URL.createObjectURL = function(b){ blobs.push(b); return "blob:x"; };
+URL.revokeObjectURL = function(){};
+global.setTimeout = function(){ return 0; };
+global.FileReader = function(){ this.readAsText = function(f){ this.result = f.text; this.onload(); }; };
+function load(text){ els.file.files = [{text: text}]; els.file.listeners.change(); statuses.push(els.status.textContent); }
+(async function(){
+  eval(SCRIPT);
+  els.next.listeners.click();
+  load(LOADS.partial);
+  els.next.listeners.click();
+  load(LOADS.full);
+  els.next.listeners.click(); statuses.push(els.status.textContent);
+  load(LOADS.sittings);
+  load(LOADS.sittings);
+  els["save-sittings"].listeners.click();
+  const saved = await blobs[blobs.length - 1].text();
+  console.log(JSON.stringify({jumps: jumps, statuses: statuses, sittings: saved}));
+})();
+"""
+
+
+def _page_order(data: dict) -> list[str]:
+    order = []
+    for c in data["cases"]:
+        for nid in c["narratives"]:
+            n = data["units"][nid]
+            order += [fid for card in n["findings"] for fid in card["units"]] + list(n["audits"]) + [nid]
+    return order
+
+
+def _answers_csv(data: dict, uids: list[str]) -> str:
+    import csv as _csv
+    import io
+    buf = io.StringIO()
+    w = _csv.DictWriter(buf, fieldnames=data["columns"], lineterminator="\n")
+    w.writeheader()
+    for uid in uids:
+        u = data["units"][uid]
+        row = {c: "" for c in data["columns"]}
+        row.update(row_kind=u["kind"], unit_id=uid, reviewer="R", date="2026-11-25")
+        if u["kind"] == "narrative":
+            row["verdict"] = "none_wrong"
+        else:
+            row["verdict"] = "correct" if "correct" in u["allowed"] else u["allowed"][0]
+            if u["kind"] == "fm_audit" or row["verdict"] in data["note_required"]:
+                row["note"] = "n"
+        w.writerow(row)
+    return buf.getvalue()
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+def test_page_jumps_to_the_next_unanswered_unit_and_reloads_sittings(base_log, truths, tmp_path):
+    """Next unanswered goes to the first unit in page order with no complete answer, after a
+    reload of a saved answers file too, and says so when none is left. Load answers file also
+    takes a saved sittings file back: new sittings are added, a sitting already on the device
+    is not added twice, and a row with a missing or unreadable time, or an end before its
+    start, is skipped and counted."""
+    import subprocess
+    p, page = _html_for(base_log, truths, tmp_path, "")
+    data = _data_block(page)
+    order = _page_order(data)
+    assert sorted(order) == sorted(data["order"]) and len(order) >= 2
+    target = order[1]
+    sittings = ("start,end\n"
+                "2026-11-25T10:00:00-05:00,2026-11-25T12:00:00-05:00\n"
+                "2026-11-24T09:00:00-05:00,2026-11-24T09:30:00-05:00\n"
+                "2026-11-25T10:00:00-05:00,2026-11-25T12:00:00-05:00\n"
+                "2026-11-26T10:00:00-05:00,\n"
+                "2026-11-26T12:00:00-05:00,2026-11-26T11:00:00-05:00\n")
+    loads = {"partial": _answers_csv(data, [u for u in order if u != target]),
+             "full": _answers_csv(data, order), "sittings": sittings}
+    script = re.search(r"<script>(.*?)</script>", page, re.S).group(1)
+    harness = tmp_path / "harness.js"
+    harness.write_text(_PAGE_HARNESS.replace("__DATA__", json.dumps(json.dumps(data)))
+                       .replace("__SCRIPT__", json.dumps(script)).replace("__LOADS__", json.dumps(loads)),
+                       encoding="utf-8")
+    res = subprocess.run(["node", str(harness)], capture_output=True, text=True, encoding="utf-8", timeout=60)
+    assert res.returncode == 0, res.stderr
+    got = json.loads(res.stdout)
+    assert got["jumps"] == [order[0], target]
+    n = len(order)
+    assert got["statuses"][0] == rp.UI_TEXT["loaded"].format(n=n - 1, m=0, k=0)
+    assert got["statuses"][1] == rp.UI_TEXT["loaded"].format(n=n, m=0, k=0)
+    assert got["statuses"][2] == rp.UI_TEXT["all_answered"]
+    assert got["statuses"][3] == rp.UI_TEXT["loaded_sittings"].format(n=2, m=1, k=2)
+    assert got["statuses"][4] == rp.UI_TEXT["loaded_sittings"].format(n=0, m=3, k=2)
+    assert got["sittings"].splitlines() == ["start,end",
+                                            "2026-11-24T09:00:00-05:00,2026-11-24T09:30:00-05:00",
+                                            "2026-11-25T10:00:00-05:00,2026-11-25T12:00:00-05:00"]
