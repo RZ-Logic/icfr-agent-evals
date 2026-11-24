@@ -1,0 +1,898 @@
+{
+ "archive": {
+  "commit": "4749ea711506aeed10fdb265effe34899285727a",
+  "date": "2026-11-23",
+  "file": "docs/evidence/grading/archive-2026-11-21.json",
+  "sha256": "f3f3c3e9413912c7ab10e6e4be337b395300e7b3c2c0bf3a50938d69c2f3d933",
+  "url": "https://web.archive.org/web/20261123235017/https://api.github.com/repos/RZ-Logic/icfr-agent-evals/commits/4749ea711506aeed10fdb265effe34899285727a"
+ },
+ "attempt_logs": [
+  {
+   "attempt": 1,
+   "completed": 12,
+   "errored_calls_skipped": 0,
+   "eval_kind": "rehearsal",
+   "found_on_resume": false,
+   "log_file": "2026-11-24T00-14-22-00-00_grading-grader-part-1-rehearsal_XTKqakBuzLDjvqbX445W4V.eval",
+   "log_sha256": "2122d43c0844568ce92ab8f9d0c3bbaef5d25d062af4c3bc5a4b96420fb43440",
+   "max_samples": 200,
+   "part": "grader-1",
+   "role": "grader",
+   "status": "success"
+  },
+  {
+   "attempt": 1,
+   "completed": 786,
+   "errored_calls_skipped": 0,
+   "eval_kind": "main",
+   "found_on_resume": false,
+   "log_file": "2026-11-24T00-55-28-00-00_grading-grader-part-1_hbTqVnHwzJE9JXXmJMoHne.eval",
+   "log_sha256": "c3cb99652a8c5c2ec0e7688a38dfbaa4657ae40a211c8f52d6ae2ee6ceae6b27",
+   "max_samples": 200,
+   "part": "grader-1",
+   "role": "grader",
+   "status": "success"
+  },
+  {
+   "attempt": 1,
+   "completed": 798,
+   "errored_calls_skipped": 0,
+   "eval_kind": "main",
+   "found_on_resume": false,
+   "log_file": "2026-11-24T02-57-10-00-00_grading-grader-part-2_CJ4wKCpshEUsjikftymD9u.eval",
+   "log_sha256": "02d1128ad69fbff0aa5f789ff6fa476d5e74416c439812a81cbf2cf66870a31b",
+   "max_samples": 200,
+   "part": "grader-2",
+   "role": "grader",
+   "status": "success"
+  },
+  {
+   "attempt": 1,
+   "completed": 797,
+   "errored_calls_skipped": 0,
+   "eval_kind": "main",
+   "found_on_resume": false,
+   "log_file": "2026-11-24T03-51-52-00-00_grading-grader-part-3_S8uxxhAbofUp5v9Bqj5k3x.eval",
+   "log_sha256": "59e5bdc012c3f6448f6bee1f29e1e6e53ca9b9ba5f0155f6db3787b78a6fab40",
+   "max_samples": 200,
+   "part": "grader-3",
+   "role": "grader",
+   "status": "success"
+  },
+  {
+   "attempt": 1,
+   "completed": 797,
+   "errored_calls_skipped": 0,
+   "eval_kind": "main",
+   "found_on_resume": false,
+   "log_file": "2026-11-24T04-56-15-00-00_grading-grader-part-4_QzNH6mL9CttrWJKZZwwa3N.eval",
+   "log_sha256": "c49fcfce29f22567e93effa1d9428205b6933d85b6d57e80b067dd7cf4f51e91",
+   "max_samples": 200,
+   "part": "grader-4",
+   "role": "grader",
+   "status": "success"
+  },
+  {
+   "attempt": 1,
+   "completed": 240,
+   "errored_calls_skipped": 0,
+   "eval_kind": "main",
+   "found_on_resume": false,
+   "log_file": "2026-11-24T06-24-41-00-00_grading-calibrator_S8QJJWfbhxeKx5ErQrXnHq.eval",
+   "log_sha256": "fa7ee919db09bba69c20b60b9d3c8697ebf2fb099f5e8984ce9fbf63f1031dd7",
+   "max_samples": null,
+   "part": "calibrator",
+   "role": "calibrator",
+   "status": "success"
+  }
+ ],
+ "attempts": [
+  {
+   "attempt": 1,
+   "grader_max_samples": 200,
+   "resume": false,
+   "started": "2026-11-24T00:14:20+00:00"
+  }
+ ],
+ "batch_ids": [
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b04d6f3b4fc819087973316e4107884",
+   "eval_kind": "rehearsal",
+   "part": "grader-1",
+   "requests": 12,
+   "time": "2026-11-24T00:14:44+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b04e0937f9481908820c9404a79f06e",
+   "eval_kind": "main",
+   "part": "grader-1",
+   "requests": 200,
+   "time": "2026-11-24T00:55:47+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b04e9ff63c48190be8ee09483b7051f",
+   "eval_kind": "main",
+   "part": "grader-1",
+   "requests": 10,
+   "time": "2026-11-24T01:35:59+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b04ea00d6608190b3fafdc2b88f8d36",
+   "eval_kind": "main",
+   "part": "grader-1",
+   "requests": 190,
+   "time": "2026-11-24T01:36:00+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b04ea6c64908190b6ac33d185e2c831",
+   "eval_kind": "main",
+   "part": "grader-1",
+   "requests": 10,
+   "time": "2026-11-24T01:37:48+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b04eb23de44819098598d0add5ae51e",
+   "eval_kind": "main",
+   "part": "grader-1",
+   "requests": 10,
+   "time": "2026-11-24T01:40:51+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b04eb7fc46081909c10fb44c4949271",
+   "eval_kind": "main",
+   "part": "grader-1",
+   "requests": 10,
+   "time": "2026-11-24T01:42:23+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b04f1f7232c8190be3efc68e0b3d7f2",
+   "eval_kind": "main",
+   "part": "grader-1",
+   "requests": 10,
+   "time": "2026-11-24T02:09:59+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b04f26259fc8190a0d395904925ec69",
+   "eval_kind": "main",
+   "part": "grader-1",
+   "requests": 10,
+   "time": "2026-11-24T02:11:46+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b04f2bef0088190ae996efbcb27e700",
+   "eval_kind": "main",
+   "part": "grader-1",
+   "requests": 10,
+   "time": "2026-11-24T02:13:19+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b04f376e1bc8190b30b4768b421fae0",
+   "eval_kind": "main",
+   "part": "grader-1",
+   "requests": 9,
+   "time": "2026-11-24T02:16:22+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b04f3780798819090ed4d6c5a17b544",
+   "eval_kind": "main",
+   "part": "grader-1",
+   "requests": 100,
+   "time": "2026-11-24T02:16:24+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b04f3888b2c8190b30ce73ace017ecb",
+   "eval_kind": "main",
+   "part": "grader-1",
+   "requests": 91,
+   "time": "2026-11-24T02:16:40+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b04fc5248c48190a64e4121c5a7f7e0",
+   "eval_kind": "main",
+   "part": "grader-1",
+   "requests": 9,
+   "time": "2026-11-24T02:54:10+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b04fc821a408190869456c880872104",
+   "eval_kind": "main",
+   "part": "grader-1",
+   "requests": 9,
+   "time": "2026-11-24T02:54:58+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b04fc9428c48190817dc38329b1ed5b",
+   "eval_kind": "main",
+   "part": "grader-1",
+   "requests": 100,
+   "time": "2026-11-24T02:55:16+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b04fca415f88190940018378f727cde",
+   "eval_kind": "main",
+   "part": "grader-1",
+   "requests": 8,
+   "time": "2026-11-24T02:55:32+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b04fd1904308190b5f2871e5b64dd85",
+   "eval_kind": "main",
+   "part": "grader-2",
+   "requests": 200,
+   "time": "2026-11-24T02:57:29+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b04fda450988190bb0bcdee3fa129dd",
+   "eval_kind": "main",
+   "part": "grader-2",
+   "requests": 10,
+   "time": "2026-11-24T02:59:48+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b04fda5af9881908264eb11f64f7a2a",
+   "eval_kind": "main",
+   "part": "grader-2",
+   "requests": 190,
+   "time": "2026-11-24T02:59:49+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b05063fec9c81908680e7878dd77766",
+   "eval_kind": "main",
+   "part": "grader-2",
+   "requests": 10,
+   "time": "2026-11-24T03:36:32+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b0506bb0ad48190a973fa456819f0bc",
+   "eval_kind": "main",
+   "part": "grader-2",
+   "requests": 10,
+   "time": "2026-11-24T03:38:35+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b0507359acc8190aa459f413ca8dea0",
+   "eval_kind": "main",
+   "part": "grader-2",
+   "requests": 10,
+   "time": "2026-11-24T03:40:37+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b050782a7308190ab1bf2ed6747e9b4",
+   "eval_kind": "main",
+   "part": "grader-2",
+   "requests": 10,
+   "time": "2026-11-24T03:41:54+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b05083b6d6c81908608ff5405c4956c",
+   "eval_kind": "main",
+   "part": "grader-2",
+   "requests": 10,
+   "time": "2026-11-24T03:44:59+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b05083cbcc0819093e162d849baee6b",
+   "eval_kind": "main",
+   "part": "grader-2",
+   "requests": 180,
+   "time": "2026-11-24T03:45:00+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b0508899d1081908bb9e48f7a7a4cb2",
+   "eval_kind": "main",
+   "part": "grader-2",
+   "requests": 10,
+   "time": "2026-11-24T03:46:17+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b0508c71bc88190a12874e0a7012c37",
+   "eval_kind": "main",
+   "part": "grader-2",
+   "requests": 10,
+   "time": "2026-11-24T03:47:19+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b0508debb0c819099a12c9bda4cbb07",
+   "eval_kind": "main",
+   "part": "grader-2",
+   "requests": 10,
+   "time": "2026-11-24T03:47:42+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b0508dfaaf48190831b6b220d7c8add",
+   "eval_kind": "main",
+   "part": "grader-2",
+   "requests": 106,
+   "time": "2026-11-24T03:47:43+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b0508ef7a308190906cf43733c8f71d",
+   "eval_kind": "main",
+   "part": "grader-2",
+   "requests": 32,
+   "time": "2026-11-24T03:47:59+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b0509eb90588190a51f58b6846ca3c3",
+   "eval_kind": "main",
+   "part": "grader-3",
+   "requests": 200,
+   "time": "2026-11-24T03:52:11+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b050ac284588190a6229759af85e2ff",
+   "eval_kind": "main",
+   "part": "grader-3",
+   "requests": 10,
+   "time": "2026-11-24T03:55:48+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b050ac54f90819097116c499be46ec8",
+   "eval_kind": "main",
+   "part": "grader-3",
+   "requests": 158,
+   "time": "2026-11-24T03:55:49+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b050ad53c64819090410de0379744d1",
+   "eval_kind": "main",
+   "part": "grader-3",
+   "requests": 32,
+   "time": "2026-11-24T03:56:05+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b050b405c248190b5e974893b48622e",
+   "eval_kind": "main",
+   "part": "grader-3",
+   "requests": 10,
+   "time": "2026-11-24T03:57:52+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b050b7e677c8190b17e9dc4f98c2357",
+   "eval_kind": "main",
+   "part": "grader-3",
+   "requests": 9,
+   "time": "2026-11-24T03:58:54+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b050b8e4b988190a9ed0047b250d119",
+   "eval_kind": "main",
+   "part": "grader-3",
+   "requests": 23,
+   "time": "2026-11-24T03:59:10+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b050bbcb5e0819082c43e780fee1d39",
+   "eval_kind": "main",
+   "part": "grader-3",
+   "requests": 9,
+   "time": "2026-11-24T03:59:56+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b050bccd3cc8190baa9b71c435cbac3",
+   "eval_kind": "main",
+   "part": "grader-3",
+   "requests": 14,
+   "time": "2026-11-24T04:00:12+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b050bdcd63c81909651e6f5669c7cfc",
+   "eval_kind": "main",
+   "part": "grader-3",
+   "requests": 9,
+   "time": "2026-11-24T04:00:29+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b050bfc3db481908258a5f232e07174",
+   "eval_kind": "main",
+   "part": "grader-3",
+   "requests": 10,
+   "time": "2026-11-24T04:01:00+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b050c1b61688190a476b169f51dc4ac",
+   "eval_kind": "main",
+   "part": "grader-3",
+   "requests": 9,
+   "time": "2026-11-24T04:01:31+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b050c4bbb008190972d92072ef220c1",
+   "eval_kind": "main",
+   "part": "grader-3",
+   "requests": 33,
+   "time": "2026-11-24T04:02:19+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b050c4d24b48190ad6aaaf40cb7189f",
+   "eval_kind": "main",
+   "part": "grader-3",
+   "requests": 125,
+   "time": "2026-11-24T04:02:21+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b050c5d0d488190b57a483d1b5c704d",
+   "eval_kind": "main",
+   "part": "grader-3",
+   "requests": 23,
+   "time": "2026-11-24T04:02:37+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b05148dc9908190849eb8ca4b462bdd",
+   "eval_kind": "main",
+   "part": "grader-3",
+   "requests": 10,
+   "time": "2026-11-24T04:37:33+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b05152805f48190ac7b80f1c8234189",
+   "eval_kind": "main",
+   "part": "grader-3",
+   "requests": 10,
+   "time": "2026-11-24T04:40:08+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b05153818a88190872fdc601d8e5492",
+   "eval_kind": "main",
+   "part": "grader-3",
+   "requests": 9,
+   "time": "2026-11-24T04:40:24+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b051567119481908865b8770919b18d",
+   "eval_kind": "main",
+   "part": "grader-3",
+   "requests": 33,
+   "time": "2026-11-24T04:41:11+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b0515866b008190a3f15d3b5b073baf",
+   "eval_kind": "main",
+   "part": "grader-3",
+   "requests": 9,
+   "time": "2026-11-24T04:41:42+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b051596355c8190bcbcb8ef3515ec60",
+   "eval_kind": "main",
+   "part": "grader-3",
+   "requests": 10,
+   "time": "2026-11-24T04:41:58+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b0515c5d3a08190821093efd762ed86",
+   "eval_kind": "main",
+   "part": "grader-3",
+   "requests": 9,
+   "time": "2026-11-24T04:42:45+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b0515d5c9a88190bf026fccbcc8abe1",
+   "eval_kind": "main",
+   "part": "grader-3",
+   "requests": 33,
+   "time": "2026-11-24T04:43:01+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b051903d6e8819084889d6a55351967",
+   "eval_kind": "main",
+   "part": "grader-4",
+   "requests": 200,
+   "time": "2026-11-24T04:56:36+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b05199dc2dc8190b8665763b30fe96f",
+   "eval_kind": "main",
+   "part": "grader-4",
+   "requests": 10,
+   "time": "2026-11-24T04:59:09+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b05199f6c0881908a641c8884bc9f2f",
+   "eval_kind": "main",
+   "part": "grader-4",
+   "requests": 190,
+   "time": "2026-11-24T04:59:11+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b051a19e1ec8190a99e1bf4a09811b5",
+   "eval_kind": "main",
+   "part": "grader-4",
+   "requests": 10,
+   "time": "2026-11-24T05:01:14+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b0520fae750819080faf803774f8923",
+   "eval_kind": "main",
+   "part": "grader-4",
+   "requests": 10,
+   "time": "2026-11-24T05:30:35+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b05216724088190b3e89c588c3c83cf",
+   "eval_kind": "main",
+   "part": "grader-4",
+   "requests": 10,
+   "time": "2026-11-24T05:32:23+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b0521e14a748190b09d12bca57cc611",
+   "eval_kind": "main",
+   "part": "grader-4",
+   "requests": 10,
+   "time": "2026-11-24T05:34:25+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b05227a0c38819083186ee9f2bc6698",
+   "eval_kind": "main",
+   "part": "grader-4",
+   "requests": 10,
+   "time": "2026-11-24T05:36:58+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b0522e560b48190837198a93c060d3d",
+   "eval_kind": "main",
+   "part": "grader-4",
+   "requests": 10,
+   "time": "2026-11-24T05:38:45+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b05234173d08190962395e84da96b47",
+   "eval_kind": "main",
+   "part": "grader-4",
+   "requests": 10,
+   "time": "2026-11-24T05:40:17+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b05239d3fdc8190a418a13e03eef4c2",
+   "eval_kind": "main",
+   "part": "grader-4",
+   "requests": 10,
+   "time": "2026-11-24T05:41:49+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b0523eb285c819084992f98c598718f",
+   "eval_kind": "main",
+   "part": "grader-4",
+   "requests": 10,
+   "time": "2026-11-24T05:43:07+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b0523fc54788190a69a5f75cb16dce3",
+   "eval_kind": "main",
+   "part": "grader-4",
+   "requests": 180,
+   "time": "2026-11-24T05:43:24+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b05240cc47881909f3b299297587f80",
+   "eval_kind": "main",
+   "part": "grader-4",
+   "requests": 10,
+   "time": "2026-11-24T05:43:41+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b0524a65e9c81909777352966981d7f",
+   "eval_kind": "main",
+   "part": "grader-4",
+   "requests": 10,
+   "time": "2026-11-24T05:46:14+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b0524b646d88190816a6c28b212016f",
+   "eval_kind": "main",
+   "part": "grader-4",
+   "requests": 10,
+   "time": "2026-11-24T05:46:30+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b052b3bd0c081908cbb745c09f12f4b",
+   "eval_kind": "main",
+   "part": "grader-4",
+   "requests": 10,
+   "time": "2026-11-24T06:14:19+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b052bb6e110819089f4c6882140dd16",
+   "eval_kind": "main",
+   "part": "grader-4",
+   "requests": 10,
+   "time": "2026-11-24T06:16:23+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b052bc6c28481909069d582711b0c9c",
+   "eval_kind": "main",
+   "part": "grader-4",
+   "requests": 10,
+   "time": "2026-11-24T06:16:38+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b052c31f3288190a3d19953bbf128f0",
+   "eval_kind": "main",
+   "part": "grader-4",
+   "requests": 9,
+   "time": "2026-11-24T06:18:26+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b052c41e3fc819092cf084906de814e",
+   "eval_kind": "main",
+   "part": "grader-4",
+   "requests": 11,
+   "time": "2026-11-24T06:18:42+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b052c8f12088190973e57f7fcd9db6c",
+   "eval_kind": "main",
+   "part": "grader-4",
+   "requests": 11,
+   "time": "2026-11-24T06:19:59+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b052c9f0b64819089efb597a7a908fc",
+   "eval_kind": "main",
+   "part": "grader-4",
+   "requests": 9,
+   "time": "2026-11-24T06:20:15+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b052d2882d08190b2e223647bf78012",
+   "eval_kind": "main",
+   "part": "grader-4",
+   "requests": 9,
+   "time": "2026-11-24T06:22:32+00:00"
+  },
+  {
+   "attempt": 1,
+   "batch_id": "batch_6b052d585c248190b174ce1166840dc6",
+   "eval_kind": "main",
+   "part": "grader-4",
+   "requests": 18,
+   "time": "2026-11-24T06:23:20+00:00"
+  }
+ ],
+ "calibrator": {
+  "batch": null,
+  "cache": false,
+  "fallback": null,
+  "generate_config": {
+   "reasoning_effort": "high"
+  },
+  "model": "anthropic/claude-opus-5-5",
+  "prompt_sha256": "5c7cf1b6478ab1f01fa959b073a9afba5171dd4d2e3ec2ce1e4097c53fae80f3",
+  "prompt_version": "gp-1",
+  "reasoning_modes_sent": [
+   "output_config.effort=\"high\", thinking={\"block_binding\":{\"prefix_mismatch_behavior\":\"drop_block\"},\"display\":\"summarized\",\"type\":\"adaptive\"}"
+  ],
+  "resolved": "claude-opus-5-5",
+  "role": "calibrator",
+  "tools": null
+ },
+ "counts": {
+  "calibrator": {
+   "attempt_logs": 1,
+   "errored_calls_skipped": 0,
+   "failed": 0,
+   "pairs_complete": 240,
+   "pairs_dropped": 0,
+   "parsed": 240,
+   "refused": 0,
+   "replies_of_record": 240,
+   "rows_drawn": 240,
+   "rows_lost": 0,
+   "unparsed": 0
+  },
+  "generations": 3200,
+  "grader": {
+   "attempt_logs": 5,
+   "errored_calls_skipped": 0,
+   "failed": 0,
+   "parsed": 3190,
+   "refused": 0,
+   "replies_of_record": 3190,
+   "unparsed": 0
+  },
+  "skipped_errored": 0,
+  "skipped_unparsed": 10,
+  "units": 3190,
+  "worker_logs": 4
+ },
+ "decision": "D-R23",
+ "evidence": "full-run grading",
+ "grader": {
+  "anchors_sha256": "405813382714b30acfd0a5c51123b02bad382695222e98c580245522957565e5",
+  "batch": true,
+  "cache": false,
+  "generate_config": {
+   "batch": true,
+   "reasoning_effort": "high"
+  },
+  "look": {
+   "file": "docs/evidence/calibration/acceptance-look-step-2.json",
+   "sha256": "66c681eff01a31346e65815bc14c6ed29fa4484adbef77ac5a6d3e7983ea6a0b",
+   "verdict": "PASS"
+  },
+  "model": "openai/gpt-6.1-terra",
+  "prompt_settings": "default (look pass_1)",
+  "prompt_sha256": "5c7cf1b6478ab1f01fa959b073a9afba5171dd4d2e3ec2ce1e4097c53fae80f3",
+  "prompt_version": "gp-1",
+  "resolved": "gpt-6.1-terra",
+  "step": 2
+ },
+ "head": "20846e9c10d41f4341d0a94e824f3d66d4432df9",
+ "inspect_ai_version": "0.3.278",
+ "job_id": "63fd406e43f05a84",
+ "ledger": {
+  "file": "grading-2026-11-21.json",
+  "folder": "<git common dir>/icfr-grading"
+ },
+ "ledger_started": "2026-11-24T00:14:20+00:00",
+ "note": "pooled counts and hashes only until the second-look freeze (D-R23, sealed folder)",
+ "origin_main": "20846e9c10d41f4341d0a94e824f3d66d4432df9",
+ "parts": {
+  "calibrator": 240,
+  "grader": [
+   798,
+   798,
+   797,
+   797
+  ]
+ },
+ "plumbing_check": {
+  "attempt": 1,
+  "calls": 12,
+  "file": "calibrator-plumbing-1.json",
+  "head": "20846e9c10d41f4341d0a94e824f3d66d4432df9",
+  "parsed": 12,
+  "passed": true,
+  "refused": 0,
+  "sha256": "d3618bcab27388c22db3fb2abab9237a9a364d53a6130aff137145aacfbd89ae"
+ },
+ "python_pin": "3.14.10",
+ "python_version": "3.14.10",
+ "rules": {
+  "breaker": "the circuit breaker's unit is the full run: it trips when the pair rate (tagged complete pairs over complete pairs) or the generation rate (tagged units over units with a parsed grader reply, all four worker runs pooled) is above one quarter; a tag is a disagreement of more than 1 point on a sub-dimension or a low-confidence flag from either judge; a failed judgment is never a breaker tag; a dropped pair leaves the pair rate, and its generation stays in the generation rate on its grader reply alone; a trip excludes both LLM sub-dimensions from every claim of the run; per-worker rates are descriptive only (D-R23, circuit breaker)",
+  "calibrator_order": "the drawn unit ids, sorted, are shuffled once with the calibrator-order seed, and the calibrator eval asks them in that order, not batched (D-R23, grading order)",
+  "draw": "the case ids, sorted, are shuffled with the |calibrator seed; the worker runs other than the calibrator's own model, sorted by model id, take the shuffled positions in rotation, 80 each (1 to 80, 81 to 160, then 161 to 200 and 1 to 40); one gradeable epoch is picked at random per (model, case) with the same generator; a (model, case) with no gradeable epoch loses its row, with no refill and no draw made for it",
+  "failed_judgment": "a unit asked in three attempt logs of its role with no completed call, the third time in an isolated eval that holds only units at their third ask and runs one sample at a time, is recorded as a failed judgment with no reply; it is never asked again, goes to the queue, is counted as failed in the pooled counts and is treated as a reply that does not parse (grader: ungraded; calibrator: a dropped pair); a unit counts as asked in a log only when the log holds its sample with a judge call, so an eval cut off before its samples reached the judge asks nothing (D-R23, failed judgments)",
+  "gate": "the reliability gate is the ICC(A,1) lower limit on complete pairs, kept at 0.60 or above, as the pre-registration says; a worst-case figure that puts each dropped pair back at its largest disagreement (0 for a parsed 2 or 3, 3 for a parsed 0 or 1, 0 against 3 alternating when neither parsed) and the break-even count of dropped pairs are published beside it, reported and not gated (D-R23, reliability gate)",
+  "grader_order": "every gradeable unit, sorted by model, sample id and epoch, is shuffled once with the grader-order seed; a unit's opaque id is its 1-based position in that order, and the four grader evals take the ids in parts of roughly equal size by position (D-R23, grading order)",
+  "means": "per worker model, subset and sub-dimension: a primary mean over graded generations, conditional on a parsed worker output, and a sensitivity mean over all generations with worker format breaks, errored epochs included, counted as 0; a grader reply that does not parse is missing in both; the point estimate is the mean of per-sample epoch means, with a normal 95 percent interval from their standard error, clipped to the 0 to 3 scale; each mean also gives the count of samples with fewer than 4 epochs and the D-R20 defect-epoch row; paired differences use the samples with a value for both models (D-R23, means)",
+  "reply_of_record": "the reply of record of a unit for each judge is its first completed call in any attempt log, whatever that log's final status and whether or not the reply parses; a resume asks only units with no reply of record, and outputs of a dead Batch that no log recorded count as missing (D-R23, reply of record)",
+  "seed": "the first 16 hex digits, read as an integer, of the SHA-256 of the worker-log SHA-256s sorted by model id, joined with '|', followed by the suffix (|calibrator, |grader-order, |calibrator-order or |bootstrap)"
+ },
+ "run": "2026-11-21",
+ "sampling_calls": [
+  "random.Random(calibrator_draw).shuffle(case_ids), case_ids sorted first",
+  "the same generator: .choice(gradeable_epochs) per (model, case) in rotation order, no call when a (model, case) has no gradeable epoch",
+  "random.Random(grader_order).shuffle(units), units sorted by (model, sample_id, epoch) first",
+  "random.Random(calibrator_order).shuffle(drawn_uids), drawn uids sorted first",
+  "random.Random(bootstrap).choices(range(clusters), k=clusters) per resample, one fresh generator per sub-dimension"
+ ],
+ "sealed": {
+  "files": {
+   "aggregates.json": "959a3deb853dc9e8877e55f5c4d6fb097e1d9062a30a5c2653a2b65a5c81e145",
+   "calibrator-replies.json": "16df923cc6781c340cc26d35198187284c63de4081cc930de4b983ab1d95304d",
+   "draw-pool.json": "b78e2448c840ddf88c5dd7cd48664cf14f428213f29758ba7faff09aee4b9084",
+   "drawn.json": "e5becba1f01eabfae5de78e54953d2b4bf3d565cb074e0d10de34f6cd01291c5",
+   "grader-replies.json": "6e0ea3ed203ffbbbe1717c29837a49a74fc65381b58ef937c8249d9f58d63d6c",
+   "queue.json": "317ad028f2945d2071aff001937f52dc357ff67537bb94fbf510c34a27848d34",
+   "unit-map.json": "ee65ead822f8eaa21555539254f3298b6c13f0f0b569e035dc74f022fdc0396e"
+  },
+  "folder": "_sealed"
+ },
+ "seeds": {
+  "bootstrap": 17619694173804787462,
+  "calibrator_draw": 16576345109757751239,
+  "calibrator_order": 16801860123746053774,
+  "grader_order": 18240514144708668663
+ },
+ "withheld_until_freeze": [
+  "reliability gate values, the worst-case figure, the break-even counts and the bootstrap limit",
+  "circuit breaker rates and trip",
+  "LLM sub-dimension means and paired differences",
+  "queue items and every tag count",
+  "the unit map, the draw pool and the drawn ids"
+ ],
+ "worker_header_grader_step": 1,
+ "worker_logs": [
+  {
+   "eval_id": "ks56FBeCU3dGvXnbbAPQda",
+   "file": "2026-11-22T03-36-07-00-00_variance-commentary_GqTfmLCBcZ7jypczsU6g2x.eval",
+   "sha256": "56e3260294b1c4f5f15b8b6575096a18c01795b1b14044b2ddcc802c5837e9d1"
+  },
+  {
+   "eval_id": "QnHxeHsFYiRp8aUEaWCXeo",
+   "file": "2026-11-22T04-24-28-00-00_variance-commentary_Fo2dy4GS4Wj2vKQr3mNoWM.eval",
+   "sha256": "798baa739c393f157ebe971bf2a23d7496e7ab45d310c7423073d8aaa443b29d"
+  },
+  {
+   "eval_id": "FBW7hjGSEReZuCqy47GBhS",
+   "file": "2026-11-22T02-55-55-00-00_variance-commentary_hZWrmVcUWF6APDHejFHPWw.eval",
+   "sha256": "80416551e6ab3f90f740fda75bd26268ecd10a00e8c04dc5d6edc1accb87f7d1"
+  },
+  {
+   "eval_id": "PVvoGueNCfoW5XtLGQqzW3",
+   "file": "2026-11-22T01-19-19-00-00_variance-commentary_CLcKPHEoEbs4oEv6mBLjbF.eval",
+   "sha256": "d4e5b116472c2dce33445a7b7742f2c4a5037d8a50011680596a04bb6b91702a"
+  }
+ ],
+ "worker_run_commit": "0c745021275f67d8a3349f0ff0e71bada299b07b"
+}
