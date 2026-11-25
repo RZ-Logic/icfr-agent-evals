@@ -103,7 +103,7 @@ import sys
 from collections import Counter, defaultdict
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from icfr_agent_evals import h3
 from icfr_agent_evals import reliability as rel
@@ -170,6 +170,8 @@ NOT_AVAILABLE: dict[str, str] = {
     "disagreement rate and resolution rate": (
         "the disagreement queue is not in the run logs or the review record this report reads"),
 }
+# The not-available entries the unseal step fills (decision D-R23, unseal step).
+JUDGE_FILLS: tuple[str, ...] = ("judge-gate results per sub-dimension", "disagreement rate and resolution rate")
 # Unsettleable rows filed as an extractor or an answer-key defect: the epochs the section 8
 # sensitivity row drops (decision D-R20; trials.defect_epochs and trials.defect_dropped).
 DEFECT_ON_CORRECT: tuple[str, ...] = trials.defect_on_correct()
@@ -1305,6 +1307,8 @@ def format_report(payload: Mapping[str, Any]) -> str:
             lines.append(f"H3 anchor cells read as 0 because unscored (an unscored epoch with no sample error; an "
                          f"errored epoch is a format break, FM-000, scored 0 by decision D-R20), per reading and "
                          f"model: {hb['unscored']}")
+    if payload.get("judge"):
+        lines.extend(payload["judge"]["text"])
     lines.append("== Not available in this repository yet")
     for item, why in payload["not_available"].items():
         lines.append(f"  {item}: not available; {why}")
@@ -1319,9 +1323,13 @@ def build_report(workers: Sequence[LogInput], template: LogInput | None, *, pack
                  second_look_dir: str | None = None, second_look_manifest: str | None = None,
                  second_look_commit: str | None = None, blind_check_dir: str | None = None,
                  repo: str | Path | None = None, max_tokens_pin: int | None = None,
-                 args: argparse.Namespace | None = None) -> tuple[str, dict[str, Any]]:
+                 args: argparse.Namespace | None = None,
+                 judge: Callable[[Checks, Sequence[LogInput]], Mapping[str, Any]] | None = None
+                 ) -> tuple[str, dict[str, Any]]:
     """The report text and its JSON payload. Every input check runs first; then the two
-    freeze checks; the record figures only when both pass."""
+    freeze checks; the record figures only when both pass. judge, given only by
+    scripts/unseal_report.py, is called only when both checks pass, and its block replaces
+    the not-available entries it fills (decision D-R23, unseal step)."""
     repo_path = Path(repo) if repo is not None else load_pilot_report().REPO_ROOT
     split, fingerprint = check_inputs(workers, template, max_tokens_pin)
     checks = Checks()
@@ -1395,6 +1403,12 @@ def build_report(workers: Sequence[LogInput], template: LogInput | None, *, pack
                                                            str(first.get("run_commit") or ""))
         if split == EVAL_SPLIT:
             payload["incomplete"] = missing_archive_items(payload["freezes"])
+        if judge is not None:
+            block = dict(judge(checks, workers))
+            for item in JUDGE_FILLS:
+                payload["not_available"].pop(item, None)
+            payload["not_available"].update(block.pop("still_not_available", {}))
+            payload["judge"] = block
     else:
         payload["freezes"] = freeze_block(checks, args) if checks.first_manifest is not None else None
     return format_report(payload), payload
